@@ -6,9 +6,14 @@
 //
 
 import SwiftUI
+import MWDATCore
 
 @main
 struct MEyesApp: App {
+    init() {
+        try? Wearables.configure()
+    }
+
     var body: some Scene {
         WindowGroup {
             MainView()
