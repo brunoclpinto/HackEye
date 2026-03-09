@@ -2,6 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>meyes</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>fb-viewapp</string>
@@ -10,13 +21,17 @@
 	<dict>
 		<key>AppLinkURLScheme</key>
 		<string>meyes://</string>
-		<key>ClientToken</key>
-		<string>$(CLIENT_TOKEN)</string>
 		<key>MetaAppID</key>
-		<string>0</string>
+		<string>$(MWDAT_META_APP_ID)</string>
+		<key>ClientToken</key>
+		<string>$(MWDAT_CLIENT_TOKEN)</string>
 		<key>TeamID</key>
 		<string>$(DEVELOPMENT_TEAM)</string>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Needed to connect to Meta AI Glasses</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Needed to save debug video recordings</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-peripheral</string>

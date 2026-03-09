@@ -22,7 +22,7 @@ public struct OCRPreset: Sendable {
     public var thin: Thin
     public var regrow: Float
 
-    public init(
+    nonisolated public init(
         scale: Float = 1,
         flatten: Bool = true,
         core: Float = 1,
@@ -42,6 +42,15 @@ public struct OCRPreset: Sendable {
         self.regrow = regrow
     }
 
+    /// Default preset — grayscale, no binarization.
+    public nonisolated static var `default`: OCRPreset {
+        OCRPreset(
+            scale: 1, flatten: true, core: 1,
+            binarize: false, thresh: nil, shrink: 0,
+            thin: .disabled, regrow: 0
+        )
+    }
+
     /// Minimal grayscale only — all preprocessing disabled.
     public static let disabled = OCRPreset(
         scale: 1, flatten: false, core: 0,
@@ -59,8 +68,8 @@ public enum OCRPipeline {
         return CIContext()
     }()
 
-    public static func ocrCGImage(
-        _ cgInput: CGImage,
+    public static func ocrCIImage(
+        _ ciInput: CIImage,
         preset: OCRPreset,
         recognitionLanguages: [String]?,
         usesLanguageCorrection: Bool,
@@ -70,7 +79,7 @@ public enum OCRPipeline {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    var img = CIImage(cgImage: cgInput)
+                    var img = ciInput
 
                     // 1) grayscale
                     img = img.applyingFilter("CIColorControls", parameters: [

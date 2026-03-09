@@ -8,6 +8,7 @@
 import SwiftUI
 internal import Combine
 import AVFoundation
+import CoreImage
 
 public enum CameraError: String {
   case notInit
@@ -79,15 +80,18 @@ class CameraSnapshot: Identifiable {
   let name: String
   let zoom: String
   let device: (any Camera)?
+  let isRegistration: Bool
 
   init(
     camera: any Camera,
     name: String,
-    zoom: String
+    zoom: String,
+    isRegistration: Bool = false
   ) {
     self.device = camera
     self.name = name
     self.zoom = zoom
+    self.isRegistration = isRegistration
   }
   
   init(
@@ -98,6 +102,7 @@ class CameraSnapshot: Identifiable {
     self.device = nil
     self.name = name
     self.zoom = zoom
+    self.isRegistration = false
   }
 }
 
@@ -106,7 +111,7 @@ public protocol Camera: Actor {
   var name: String {get}
   var zoom: String {get}
   
-  func connect(nextFrame: @escaping (CGImage?) -> Void) async
+  func connect(nextFrame: @escaping (CIImage) -> Void) async
   func disconnect() async
   func start() async
   func stop() async

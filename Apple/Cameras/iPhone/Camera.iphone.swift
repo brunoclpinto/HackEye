@@ -9,10 +9,9 @@ import AVFoundation
 import CoreImage
 
 nonisolated private final class IphoneCameraOutputDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
-  let nextFrame: ((CGImage?) -> Void)
-  let ciContext = CIContext()
+  let nextFrame: ((CIImage) -> Void)
   
-  init(nextFrame: @escaping (CGImage?) -> Void) {
+  init(nextFrame: @escaping (CIImage) -> Void) {
     self.nextFrame = nextFrame
     super.init()
   }
@@ -20,22 +19,11 @@ nonisolated private final class IphoneCameraOutputDelegate: NSObject, AVCaptureV
   func captureOutput(_ output: AVCaptureOutput,
                      didOutput sampleBuffer: CMSampleBuffer,
                      from connection: AVCaptureConnection) {
-    nextFrame(makeCGImage(from: sampleBuffer))
-  }
-  
-  func makeCGImage(from sampleBuffer: CMSampleBuffer) -> CGImage? {
-    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
+    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+      return
+    }
     
-    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-    
-    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-    
-    let width = CVPixelBufferGetWidth(pixelBuffer)
-    let height = CVPixelBufferGetHeight(pixelBuffer)
-    let rect = CGRect(x: 0, y: 0, width: width, height: height)
-    
-    return ciContext.createCGImage(ciImage, from: rect)
+    nextFrame(CIImage(cvPixelBuffer: pixelBuffer))
   }
 }
 
@@ -59,7 +47,7 @@ public actor CameraIphone: Camera {
     self.zoom = await device.deviceType.zoom
   }
   
-  public func connect(nextFrame: @escaping (CGImage?) -> Void) async {
+  public func connect(nextFrame: @escaping (CIImage) -> Void) async {
     switch state {
       case
           .connected,

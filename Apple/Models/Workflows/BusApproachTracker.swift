@@ -1,5 +1,4 @@
 import CoreImage
-import CoreGraphics
 import Vision
 
 // MARK: - BusApproachTracker
@@ -36,12 +35,17 @@ public final class BusApproachTracker {
         public let approachingScore: Double
     }
 
+    /// Timing information for each stage of the workflow.
+    public struct TimingInfo: Sendable {
+        public let flowTimings: [(name: String, ms: Double)]
+        public let totalMs: Double
+    }
+
     // MARK: Flows & engine
 
     private let detectionFlow: BusDetectionFlow
     private let trackingFlow: BusTrackingFlow
     private let infoFlow: BusInfoFlow
-    private let manager: WorkflowManager<CGImage>
     private let stage1Origin: YOLOModel.BoxOrigin
     private let detectorH: Double
 
@@ -74,42 +78,52 @@ public final class BusApproachTracker {
         detectionFlow = BusDetectionFlow(detector: BusDetector(model: s1, config: d1cfg))
         trackingFlow  = BusTrackingFlow(tracker: BusTracker(config: tcfg))
         infoFlow      = BusInfoFlow(infoDetector: BusInfoDetector(model: s2, config: d2cfg))
-        manager       = WorkflowManager()
     }
 
     // MARK: Public API
 
     public func processFrame(
-        _ frame: CGImage,
-        ocrPreset: OCRPreset = OCRPreset(scale: 1, flatten: true, core: 1, binarize: false),
-        recognitionLanguages: [String]? = nil,
+        _ frame: CIImage,
+        ocrPreset: OCRPreset = .default,
+        recognitionLanguages: [String]? = ["pt-PT"],
         usesLanguageCorrection: Bool = false,
         recognitionLevel: VNRequestTextRecognitionLevel = .accurate
-    ) async throws -> [BusResult] {
+    ) async throws -> (results: [BusResult], timing: TimingInfo) {
 
-        // Stage 1 — concurrent group (single flow; future flows like segmentation slot in here)
-        let detectionAny = AnyFlow(detectionFlow)
-        let concurrent = await manager.runConcurrent(flows: [detectionAny], input: frame)
+        let workflowStart = CFAbsoluteTimeGetCurrent()
+        var flowTimings: [(name: String, ms: Double)] = []
 
-        guard let detOut = concurrent.get(BusDetectionFlow.Output.self, for: detectionFlow.id) else {
-            return []
+        // Stage 1 — detection
+        var t0 = CFAbsoluteTimeGetCurrent()
+        let detOut: BusDetectionFlow.Output
+        do {
+            detOut = try await detectionFlow.run(input: frame)
+        } catch {
+            let totalMs = (CFAbsoluteTimeGetCurrent() - workflowStart) * 1000
+            return ([], TimingInfo(flowTimings: flowTimings, totalMs: totalMs))
         }
+        flowTimings.append((detectionFlow.id, (CFAbsoluteTimeGetCurrent() - t0) * 1000))
 
-        // Stage 2 — serial: tracking depends on detection output
+        // Stage 2 — tracking
+        t0 = CFAbsoluteTimeGetCurrent()
         let tracked = try await trackingFlow.run(input: detOut.detections)
+        flowTimings.append((trackingFlow.id, (CFAbsoluteTimeGetCurrent() - t0) * 1000))
 
         let approaching = tracked.filter { $0.isApproaching }
-        guard !approaching.isEmpty else { return [] }
+        guard !approaching.isEmpty else {
+            let totalMs = (CFAbsoluteTimeGetCurrent() - workflowStart) * 1000
+            return ([], TimingInfo(flowTimings: flowTimings, totalMs: totalMs))
+        }
 
-        // Stage 3 — info detection per approaching bus (could be parallelised in future)
-        let originalCI = CIImage(cgImage: frame)
-        let originalW = Double(frame.width)
-        let originalH = Double(frame.height)
+        // Stage 3 — info detection per approaching bus
+        t0 = CFAbsoluteTimeGetCurrent()
+        let originalCI = frame
+        let originalW = Double(frame.extent.width)
+        let originalH = Double(frame.extent.height)
 
         var results: [BusResult] = []
 
         for bus in approaching {
-            // Match detection to get original-space box
             let busBoxOrig: Box
             if let match = detOut.detections.first(where: { iou($0.boxDetector, bus.lastBoxDetector) >= 0.5 }) {
                 busBoxOrig = match.boxOriginal
@@ -139,9 +153,11 @@ public final class BusApproachTracker {
                 confidence: bus.lastScore, approachingScore: bus.approachingScore
             ))
         }
+        flowTimings.append((infoFlow.id, (CFAbsoluteTimeGetCurrent() - t0) * 1000))
 
         results.sort { $0.id < $1.id }
-        return results
+        let totalMs = (CFAbsoluteTimeGetCurrent() - workflowStart) * 1000
+        return (results, TimingInfo(flowTimings: flowTimings, totalMs: totalMs))
     }
 
     // MARK: - Helpers
@@ -161,38 +177,5 @@ public final class BusApproachTracker {
     }
 }
 
-// MARK: - Optional adapters (UIImage / NSImage -> CGImage)
 
-#if canImport(UIKit)
-import UIKit
 
-public extension UIImage {
-    func toCGImage() -> CGImage? {
-        if let cg = self.cgImage { return cg }
-        if let ci = self.ciImage {
-            return CIContext().createCGImage(ci, from: ci.extent.integral)
-        }
-        let w = Int(size.width), h = Int(size.height)
-        guard w > 0, h > 0 else { return nil }
-        let cs = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-        guard let ctx = CGContext(data: nil, width: w, height: h,
-                                  bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: cs, bitmapInfo: bitmapInfo) else { return nil }
-        UIGraphicsPushContext(ctx); defer { UIGraphicsPopContext() }
-        self.draw(in: CGRect(x: 0, y: 0, width: w, height: h))
-        return ctx.makeImage()
-    }
-}
-#endif
-
-#if canImport(AppKit)
-import AppKit
-
-public extension NSImage {
-    func toCGImage() -> CGImage? {
-        var rect = CGRect(origin: .zero, size: self.size)
-        return self.cgImage(forProposedRect: &rect, context: nil, hints: nil)
-    }
-}
-#endif
