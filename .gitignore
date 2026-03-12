@@ -67,3 +67,4 @@ memory/
 
 # Secrets (MWDAT credentials)
 Secrets.xcconfig
+Apple/build
