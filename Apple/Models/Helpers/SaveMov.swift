@@ -109,15 +109,13 @@ final class CIImageRecorder {
   func append(
     _ frame: CIImage,
     timing: BusApproachTracker.TimingInfo?,
-    currentFPS: Double,
-    buses: String
+    currentFPS: Double
   ) {
     queue.async {
       let image = self.overlayFrame(
         frame,
         timing: timing,
-        currentFPS: currentFPS,
-        buses: buses
+        currentFPS: currentFPS
       )
       let now = CFAbsoluteTimeGetCurrent()
       
@@ -274,8 +272,7 @@ final class CIImageRecorder {
   private func overlayFrame(
     _ frame: CIImage,
     timing: BusApproachTracker.TimingInfo?,
-    currentFPS: Double,
-    buses: String
+    currentFPS: Double
   ) -> CIImage {
     let extent = frame.extent
     let w = extent.width
@@ -291,7 +288,6 @@ final class CIImageRecorder {
       }
       lines.append(String(format: "workflow: %.1f ms", timing.totalMs))
     }
-    lines.append("\n\(buses)")
 
     let maxOverlayWidth: CGFloat = 640
     let fontSize: CGFloat = 32

@@ -27,6 +27,7 @@ class CameraViewModel: ObservableObject {
   private var stateTask: Task<Void, Never>?
   private let tracker: BusApproachTracker?
   private let speaker = Speaker()
+  private var busy: Bool = false
   
   private class BusIDTracker {
     let busID: String
@@ -56,7 +57,11 @@ class CameraViewModel: ObservableObject {
   }
   
   func processFrame(_ frame: CIImage) async {
+    guard !self.busy else {
+      return
+    }
     guard let tracker else { return }
+    self.busy = true
 
     #if DevDebug
     // FPS calculation
@@ -84,7 +89,6 @@ class CameraViewModel: ObservableObject {
       lastTiming = timing
       #endif
 
-      var busString: String = ""
       for bus in results {
         let number = bus.ocrText.leadingNaturalNumber()
         let busID = bus.id
@@ -92,10 +96,8 @@ class CameraViewModel: ObservableObject {
         if busTracked == nil {
           buses.append(BusIDTracker(busID: busID, number: number))
           if number.isEmpty {
-            busString.append("\(busID)\n")
             speaker.speak("\(busID)")
           } else {
-            busString.append("\(busID): \(number)\n")
             speaker.speak("\(busID): \(number)")
           }
           continue
@@ -108,7 +110,6 @@ class CameraViewModel: ObservableObject {
           continue
         }
         busTracked.number = number
-        busString.append("\(busID): \(number)\n")
         speaker.speak("\(busID): \(number)")
       }
       
@@ -116,12 +117,13 @@ class CameraViewModel: ObservableObject {
       recorder?.append(
         frame,
         timing: lastTiming,
-        currentFPS: currentFPS,
-        buses: busString
+        currentFPS: currentFPS
       )
     } catch {
       print("[CameraViewModel] processFrame error: \(error)")
     }
+    
+    self.busy = false
   }
   
   func performAction() async {
