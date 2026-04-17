@@ -10,75 +10,28 @@ import MWDATCore
 import MWDATCamera
 internal import UIKit
 
-// MARK: - MetaStreamBridge
+// MARK: - FrameThrottle
 
-/// Owns all @MainActor-isolated Meta SDK objects.
-/// CameraMeta delegates SDK calls here to satisfy the SDK's main-actor isolation.
-@MainActor
-private final class MetaStreamBridge: @unchecked Sendable {
-  private var session: StreamSession?
-  private var stateToken: AnyListenerToken?
-  private var videoToken: AnyListenerToken?
-  private var errorToken: AnyListenerToken?
+/// Thread-safe frame-rate limiter that can be captured by Sendable closures.
+/// Opted out of global actor isolation with `nonisolated` since the class
+/// protects its mutable state with an NSLock.
+private nonisolated final class FrameThrottle: @unchecked Sendable {
+  private var lastTime: CFAbsoluteTime = 0
+  private let lock = NSLock()
 
-  /// Timestamp of the last frame forwarded to the consumer.
-  /// Used to enforce the configured frame rate on the app side because
-  /// the SDK does not always honour StreamSessionConfig.frameRate.
-  private var lastFrameTime: CFAbsoluteTime = 0
-
-  nonisolated init() {}
-
-  func setup(
-    wearables: WearablesInterface,
-    onState: @escaping (StreamSessionState) -> Void,
-    onFrame: @escaping (CIImage) -> Void,
-    onError: @escaping () -> Void
-  ) {
-    let selector = AutoDeviceSelector(wearables: wearables)
-    let frameRate: UInt = 30
-    let config = StreamSessionConfig(videoCodec: .raw, resolution: .high, frameRate: frameRate)
-    let session = StreamSession(streamSessionConfig: config, deviceSelector: selector)
-
-    let minInterval: CFAbsoluteTime = 1.0 / CFAbsoluteTime(frameRate)
-
-    stateToken = session.statePublisher.listen { sdkState in
-      onState(sdkState)
-    }
-    videoToken = session.videoFramePublisher.listen { videoFrame in
-      Task { @MainActor in
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - self.lastFrameTime >= minInterval else { return }
-        self.lastFrameTime = now
-        guard
-          let image = videoFrame.makeUIImage(),
-          let ciImage = CIImage(image: image)
-        else {
-          return
-        }
-        onFrame(ciImage)
-      }
-    }
-    errorToken = session.errorPublisher.listen { _ in
-      onError()
-    }
-    self.session = session
+  func shouldForward(minInterval: CFAbsoluteTime) -> Bool {
+    let now = CFAbsoluteTimeGetCurrent()
+    lock.lock()
+    defer { lock.unlock() }
+    guard now - lastTime >= minInterval else { return false }
+    lastTime = now
+    return true
   }
 
-  func cancelListeners() {
-    stateToken = nil
-    videoToken = nil
-    errorToken = nil
-  }
-
-  var isReady: Bool { return session != nil }
-  func start() async { await session?.start() }
-  func stop() async { await session?.stop() }
-
-  func teardown() async {
-    cancelListeners()
-    await session?.stop()
-    session = nil
-    lastFrameTime = 0
+  func reset() {
+    lock.lock()
+    lastTime = 0
+    lock.unlock()
   }
 }
 
@@ -90,15 +43,37 @@ public actor CameraMeta: Camera {
   public let zoom: String = ""
 
   private let wearables: WearablesInterface
-  private let bridge = MetaStreamBridge()
   private var stateContinuations: [AsyncStream<CameraState>.Continuation] = []
+
+  // SDK session objects
+  private var deviceSession: DeviceSession?
+  private var streamSession: StreamSession?
+
+  // Listener tokens
+  private var deviceStateToken: (any AnyListenerToken)?
+  private var deviceErrorToken: (any AnyListenerToken)?
+  private var streamStateToken: (any AnyListenerToken)?
+  private var videoToken: (any AnyListenerToken)?
+  private var streamErrorToken: (any AnyListenerToken)?
+
+  /// Minimum interval between forwarded frames, used to enforce frame rate
+  /// on the app side because the SDK does not always honour the configured rate.
+  private let minFrameInterval: CFAbsoluteTime
+  /// Guarded by a lock so the Sendable video-frame listener can throttle
+  /// without hopping to the actor for every frame.
+  private let frameThrottle = FrameThrottle()
 
   init(deviceId: DeviceIdentifier, wearables: WearablesInterface) {
     self.wearables = wearables
     self.name = wearables
       .deviceForIdentifier(deviceId)?
       .nameOrId() ?? String(localized: "Unnamed Meta Wearable")
+
+    let frameRate: UInt = 30
+    self.minFrameInterval = 1.0 / CFAbsoluteTime(frameRate)
   }
+
+  // MARK: - Connect
 
   public func connect(nextFrame: @escaping (CIImage) -> Void) async {
     switch state {
@@ -117,6 +92,7 @@ public actor CameraMeta: Camera {
     }
     setState(.connecting)
 
+    // 1 — Check / request camera permission.
     do {
       let status = try await wearables.checkPermissionStatus(.camera)
       if status != .granted {
@@ -131,22 +107,98 @@ public actor CameraMeta: Camera {
       return
     }
 
-    await bridge.setup(
-      wearables: wearables,
-      onState: { [weak self] sdkState in
-        Task { [weak self] in
-          await self?.handleSDKState(sdkState)
-        }
-      },
-      onFrame: nextFrame,
-      onError: { [weak self] in
-        Task { [weak self] in
-          await self?.forceDisconnect()
-        }
+    // 2 — Create a DeviceSession.
+    let selector = AutoDeviceSelector(wearables: wearables)
+    let session: DeviceSession
+    do {
+      session = try wearables.createSession(deviceSelector: selector)
+    } catch {
+      print("[CameraMeta] createSession failed: \(error)")
+      setState(.disconnected(.noSession))
+      return
+    }
+    self.deviceSession = session
+
+    // 3 — Observe device session state + errors.
+    deviceStateToken = session.statePublisher.listen { [weak self] sdkState in
+      Task { [weak self] in
+        await self?.handleDeviceSessionState(sdkState)
       }
+    }
+    deviceErrorToken = session.errorPublisher.listen { [weak self] sdkError in
+      Task { [weak self] in
+        print("[CameraMeta] DeviceSession error: \(sdkError)")
+        await self?.forceDisconnect()
+      }
+    }
+
+    // 4 — Start the device session (synchronous, throws).
+    do {
+      try session.start()
+    } catch {
+      print("[CameraMeta] DeviceSession.start() failed: \(error)")
+      await cancelAllTokens()
+      deviceSession = nil
+      setState(.disconnected(.noSession))
+      return
+    }
+
+    // 5 — Add the stream capability.
+    let config = StreamSessionConfig(
+      videoCodec: .raw,
+      resolution: .high,
+      frameRate: 30
     )
+    let stream: StreamSession?
+    do {
+      stream = try session.addStream(config: config)
+    } catch {
+      print("[CameraMeta] addStream failed: \(error)")
+      session.stop()
+      await cancelAllTokens()
+      deviceSession = nil
+      setState(.disconnected(.noSession))
+      return
+    }
+    guard let stream else {
+      print("[CameraMeta] addStream returned nil")
+      session.stop()
+      await cancelAllTokens()
+      deviceSession = nil
+      setState(.disconnected(.noSession))
+      return
+    }
+    self.streamSession = stream
+
+    // 6 — Observe stream state, frames, and errors.
+    streamStateToken = stream.statePublisher.listen { [weak self] sdkState in
+      Task { [weak self] in
+        await self?.handleStreamSessionState(sdkState)
+      }
+    }
+    let throttle = self.frameThrottle
+    let interval = self.minFrameInterval
+    videoToken = stream.videoFramePublisher.listen { videoFrame in
+      guard throttle.shouldForward(minInterval: interval) else { return }
+      guard
+        let image = videoFrame.makeUIImage(),
+        let ciImage = CIImage(image: image)
+      else {
+        return
+      }
+      nextFrame(ciImage)
+    }
+    streamErrorToken = stream.errorPublisher.listen { [weak self] sdkError in
+      Task { [weak self] in
+        print("[CameraMeta] StreamSession error: \(sdkError)")
+        await self?.forceDisconnect()
+      }
+    }
+
     setState(.connected)
   }
+
+  // MARK: - Disconnect
 
   public func disconnect() async {
     switch state {
@@ -166,9 +218,11 @@ public actor CameraMeta: Camera {
         break
     }
     setState(.disconnecting)
-    await bridge.teardown()
+    await teardown()
     setState(.disconnected(nil))
   }
+
+  // MARK: - Start
 
   public func start() async {
     switch state {
@@ -187,13 +241,15 @@ public actor CameraMeta: Camera {
         break
     }
     setState(.starting)
-    guard await bridge.isReady else {
+    guard let streamSession else {
       setState(.disconnected(.noSession))
       return
     }
-    await bridge.start()
+    await streamSession.start()
     setState(.started)
   }
+
+  // MARK: - Stop
 
   public func stop() async {
     switch state {
@@ -211,36 +267,76 @@ public actor CameraMeta: Camera {
         break
     }
     setState(.stopping)
-    await bridge.stop()
+    await streamSession?.stop()
     setState(.stopped)
   }
 
-  private func handleSDKState(_ sdkState: StreamSessionState) async {
+  // MARK: - SDK State Handling
+
+  private func handleDeviceSessionState(_ sdkState: DeviceSessionState) async {
     switch sdkState {
-      case .streaming:
-        switch state {
-          case .starting:
-            return
-          default:
-            break
-        }
-        setState(.started)
-      case .stopped, .paused:
-        setState(.stopped)
-      case .waitingForDevice, .starting, .stopping:
+      case .started:
+        // Device is ready — no action needed, stream handles its own state.
         break
-      @unknown default:
+      case .paused:
+        // Device-initiated pause (e.g. cap-touch).
+        if state == .started {
+          setState(.stopped)
+        }
+      case .stopped:
+        // Device session ended — must tear down and create a new one.
+        await forceDisconnect()
+      case .idle, .starting, .stopping:
         break
     }
   }
+
+  private func handleStreamSessionState(_ sdkState: StreamSessionState) async {
+    switch sdkState {
+      case .streaming:
+        if state == .starting { return }
+        setState(.started)
+      case .stopped, .paused:
+        if state == .started || state == .starting {
+          setState(.stopped)
+        }
+      case .waitingForDevice, .starting, .stopping:
+        break
+    }
+  }
+
+  // MARK: - Teardown
 
   private func forceDisconnect() async {
     state = .forceDisconnect
     await disconnect()
   }
+
+  private func teardown() async {
+    await cancelAllTokens()
+    await streamSession?.stop()
+    streamSession = nil
+    deviceSession?.stop()
+    deviceSession = nil
+    frameThrottle.reset()
+  }
+
+  private func cancelAllTokens() async {
+    await deviceStateToken?.cancel()
+    await deviceErrorToken?.cancel()
+    await streamStateToken?.cancel()
+    await videoToken?.cancel()
+    await streamErrorToken?.cancel()
+    deviceStateToken = nil
+    deviceErrorToken = nil
+    streamStateToken = nil
+    videoToken = nil
+    streamErrorToken = nil
+  }
 }
 
-/// Publisher
+// MARK: - Publisher
+
 public extension CameraMeta {
   func stateUpdates() -> AsyncStream<CameraState> {
     AsyncStream { cont in

@@ -46,10 +46,7 @@ public actor CameraMetaRegistration: Camera {
     do {
       try await Self.startRegistrationOnMain(wearables: wearables)
     } catch {
-      print("[CameraMetaRegistration] startRegistration failed: \(String(describing: error))")
-      if let regError = error as? RegistrationError {
-        print("[CameraMetaRegistration] RegistrationError description: \(regError.description)")
-      }
+      print("[CameraMetaRegistration] startRegistration failed: \(error.description)")
       setState(.disconnected(.noPermissions))
       return
     }
@@ -82,7 +79,7 @@ public actor CameraMetaRegistration: Camera {
   }
 
   @MainActor
-  private static func startRegistrationOnMain(wearables: WearablesInterface) async throws {
+  private static func startRegistrationOnMain(wearables: WearablesInterface) async throws(RegistrationError) {
     try await wearables.startRegistration()
   }
 
