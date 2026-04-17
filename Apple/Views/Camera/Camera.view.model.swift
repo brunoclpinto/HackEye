@@ -27,6 +27,18 @@ class CameraViewModel: ObservableObject {
   private var stateTask: Task<Void, Never>?
   private let tracker: BusApproachTracker?
   private let speaker = Speaker()
+  private var busy: Bool = false
+  
+  private class BusIDTracker {
+    let busID: String
+    var number: String
+    
+    init(busID: String, number: String) {
+      self.busID = busID
+      self.number = number
+    }
+  }
+  private var buses: [BusIDTracker] = []
 
   #if DevDebug
   private var recorder: CIImageRecorder?
@@ -45,7 +57,11 @@ class CameraViewModel: ObservableObject {
   }
   
   func processFrame(_ frame: CIImage) async {
+    guard !self.busy else {
+      return
+    }
     guard let tracker else { return }
+    self.busy = true
 
     #if DevDebug
     // FPS calculation
@@ -62,18 +78,8 @@ class CameraViewModel: ObservableObject {
       let size = frame.extent.size
       guard size.width > 0, size.height > 0 else { return }
       recorder = CIImageRecorder(size: size)
-      do {
-        try recorder?.start()
-        print("[DevDebug] Recording started (\(Int(size.width))x\(Int(size.height)))")
-      } catch {
-        print("[DevDebug] Failed to start recording: \(error)")
-        recorder = nil
-      }
+      recorder?.start()
     }
-
-    // Record frame with overlay burned in
-    let overlaid = overlayFrame(frame)
-    try? recorder?.append(overlaid)
     #endif
 
     do {
@@ -83,14 +89,52 @@ class CameraViewModel: ObservableObject {
       lastTiming = timing
       #endif
 
+      // Collect announcements: buses with a number first, ID-only second.
+      var withNumber: [String] = []
+      var withoutNumber: [String] = []
+
       for bus in results {
         let number = bus.ocrText.leadingNaturalNumber()
-        guard !number.isEmpty else { continue }
-        speaker.speak(number)
+        let busID = bus.id
+        let busTracked = buses.first(where: { bus.id == $0.busID })
+
+        if busTracked == nil {
+          buses.append(BusIDTracker(busID: busID, number: number))
+          if number.isEmpty {
+            withoutNumber.append(busID)
+          } else {
+            withNumber.append("\(busID): \(number)")
+          }
+          continue
+        }
+
+        guard
+          !number.isEmpty,
+          let busTracked,
+          busTracked.number != number
+        else {
+          continue
+        }
+        busTracked.number = number
+        withNumber.append("\(busID): \(number)")
       }
+
+      let announcements = withNumber + withoutNumber
+      if !announcements.isEmpty {
+        speaker.speak(announcements.joined(separator: ". "))
+      }
+      
+      // Record frame with overlay burned in
+      recorder?.append(
+        frame,
+        timing: lastTiming,
+        currentFPS: currentFPS
+      )
     } catch {
       print("[CameraViewModel] processFrame error: \(error)")
     }
+    
+    self.busy = false
   }
   
   func performAction() async {
@@ -135,75 +179,8 @@ class CameraViewModel: ObservableObject {
           print("[DevDebug] Failed to save video: \(error)")
       }
     }
-    recorder = nil
   }
 
-  // MARK: - Debug: Overlay
-
-  private func overlayFrame(_ frame: CIImage) -> CIImage {
-    let extent = frame.extent
-    let w = extent.width
-    let h = extent.height
-    guard w > 0, h > 0 else { return frame }
-
-    var lines: [String] = []
-    lines.append(String(format: "FPS: %.1f", currentFPS))
-
-    if let timing = lastTiming {
-      for (name, ms) in timing.flowTimings {
-        lines.append(String(format: "%@: %.1f ms", name, ms))
-      }
-      lines.append(String(format: "workflow: %.1f ms", timing.totalMs))
-    }
-
-    let maxOverlayWidth: CGFloat = 640
-    let fontSize: CGFloat = 32
-    let lineHeight = fontSize * 1.3
-    let margin: CGFloat = 8
-    let textBlockHeight = lineHeight * CGFloat(lines.count) + margin * 2
-    let textBlockWidth = min(maxOverlayWidth, w)
-
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-
-    guard let ctx = CGContext(
-      data: nil, width: Int(w), height: Int(h),
-      bitsPerComponent: 8, bytesPerRow: 0,
-      space: colorSpace, bitmapInfo: bitmapInfo
-    ) else { return frame }
-
-    ctx.clear(CGRect(origin: .zero, size: CGSize(width: w, height: h)))
-
-    // Semi-transparent black background for text
-    ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 0.6)
-    ctx.fill(CGRect(x: 0, y: 0, width: textBlockWidth, height: textBlockHeight))
-
-    let attrs: [NSAttributedString.Key: Any] = [
-      .font: UIFont.monospacedSystemFont(ofSize: fontSize, weight: .bold),
-      .foregroundColor: UIColor.green
-    ]
-
-    // Draw text (flip coordinates for UIKit text drawing)
-    UIGraphicsPushContext(ctx)
-    ctx.saveGState()
-    ctx.textMatrix = .identity
-    ctx.translateBy(x: 0, y: h)
-    ctx.scaleBy(x: 1, y: -1)
-
-    let startY = h - textBlockHeight + margin
-    for (i, line) in lines.enumerated() {
-      let y = startY + CGFloat(i) * lineHeight
-      let str = NSAttributedString(string: line, attributes: attrs)
-      str.draw(at: CGPoint(x: margin, y: y))
-    }
-
-    ctx.restoreGState()
-    UIGraphicsPopContext()
-
-    guard let overlayCG = ctx.makeImage() else { return frame }
-    let overlayCI = CIImage(cgImage: overlayCG)
-    return overlayCI.composited(over: frame)
-  }
   #endif
   
   func startObservingState() async {
