@@ -10,27 +10,33 @@ import MWDATCore
 import MWDATCamera
 internal import UIKit
 
-// MARK: - FrameThrottle
+// MARK: - FrameGate
 
-/// Thread-safe frame-rate limiter that can be captured by Sendable closures.
-/// Opted out of global actor isolation with `nonisolated` since the class
-/// protects its mutable state with an NSLock.
-private nonisolated final class FrameThrottle: @unchecked Sendable {
-  private var lastTime: CFAbsoluteTime = 0
+/// Thread-safe gate that allows only one frame through at a time.
+/// While a frame is being processed, all subsequent frames are discarded.
+private nonisolated final class FrameGate: @unchecked Sendable {
+  private var processing = false
   private let lock = NSLock()
 
-  func shouldForward(minInterval: CFAbsoluteTime) -> Bool {
-    let now = CFAbsoluteTimeGetCurrent()
+  /// Returns `true` if no frame is currently being processed,
+  /// and atomically marks the gate as busy.
+  func tryEnter() -> Bool {
     lock.lock()
     defer { lock.unlock() }
-    guard now - lastTime >= minInterval else { return false }
-    lastTime = now
+    guard !processing else { return false }
+    processing = true
     return true
+  }
+
+  func leave() {
+    lock.lock()
+    processing = false
+    lock.unlock()
   }
 
   func reset() {
     lock.lock()
-    lastTime = 0
+    processing = false
     lock.unlock()
   }
 }
@@ -56,21 +62,14 @@ public actor CameraMeta: Camera {
   private var videoToken: (any AnyListenerToken)?
   private var streamErrorToken: (any AnyListenerToken)?
 
-  /// Minimum interval between forwarded frames, used to enforce frame rate
-  /// on the app side because the SDK does not always honour the configured rate.
-  private let minFrameInterval: CFAbsoluteTime
-  /// Guarded by a lock so the Sendable video-frame listener can throttle
-  /// without hopping to the actor for every frame.
-  private let frameThrottle = FrameThrottle()
+  /// Discards incoming frames while one is still being processed downstream.
+  private let frameGate = FrameGate()
 
   init(deviceId: DeviceIdentifier, wearables: WearablesInterface) {
     self.wearables = wearables
     self.name = wearables
       .deviceForIdentifier(deviceId)?
       .nameOrId() ?? String(localized: "Unnamed Meta Wearable")
-
-    let frameRate: UInt = 30
-    self.minFrameInterval = 1.0 / CFAbsoluteTime(frameRate)
   }
 
   // MARK: - Connect
@@ -176,17 +175,18 @@ public actor CameraMeta: Camera {
         await self?.handleStreamSessionState(sdkState)
       }
     }
-    let throttle = self.frameThrottle
-    let interval = self.minFrameInterval
+    let gate = self.frameGate
     videoToken = stream.videoFramePublisher.listen { videoFrame in
-      guard throttle.shouldForward(minInterval: interval) else { return }
+      guard gate.tryEnter() else { return }
       guard
         let image = videoFrame.makeUIImage(),
         let ciImage = CIImage(image: image)
       else {
+        gate.leave()
         return
       }
       nextFrame(ciImage)
+      gate.leave()
     }
     streamErrorToken = stream.errorPublisher.listen { [weak self] sdkError in
       Task { [weak self] in
@@ -318,7 +318,7 @@ public actor CameraMeta: Camera {
     streamSession = nil
     deviceSession?.stop()
     deviceSession = nil
-    frameThrottle.reset()
+    frameGate.reset()
   }
 
   private func cancelAllTokens() async {
