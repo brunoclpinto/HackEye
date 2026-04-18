@@ -41,8 +41,7 @@ class CameraViewModel: ObservableObject {
   private var buses: [BusIDTracker] = []
 
   #if DevDebug
-  private var recorder: CIImageRecorder?
-  private var recordingPending = false
+  private var frameSaver: DebugFrameSaver?
   private var lastFrameTime: CFAbsoluteTime = 0
   private var currentFPS: Double = 0
   private var lastTiming: BusApproachTracker.TimingInfo?
@@ -71,15 +70,6 @@ class CameraViewModel: ObservableObject {
       if delta > 0 { currentFPS = 1.0 / delta }
     }
     lastFrameTime = now
-
-    // Lazily create recorder on first frame so we capture the real size
-    if recordingPending {
-      recordingPending = false
-      let size = frame.extent.size
-      guard size.width > 0, size.height > 0 else { return }
-      recorder = CIImageRecorder(size: size)
-      recorder?.start()
-    }
     #endif
 
     do {
@@ -124,12 +114,13 @@ class CameraViewModel: ObservableObject {
         speaker.speak(announcements.joined(separator: ". "))
       }
       
-      // Record frame with overlay burned in
-      recorder?.append(
+      #if DevDebug
+      frameSaver?.appendFrame(
         frame,
         timing: lastTiming,
         currentFPS: currentFPS
       )
+      #endif
     } catch {
       print("[CameraViewModel] processFrame error: \(error)")
     }
@@ -159,26 +150,19 @@ class CameraViewModel: ObservableObject {
   }
 
   #if DevDebug
-  // MARK: - Debug: Video Recording
+  // MARK: - Debug: Frame Recording
 
   private func startRecording() {
-    // Defer actual recorder creation to the first frame so we capture the real size
-    recordingPending = true
     lastFrameTime = 0
     currentFPS = 0
     lastTiming = nil
+    frameSaver = DebugFrameSaver()
+    frameSaver?.start()
   }
 
   private func stopRecording() {
-    recordingPending = false
-    recorder?.stopAndSaveToPhotos { result in
-      switch result {
-        case .success:
-          print("[DevDebug] Video saved to Photos")
-        case .failure(let error):
-          print("[DevDebug] Failed to save video: \(error)")
-      }
-    }
+    frameSaver?.stop()
+    frameSaver = nil
   }
 
   #endif
