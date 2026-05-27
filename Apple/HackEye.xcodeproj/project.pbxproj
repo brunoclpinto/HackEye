@@ -12,7 +12,6 @@
 		B304ED572F4DB727002E01E7 /* Camera.controller.swift in Sources */ = {isa = PBXBuildFile; fileRef = B304ED542F4DB517002E01E7 /* Camera.controller.swift */; };
 		B304ED582F4DB727002E01E7 /* Camera.manager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B304ED4E2F4DA8A0002E01E7 /* Camera.manager.swift */; };
 		B30E1C922F56F908006F2FA1 /* yolo26sINT8512x896.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = B30E1C912F56F908006F2FA1 /* yolo26sINT8512x896.mlpackage */; };
-		B30E1C932F56F908006F2FA1 /* busInfoYolo26sINT8512x896.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = B30E1C902F56F908006F2FA1 /* busInfoYolo26sINT8512x896.mlpackage */; };
 		B30E1C982F56F932006F2FA1 /* SaveMov.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30E1C962F56F932006F2FA1 /* SaveMov.swift */; };
 		B30E1C992F56F932006F2FA1 /* Speaker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30E1C972F56F932006F2FA1 /* Speaker.swift */; };
 		B32C5FA92F4CF1AE00DC01E1 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = B32C5FA82F4CF1AE00DC01E1 /* MWDATCamera */; };
@@ -26,7 +25,6 @@
 		B3AE000100000004AE000004 /* WorkflowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AE000200000004AE000004 /* WorkflowManager.swift */; };
 		B3AF000100000001AF000001 /* BusDetectionFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AF000200000001AF000001 /* BusDetectionFlow.swift */; };
 		B3AF000100000002AF000002 /* BusTrackingFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AF000200000002AF000002 /* BusTrackingFlow.swift */; };
-		B3AF000100000003AF000003 /* BusInfoFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AF000200000003AF000003 /* BusInfoFlow.swift */; };
 		B3B416CD2F4DEB2300767DE1 /* Main.view.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B416CA2F4DEB2300767DE1 /* Main.view.swift */; };
 		B3B416D82F4EFB0F00767DE1 /* Camera.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B416D72F4EFB0B00767DE1 /* Camera.swift */; };
 		B3B416DA2F4EFFD100767DE1 /* Camera.meta.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B416D92F4EFFCD00767DE1 /* Camera.meta.swift */; };
@@ -36,10 +34,8 @@
 		B3BCCC042F51B3C10085FC33 /* AVCaptureDevice.extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3BCCC032F51B3830085FC33 /* AVCaptureDevice.extensions.swift */; };
 		B3D0000100000001A0000001 /* YOLOModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D0000200000001A0000001 /* YOLOModel.swift */; };
 		B3D0000100000002A0000002 /* ImageLetterboxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D0000200000002A0000002 /* ImageLetterboxer.swift */; };
-		B3D0000100000003A0000003 /* OCRPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D0000200000003A0000003 /* OCRPipeline.swift */; };
 		B3D0000100000004A0000004 /* BusDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D0000200000004A0000004 /* BusDetector.swift */; };
 		B3D0000100000005A0000005 /* BusTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D0000200000005A0000005 /* BusTracker.swift */; };
-		B3D0000100000006A0000006 /* BusInfoDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D0000200000006A0000006 /* BusInfoDetector.swift */; };
 		B3F599332F59C7A80013A0A8 /* Camera.registration.meta.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F599322F59C7A80013A0A8 /* Camera.registration.meta.swift */; };
 		B3F599412F5B6AD10013A0A8 /* UIImage.extension.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3F599402F5B6AC60013A0A8 /* UIImage.extension.swift */; };
 /* End PBXBuildFile section */
@@ -78,7 +74,6 @@
 		B304ED522F4DA934002E01E7 /* Camera.controller.iphone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.controller.iphone.swift; sourceTree = "<group>"; };
 		B304ED532F4DA941002E01E7 /* Camera.controller.meta.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.controller.meta.swift; sourceTree = "<group>"; };
 		B304ED542F4DB517002E01E7 /* Camera.controller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.controller.swift; sourceTree = "<group>"; };
-		B30E1C902F56F908006F2FA1 /* busInfoYolo26sINT8512x896.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = busInfoYolo26sINT8512x896.mlpackage; sourceTree = "<group>"; };
 		B30E1C912F56F908006F2FA1 /* yolo26sINT8512x896.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = yolo26sINT8512x896.mlpackage; sourceTree = "<group>"; };
 		B30E1C962F56F932006F2FA1 /* SaveMov.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveMov.swift; sourceTree = "<group>"; };
 		B30E1C972F56F932006F2FA1 /* Speaker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Speaker.swift; sourceTree = "<group>"; };
@@ -94,7 +89,6 @@
 		B3AE000200000004AE000004 /* WorkflowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowManager.swift; sourceTree = "<group>"; };
 		B3AF000200000001AF000001 /* BusDetectionFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusDetectionFlow.swift; sourceTree = "<group>"; };
 		B3AF000200000002AF000002 /* BusTrackingFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusTrackingFlow.swift; sourceTree = "<group>"; };
-		B3AF000200000003AF000003 /* BusInfoFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusInfoFlow.swift; sourceTree = "<group>"; };
 		B3B416CA2F4DEB2300767DE1 /* Main.view.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Main.view.swift; sourceTree = "<group>"; };
 		B3B416D72F4EFB0B00767DE1 /* Camera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.swift; sourceTree = "<group>"; };
 		B3B416D92F4EFFCD00767DE1 /* Camera.meta.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.meta.swift; sourceTree = "<group>"; };
@@ -104,10 +98,8 @@
 		B3BCCC032F51B3830085FC33 /* AVCaptureDevice.extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVCaptureDevice.extensions.swift; sourceTree = "<group>"; };
 		B3D0000200000001A0000001 /* YOLOModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YOLOModel.swift; sourceTree = "<group>"; };
 		B3D0000200000002A0000002 /* ImageLetterboxer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLetterboxer.swift; sourceTree = "<group>"; };
-		B3D0000200000003A0000003 /* OCRPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRPipeline.swift; sourceTree = "<group>"; };
 		B3D0000200000004A0000004 /* BusDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusDetector.swift; sourceTree = "<group>"; };
 		B3D0000200000005A0000005 /* BusTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusTracker.swift; sourceTree = "<group>"; };
-		B3D0000200000006A0000006 /* BusInfoDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusInfoDetector.swift; sourceTree = "<group>"; };
 		B3F599322F59C7A80013A0A8 /* Camera.registration.meta.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Camera.registration.meta.swift; sourceTree = "<group>"; };
 		B3F599402F5B6AC60013A0A8 /* UIImage.extension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIImage.extension.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -230,7 +222,6 @@
 		B30E1C8F2F56F8EE006F2FA1 /* YOLO */ = {
 			isa = PBXGroup;
 			children = (
-				B30E1C902F56F908006F2FA1 /* busInfoYolo26sINT8512x896.mlpackage */,
 				B30E1C912F56F908006F2FA1 /* yolo26sINT8512x896.mlpackage */,
 			);
 			path = YOLO;
@@ -313,7 +304,6 @@
 			children = (
 				B3AF000200000001AF000001 /* BusDetectionFlow.swift */,
 				B3AF000200000002AF000002 /* BusTrackingFlow.swift */,
-				B3AF000200000003AF000003 /* BusInfoFlow.swift */,
 			);
 			path = Flows;
 			sourceTree = "<group>";
@@ -341,10 +331,8 @@
 			children = (
 				B3D0000200000001A0000001 /* YOLOModel.swift */,
 				B3D0000200000002A0000002 /* ImageLetterboxer.swift */,
-				B3D0000200000003A0000003 /* OCRPipeline.swift */,
 				B3D0000200000004A0000004 /* BusDetector.swift */,
 				B3D0000200000005A0000005 /* BusTracker.swift */,
-				B3D0000200000006A0000006 /* BusInfoDetector.swift */,
 			);
 			path = Domain;
 			sourceTree = "<group>";
@@ -538,23 +526,19 @@
 				B304ED582F4DB727002E01E7 /* Camera.manager.swift in Sources */,
 				B3D0000100000001A0000001 /* YOLOModel.swift in Sources */,
 				B3D0000100000002A0000002 /* ImageLetterboxer.swift in Sources */,
-				B3D0000100000003A0000003 /* OCRPipeline.swift in Sources */,
 				B3D0000100000004A0000004 /* BusDetector.swift in Sources */,
 				B3D0000100000005A0000005 /* BusTracker.swift in Sources */,
-				B3D0000100000006A0000006 /* BusInfoDetector.swift in Sources */,
 				B3AE000100000001AE000001 /* Flow.swift in Sources */,
 				B3AE000100000002AE000002 /* WorkflowOutput.swift in Sources */,
 				B3AE000100000003AE000003 /* WorkflowGraph.swift in Sources */,
 				B3AE000100000004AE000004 /* WorkflowManager.swift in Sources */,
 				B3AF000100000001AF000001 /* BusDetectionFlow.swift in Sources */,
 				B3AF000100000002AF000002 /* BusTrackingFlow.swift in Sources */,
-				B3AF000100000003AF000003 /* BusInfoFlow.swift in Sources */,
 				B3F599412F5B6AD10013A0A8 /* UIImage.extension.swift in Sources */,
 				B3BA000100000001BA000001 /* BusApproachTracker.swift in Sources */,
 				B30E1C922F56F908006F2FA1 /* yolo26sINT8512x896.mlpackage in Sources */,
 				B30E1C982F56F932006F2FA1 /* SaveMov.swift in Sources */,
 				B30E1C992F56F932006F2FA1 /* Speaker.swift in Sources */,
-				B30E1C932F56F908006F2FA1 /* busInfoYolo26sINT8512x896.mlpackage in Sources */,
 				B33EDDF52F51FEF500891D36 /* Camera.view.model.swift in Sources */,
 				B3B416DC2F4EFFDC00767DE1 /* Camera.iphone.swift in Sources */,
 			);

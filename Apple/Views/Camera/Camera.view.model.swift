@@ -29,20 +29,10 @@ class CameraViewModel: ObservableObject {
   private let speaker = Speaker()
   private var busy: Bool = false
   
-  private class BusIDTracker {
-    let busID: String
-    var number: String
-    
-    init(busID: String, number: String) {
-      self.busID = busID
-      self.number = number
-    }
-  }
-  private var buses: [BusIDTracker] = []
+  private var seenBusIDs: Set<String> = []
 
   #if DevDebug
-  private var recorder: CIImageRecorder?
-  private var recordingPending = false
+  private var frameSaver: DebugFrameSaver?
   private var lastFrameTime: CFAbsoluteTime = 0
   private var currentFPS: Double = 0
   private var lastTiming: BusApproachTracker.TimingInfo?
@@ -52,8 +42,7 @@ class CameraViewModel: ObservableObject {
     self.camera = camera
 
     let stage1 = try? YOLOModel(.bundle(name: "yolo26sINT8512x896"))
-    let stage2 = try? YOLOModel(.bundle(name: "busInfoYolo26sINT8512x896"))
-    self.tracker = BusApproachTracker(stage1Model: stage1, stage2Model: stage2)
+    self.tracker = BusApproachTracker(model: stage1)
   }
   
   func processFrame(_ frame: CIImage) async {
@@ -71,15 +60,6 @@ class CameraViewModel: ObservableObject {
       if delta > 0 { currentFPS = 1.0 / delta }
     }
     lastFrameTime = now
-
-    // Lazily create recorder on first frame so we capture the real size
-    if recordingPending {
-      recordingPending = false
-      let size = frame.extent.size
-      guard size.width > 0, size.height > 0 else { return }
-      recorder = CIImageRecorder(size: size)
-      recorder?.start()
-    }
     #endif
 
     do {
@@ -89,47 +69,28 @@ class CameraViewModel: ObservableObject {
       lastTiming = timing
       #endif
 
-      // Collect announcements: buses with a number first, ID-only second.
-      var withNumber: [String] = []
-      var withoutNumber: [String] = []
-
+      // Announce newly seen buses.
+      var newBuses: [String] = []
       for bus in results {
-        let number = bus.ocrText.leadingNaturalNumber()
-        let busID = bus.id
-        let busTracked = buses.first(where: { bus.id == $0.busID })
-
-        if busTracked == nil {
-          buses.append(BusIDTracker(busID: busID, number: number))
-          if number.isEmpty {
-            withoutNumber.append(busID)
-          } else {
-            withNumber.append("\(busID): \(number)")
-          }
-          continue
+        if seenBusIDs.insert(bus.id).inserted {
+          newBuses.append(bus.id)
         }
-
-        guard
-          !number.isEmpty,
-          let busTracked,
-          busTracked.number != number
-        else {
-          continue
-        }
-        busTracked.number = number
-        withNumber.append("\(busID): \(number)")
       }
 
-      let announcements = withNumber + withoutNumber
-      if !announcements.isEmpty {
-        speaker.speak(announcements.joined(separator: ". "))
+      let spokenString = newBuses.joined(separator: ". ")
+      if !spokenString.isEmpty {
+        speaker.speak(spokenString)
       }
       
-      // Record frame with overlay burned in
-      recorder?.append(
+      #if DevDebug
+      frameSaver?.appendFrame(
         frame,
         timing: lastTiming,
-        currentFPS: currentFPS
+        currentFPS: currentFPS,
+        busResults: results,
+        spokenString: spokenString
       )
+      #endif
     } catch {
       print("[CameraViewModel] processFrame error: \(error)")
     }
@@ -159,26 +120,19 @@ class CameraViewModel: ObservableObject {
   }
 
   #if DevDebug
-  // MARK: - Debug: Video Recording
+  // MARK: - Debug: Frame Recording
 
   private func startRecording() {
-    // Defer actual recorder creation to the first frame so we capture the real size
-    recordingPending = true
     lastFrameTime = 0
     currentFPS = 0
     lastTiming = nil
+    frameSaver = DebugFrameSaver()
+    frameSaver?.start()
   }
 
   private func stopRecording() {
-    recordingPending = false
-    recorder?.stopAndSaveToPhotos { result in
-      switch result {
-        case .success:
-          print("[DevDebug] Video saved to Photos")
-        case .failure(let error):
-          print("[DevDebug] Failed to save video: \(error)")
-      }
-    }
+    frameSaver?.stop()
+    frameSaver = nil
   }
 
   #endif

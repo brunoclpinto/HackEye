@@ -8,11 +8,9 @@ import AVFoundation
 struct CLIConfig {
     let inputPath: String
     let stage1ModelPath: String
-    let stage2ModelPath: String
     let detectorW: Int
     let detectorH: Int
     let stage1Conf: Double
-    let stage2Conf: Double
     let stage1BusClass: Int
     let stepsEnabled: Bool
     let debugDestination: String?
@@ -51,8 +49,8 @@ enum CLIError: Error, CustomStringConvertible {
 func parseArguments() throws -> CLIConfig {
     let args = CommandLine.arguments.dropFirst()
     let knownKeys: Set<String> = [
-        "input", "stage1Model", "stage2Model",
-        "detectorW", "detectorH", "stage1Conf", "stage2Conf", "stage1BusClass",
+        "input", "stage1Model",
+        "detectorW", "detectorH", "stage1Conf", "stage1BusClass",
         "steps", "debugDestination", "verbose", "json"
     ]
 
@@ -74,9 +72,6 @@ func parseArguments() throws -> CLIConfig {
     }
     guard let s1Path = dict["stage1Model"] else {
         throw CLIError.missingRequired("stage1Model")
-    }
-    guard let s2Path = dict["stage2Model"] else {
-        throw CLIError.missingRequired("stage2Model")
     }
 
     func intVal(_ key: String, default d: Int) throws -> Int {
@@ -101,11 +96,9 @@ func parseArguments() throws -> CLIConfig {
     return CLIConfig(
         inputPath: inputPath,
         stage1ModelPath: s1Path,
-        stage2ModelPath: s2Path,
         detectorW: try intVal("detectorW", default: 512),
         detectorH: try intVal("detectorH", default: 896),
         stage1Conf: try doubleVal("stage1Conf", default: 0.51),
-        stage2Conf: try doubleVal("stage2Conf", default: 0.50),
         stage1BusClass: try intVal("stage1BusClass", default: 5),
         stepsEnabled: stepsEnabled,
         debugDestination: debugDest,
@@ -182,9 +175,7 @@ Task {
         let config = try parseArguments()
         stderr("Compiling stage1 model...")
         let s1 = try compileAndLoadModel(name: "stage1", path: config.stage1ModelPath)
-        stderr("Compiling stage2 model...")
-        let s2 = try compileAndLoadModel(name: "stage2", path: config.stage2ModelPath)
-        let processor = CLIProcessor(config: config, stage1: s1, stage2: s2)
+        let processor = CLIProcessor(config: config, stage1: s1)
         try await processor.run()
     } catch {
         stderr("Error: \(error)")

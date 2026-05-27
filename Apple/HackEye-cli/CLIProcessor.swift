@@ -2,7 +2,6 @@ import Foundation
 import CoreImage
 import CoreGraphics
 import AVFoundation
-import Vision
 
 // MARK: - JSON Output Types
 
@@ -16,7 +15,6 @@ struct CLIFrameResult: Encodable {
     let frameNumber: Int
     let BusDetection: CLIDetectionResult
     let BusTracking: CLITrackingResult
-    let BusInfo: CLIInfoResult
 }
 
 struct CLIDetectionResult: Encodable {
@@ -29,26 +27,15 @@ struct CLITrackingResult: Encodable {
     let count: Int
 }
 
-struct CLIInfoResult: Encodable {
-    let detected: Bool
-    let results: [CLIBusInfoEntry]
-}
-
-struct CLIBusInfoEntry: Encodable {
-    let ocrRaw: String
-    let ocrSpoken: String
-}
-
 // MARK: - CLIProcessor
 
 final class CLIProcessor {
     let config: CLIConfig
     private let busDetector: BusDetector
     private let busTracker: BusTracker
-    private let busInfoDetector: BusInfoDetector
     private let debugOutput: CLIDebugOutput?
 
-    init(config: CLIConfig, stage1: YOLOModel, stage2: YOLOModel) {
+    init(config: CLIConfig, stage1: YOLOModel) {
         self.config = config
 
         var d1cfg = BusDetector.Config()
@@ -57,14 +44,8 @@ final class CLIProcessor {
         d1cfg.busClass = config.stage1BusClass
         d1cfg.confidence = config.stage1Conf
 
-        var d2cfg = BusInfoDetector.Config()
-        d2cfg.detectorW = config.detectorW
-        d2cfg.detectorH = config.detectorH
-        d2cfg.confidence = config.stage2Conf
-
         busDetector = BusDetector(model: stage1, config: d1cfg)
         busTracker = BusTracker()
-        busInfoDetector = BusInfoDetector(model: stage2, config: d2cfg)
 
         if config.stepsEnabled, let dest = config.debugDestination {
             debugOutput = CLIDebugOutput(basePath: dest)
@@ -173,35 +154,6 @@ final class CLIProcessor {
         let tracked = busTracker.update(detections: detections)
         let s2Ms = (CFAbsoluteTimeGetCurrent() - s2Start) * 1000
 
-        // Stage 3: Info for ALL tracked buses
-        let s3Start = CFAbsoluteTimeGetCurrent()
-        var busInfoResults: [(TrackedBus, BusInfoResult, CIImage?)] = []
-
-        for bus in tracked {
-            guard let det = detections.first(where: {
-                iou($0.boxDetector, bus.lastBoxDetector) >= 0.5
-            }) else { continue }
-
-            if det.boxOriginal.w < 2 || det.boxOriginal.h < 2 { continue }
-
-            let busCropCI = cropFromTopLeftAndNormalize(
-                image, srcW: srcW, srcH: srcH, boxTopLeft: det.boxOriginal
-            )
-            let bw = Double(busCropCI.extent.width)
-            let bh = Double(busCropCI.extent.height)
-            guard bw >= 2, bh >= 2 else { continue }
-
-            let infoResult = try await busInfoDetector.detect(
-                busCropCI: busCropCI, busCropW: bw, busCropH: bh,
-                ocrPreset: .default,
-                recognitionLanguages: ["pt-PT"],
-                usesLanguageCorrection: false,
-                recognitionLevel: .accurate
-            )
-
-            busInfoResults.append((bus, infoResult, busCropCI))
-        }
-        let s3Ms = (CFAbsoluteTimeGetCurrent() - s3Start) * 1000
         let totalMs = (CFAbsoluteTimeGetCurrent() - frameStart) * 1000
 
         // Debug output
@@ -213,17 +165,8 @@ final class CLIProcessor {
                 meta: meta,
                 detections: detections,
                 tracked: tracked,
-                busInfoResults: busInfoResults,
                 fps: fps,
-                s1Ms: s1Ms, s2Ms: s2Ms, s3Ms: s3Ms, totalMs: totalMs
-            )
-        }
-
-        // Build JSON result
-        let infoEntries: [CLIBusInfoEntry] = busInfoResults.map { (_, info, _) in
-            CLIBusInfoEntry(
-                ocrRaw: info.ocrText,
-                ocrSpoken: info.ocrText.leadingNaturalNumber()
+                s1Ms: s1Ms, s2Ms: s2Ms, totalMs: totalMs
             )
         }
 
@@ -237,10 +180,6 @@ final class CLIProcessor {
             BusTracking: CLITrackingResult(
                 detected: !tracked.isEmpty,
                 count: tracked.count
-            ),
-            BusInfo: CLIInfoResult(
-                detected: !infoEntries.isEmpty,
-                results: infoEntries
             )
         )
 
@@ -250,12 +189,6 @@ final class CLIProcessor {
             parts.append("[\(filePath)] frame \(index)")
             parts.append("detection: \(detections.count) bus(es)")
             parts.append("tracking: \(tracked.count) tracked")
-            if !infoEntries.isEmpty {
-                let ocrSummary = infoEntries.map { entry in
-                    entry.ocrSpoken.isEmpty ? entry.ocrRaw : entry.ocrSpoken
-                }.joined(separator: ", ")
-                parts.append("OCR: \(ocrSummary)")
-            }
             parts.append(String(format: "%.0f ms", totalMs))
             stderr(parts.joined(separator: " | "))
         }
@@ -272,23 +205,6 @@ final class CLIProcessor {
         let union = a.area + b.area - inter
         if union <= 0 { return 0 }
         return inter / union
-    }
-
-    private func cropFromTopLeftAndNormalize(
-        _ src: CIImage, srcW: Double, srcH: Double, boxTopLeft: Box
-    ) -> CIImage {
-        let ciY = srcH - (boxTopLeft.y1 + boxTopLeft.h)
-        let cropRect = CGRect(
-            x: boxTopLeft.x1, y: ciY,
-            width: boxTopLeft.w, height: boxTopLeft.h
-        ).integral
-        let bounds = CGRect(x: 0, y: 0, width: srcW, height: srcH)
-        let rr = cropRect.intersection(bounds).integral
-        if rr.isNull || rr.width < 1 || rr.height < 1 { return CIImage.empty() }
-        let cropped = src.cropped(to: rr)
-        return cropped.transformed(by: CGAffineTransform(
-            translationX: -rr.origin.x, y: -rr.origin.y
-        ))
     }
 
     private func printJSON(_ value: some Encodable) {

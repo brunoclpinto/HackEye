@@ -38,9 +38,8 @@ final class CLIDebugOutput {
         meta: LetterboxMeta,
         detections: [BusDetection],
         tracked: [TrackedBus],
-        busInfoResults: [(TrackedBus, BusInfoResult, CIImage?)],
         fps: Double?,
-        s1Ms: Double, s2Ms: Double, s3Ms: Double, totalMs: Double
+        s1Ms: Double, s2Ms: Double, totalMs: Double
     ) throws {
         let frameFolder = folder.appendingPathComponent(
             String(format: "frame_%04d", frameIndex)
@@ -115,32 +114,7 @@ final class CLIDebugOutput {
         ]
         saveJSON(trackResult, to: trackFolder.appendingPathComponent("result.json"))
 
-        // BusInfo/
-        if !busInfoResults.isEmpty {
-            let infoFolder = frameFolder.appendingPathComponent("BusInfo")
-            try FileManager.default.createDirectory(at: infoFolder, withIntermediateDirectories: true)
 
-            for (i, (bus, result, cropImage)) in busInfoResults.enumerated() {
-                let busFolder = infoFolder.appendingPathComponent("bus_\(i)")
-                try FileManager.default.createDirectory(at: busFolder, withIntermediateDirectories: true)
-
-                // work.png — the cropped bus region
-                if let crop = cropImage {
-                    saveCIImageAsPNG(crop, to: busFolder.appendingPathComponent("work.png"))
-                }
-
-                let busResult: [String: Any] = [
-                    "busId": bus.id,
-                    "busName": bus.name,
-                    "ocrRaw": result.ocrText,
-                    "ocrSpoken": result.ocrText.leadingNaturalNumber(),
-                    "infoBox": result.infoBoxOriginal.map { box in
-                        ["x1": box.x1, "y1": box.y1, "x2": box.x2, "y2": box.y2] as [String: Any]
-                    } as Any
-                ]
-                saveJSON(busResult, to: busFolder.appendingPathComponent("result.json"))
-            }
-        }
     }
 
     // MARK: - Image & JSON Helpers
