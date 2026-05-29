@@ -34,7 +34,16 @@ Expect some false positives, YOLO detects Tram, large trucks, campers, delivery 
 It does detect and performs OCR, but results are quite spotty, wrong for most of the time and only correct and clear when its way too close.  
 To improve accuracy and reduce amount of bad information it currently only speaks out the bus number.
 
+DROPPED, not good enough to spend valuable mobile resources.
+
 ## What am working on?
+
+### Semantic Segnentation
+Tested it by replacing bus detection, it does work wounderfully at a really short distance, so can't use it as a one model fits all.
+Noticed its heavy, requires around 100ms for processing at 512x896.
+To be tested for navigation, might be possible to run at lower resolution.
+
+### Sidewalk detection
 
 ## What will it do?
 ### Crosswalk Assistance 
@@ -62,3 +71,17 @@ A fail safe depth detection system that is meant to trigger when the previous 2 
 #### Matrix mapping
 Convert segmentation into 2D viable path matrix where fastest path can be easily calculated.
 Maybe i'll make it work, would be awesome though!!
+
+## Hardware
+
+### Mobile camera
+Works great, less battery drain than external but device positions sucks... could only make it work with full chest mobile phone harness which is not pratical enough for daily use.
+Still supports them just in case.
+Only back cameras though, my choice, front camera makes no sense.
+
+### Meta Ray-Ban gen1
+They work, paring process and device state communication is spotty but the SDK is still under dev and with great updates so far.
+
+Did hit a snag, left arm of the glasses is having internal ribbon contact issues after 1 year and 3 months usage.
+Trying to get response from ray-ban for warranty but so far nothing.
+Sad, love the glasses though the lenses suck big time for me... but then again, i'm the one that needs extra special conditions and equipment for confort.
