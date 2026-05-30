@@ -6,7 +6,7 @@ import CoreML
 /// Safety classification for segmented scene regions.
 public enum SafetyLevel: Int, Sendable, CaseIterable {
     case ignored = 0
-    case safe = 1       // Green #00FF00
+    case safe = 1       // Dark Green #008000
     case safeish = 2    // Orange #FF8C00
     case danger = 3     // Red #FF0000
     case death = 4      // Black #000000
@@ -23,7 +23,7 @@ public enum SafetyLevel: Int, Sendable, CaseIterable {
 
     public var colorG: UInt8 {
         switch self {
-        case .safe:    return 0xFF
+        case .safe:    return 0x80
         case .safeish: return 0x8C
         case .danger:  return 0x00
         case .death:   return 0x00
