@@ -12,6 +12,8 @@ struct CLIConfig {
     let detectorH: Int
     let stage1Conf: Double
     let stage1BusClass: Int
+    let segModelPath: String?
+    let segMinPixelCount: Int
     let stepsEnabled: Bool
     let debugDestination: String?
     let verbose: Bool
@@ -51,6 +53,7 @@ func parseArguments() throws -> CLIConfig {
     let knownKeys: Set<String> = [
         "input", "stage1Model",
         "detectorW", "detectorH", "stage1Conf", "stage1BusClass",
+        "segModel", "segMinPixelCount",
         "steps", "debugDestination", "verbose", "json"
     ]
 
@@ -100,6 +103,8 @@ func parseArguments() throws -> CLIConfig {
         detectorH: try intVal("detectorH", default: 896),
         stage1Conf: try doubleVal("stage1Conf", default: 0.51),
         stage1BusClass: try intVal("stage1BusClass", default: 5),
+        segModelPath: dict["segModel"],
+        segMinPixelCount: try intVal("segMinPixelCount", default: 50),
         stepsEnabled: stepsEnabled,
         debugDestination: debugDest,
         verbose: verbose,
@@ -175,7 +180,14 @@ Task {
         let config = try parseArguments()
         stderr("Compiling stage1 model...")
         let s1 = try compileAndLoadModel(name: "stage1", path: config.stage1ModelPath)
-        let processor = CLIProcessor(config: config, stage1: s1)
+
+        var segModel: YOLOModel? = nil
+        if let segPath = config.segModelPath {
+            stderr("Compiling segmentation model...")
+            segModel = try compileAndLoadModel(name: "seg", path: segPath)
+        }
+
+        let processor = CLIProcessor(config: config, stage1: s1, segModel: segModel)
         try await processor.run()
     } catch {
         stderr("Error: \(error)")

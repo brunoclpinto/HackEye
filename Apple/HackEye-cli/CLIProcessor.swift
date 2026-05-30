@@ -15,6 +15,24 @@ struct CLIFrameResult: Encodable {
     let frameNumber: Int
     let BusDetection: CLIDetectionResult
     let BusTracking: CLITrackingResult
+    let SafetySegmentation: CLISegmentationResult?
+}
+
+struct CLISegmentationResult: Encodable {
+    let gridW: Int
+    let gridH: Int
+    let objectCount: Int
+    let elapsedMs: Double
+    let objects: [CLISegmentedObjectResult]
+}
+
+struct CLISegmentedObjectResult: Encodable {
+    let classId: Int
+    let className: String
+    let safetyLevel: Int
+    let safetyLevelName: String
+    let pixelCount: Int
+    let polygon: [[String: Int]]
 }
 
 struct CLIDetectionResult: Encodable {
@@ -33,9 +51,11 @@ final class CLIProcessor {
     let config: CLIConfig
     private let busDetector: BusDetector
     private let busTracker: BusTracker
+    private let segModel: YOLOModel?
+    private let safetySegmentation: SafetySegmentation?
     private let debugOutput: CLIDebugOutput?
 
-    init(config: CLIConfig, stage1: YOLOModel) {
+    init(config: CLIConfig, stage1: YOLOModel, segModel: YOLOModel? = nil) {
         self.config = config
 
         var d1cfg = BusDetector.Config()
@@ -46,6 +66,9 @@ final class CLIProcessor {
 
         busDetector = BusDetector(model: stage1, config: d1cfg)
         busTracker = BusTracker()
+
+        self.segModel = segModel
+        self.safetySegmentation = segModel != nil ? SafetySegmentation() : nil
 
         if config.stepsEnabled, let dest = config.debugDestination {
             debugOutput = CLIDebugOutput(basePath: dest)
@@ -154,6 +177,54 @@ final class CLIProcessor {
         let tracked = busTracker.update(detections: detections)
         let s2Ms = (CFAbsoluteTimeGetCurrent() - s2Start) * 1000
 
+        // Stage 3: Safety Segmentation (optional)
+        var segResult: CLISegmentationResult? = nil
+        var segGrid: SegmentationGrid? = nil
+        var segObjects: [SegmentedObject] = []
+        var segMs: Double = 0
+
+        if let segModel = segModel, let segProcessor = safetySegmentation {
+            let segStart = CFAbsoluteTimeGetCurrent()
+
+            let dstW = Double(config.detectorW)
+            let dstH = Double(config.detectorH)
+            let (letterboxed, segMeta) = ImageLetterboxer.letterboxWithMeta(
+                image, srcW: srcW, srcH: srcH, dstW: dstW, dstH: dstH
+            )
+            let pb = try ImageLetterboxer.makePixelBuffer(
+                width: config.detectorW, height: config.detectorH
+            )
+            ImageLetterboxer.render(letterboxed, to: pb)
+
+            let segRaw = try segModel.predict(pixelBuffer: pb)
+            let grid = segProcessor.parseGrid(segRaw, letterboxMeta: segMeta)
+            let objects = segProcessor.extractObjects(
+                from: grid, meta: segMeta,
+                minPixelCount: config.segMinPixelCount
+            )
+
+            segGrid = grid
+            segObjects = objects
+            segMs = (CFAbsoluteTimeGetCurrent() - segStart) * 1000
+
+            segResult = CLISegmentationResult(
+                gridW: grid.gridW,
+                gridH: grid.gridH,
+                objectCount: objects.count,
+                elapsedMs: segMs,
+                objects: objects.map { obj in
+                    CLISegmentedObjectResult(
+                        classId: obj.classId,
+                        className: obj.className,
+                        safetyLevel: obj.safetyLevel.rawValue,
+                        safetyLevelName: obj.safetyLevel.label,
+                        pixelCount: obj.pixelCount,
+                        polygon: obj.polygon.map { ["x": $0.x, "y": $0.y] }
+                    )
+                }
+            )
+        }
+
         let totalMs = (CFAbsoluteTimeGetCurrent() - frameStart) * 1000
 
         // Debug output
@@ -165,8 +236,10 @@ final class CLIProcessor {
                 meta: meta,
                 detections: detections,
                 tracked: tracked,
+                segGrid: segGrid,
+                segObjects: segObjects,
                 fps: fps,
-                s1Ms: s1Ms, s2Ms: s2Ms, totalMs: totalMs
+                s1Ms: s1Ms, s2Ms: s2Ms, segMs: segMs, totalMs: totalMs
             )
         }
 
@@ -180,7 +253,8 @@ final class CLIProcessor {
             BusTracking: CLITrackingResult(
                 detected: !tracked.isEmpty,
                 count: tracked.count
-            )
+            ),
+            SafetySegmentation: segResult
         )
 
         // Verbose output to stderr
@@ -189,6 +263,9 @@ final class CLIProcessor {
             parts.append("[\(filePath)] frame \(index)")
             parts.append("detection: \(detections.count) bus(es)")
             parts.append("tracking: \(tracked.count) tracked")
+            if let seg = segResult {
+                parts.append("segmentation: \(seg.objectCount) objects")
+            }
             parts.append(String(format: "%.0f ms", totalMs))
             stderr(parts.joined(separator: " | "))
         }
