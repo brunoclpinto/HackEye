@@ -172,17 +172,17 @@ final class CLIDebugOutput {
         )
 
         // Build RGBA overlay bitmap at detector resolution.
-        // CIImage(bitmapData:) interprets row 0 as the bottom row,
-        // so we flip vertically: output row py corresponds to
-        // image row (detectorH - 1 - py).
+        // CIImage(bitmapData:) row 0 = bottom of image, but since both
+        // the letterboxed background and this overlay go through the same
+        // CIImage→CGImage→PNG pipeline, we write grid rows top-to-bottom
+        // into the bitmap without flipping — the compositing handles it.
         let bpp = 4
         var pixels = [UInt8](repeating: 0, count: detectorW * detectorH * bpp)
 
         for py in 0..<detectorH {
-            let imageRow = detectorH - 1 - py  // flip for CIImage bottom-left origin
             for px in 0..<detectorW {
                 let gridCol = min(grid.gridW - 1, px * grid.gridW / detectorW)
-                let gridRow = min(grid.gridH - 1, imageRow * grid.gridH / detectorH)
+                let gridRow = min(grid.gridH - 1, py * grid.gridH / detectorH)
                 let gridIdx = gridRow * grid.gridW + gridCol
                 let level = grid.safetyLevels[gridIdx]
 
