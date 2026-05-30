@@ -9,14 +9,14 @@ public enum SafetyLevel: Int, Sendable, CaseIterable {
     case safe = 1       // Dark Green #008000
     case safeish = 2    // Orange #FF8C00
     case danger = 3     // Red #FF0000
-    case death = 4      // Brown #8B4513
+    case death = 4      // Dark Blue #00008B
 
     public var colorR: UInt8 {
         switch self {
         case .safe:    return 0x00
         case .safeish: return 0xFF
         case .danger:  return 0xFF
-        case .death:   return 0x8B
+        case .death:   return 0x00
         case .ignored: return 0x00
         }
     }
@@ -26,7 +26,7 @@ public enum SafetyLevel: Int, Sendable, CaseIterable {
         case .safe:    return 0x80
         case .safeish: return 0x8C
         case .danger:  return 0x00
-        case .death:   return 0x45
+        case .death:   return 0x00
         case .ignored: return 0x00
         }
     }
@@ -36,7 +36,7 @@ public enum SafetyLevel: Int, Sendable, CaseIterable {
         case .safe:    return 0x00
         case .safeish: return 0x00
         case .danger:  return 0x00
-        case .death:   return 0x13
+        case .death:   return 0x8B
         case .ignored: return 0x00
         }
     }
