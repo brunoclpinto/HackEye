@@ -71,7 +71,7 @@ final class CLIProcessor {
         self.safetySegmentation = segModel != nil ? SafetySegmentation() : nil
 
         if config.stepsEnabled, let dest = config.debugDestination {
-            debugOutput = CLIDebugOutput(basePath: dest)
+            debugOutput = CLIDebugOutput(basePath: dest, segAlpha: config.segAlpha)
         } else {
             debugOutput = nil
         }

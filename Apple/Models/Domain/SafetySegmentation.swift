@@ -7,16 +7,16 @@ import CoreML
 public enum SafetyLevel: Int, Sendable, CaseIterable {
     case ignored = 0
     case safe = 1       // Green #00FF00
-    case safeish = 2    // Light Orange #FFB366 (reserved for future custom classes)
-    case danger = 3     // Dark Orange #FF6600
-    case death = 4      // Red #FF0000
+    case safeish = 2    // Orange #FF8C00
+    case danger = 3     // Red #FF0000
+    case death = 4      // Black #000000
 
     public var colorR: UInt8 {
         switch self {
         case .safe:    return 0x00
         case .safeish: return 0xFF
         case .danger:  return 0xFF
-        case .death:   return 0xFF
+        case .death:   return 0x00
         case .ignored: return 0x00
         }
     }
@@ -24,8 +24,8 @@ public enum SafetyLevel: Int, Sendable, CaseIterable {
     public var colorG: UInt8 {
         switch self {
         case .safe:    return 0xFF
-        case .safeish: return 0xB3
-        case .danger:  return 0x66
+        case .safeish: return 0x8C
+        case .danger:  return 0x00
         case .death:   return 0x00
         case .ignored: return 0x00
         }
@@ -34,18 +34,18 @@ public enum SafetyLevel: Int, Sendable, CaseIterable {
     public var colorB: UInt8 {
         switch self {
         case .safe:    return 0x00
-        case .safeish: return 0x66
+        case .safeish: return 0x00
         case .danger:  return 0x00
         case .death:   return 0x00
         case .ignored: return 0x00
         }
     }
 
-    /// 75% alpha for visible levels, 0 for ignored.
-    public var colorA: UInt8 {
+    /// Alpha for this level. Ignored is always 0; others use the provided value.
+    public func colorA(alpha: UInt8 = 191) -> UInt8 {
         switch self {
         case .ignored: return 0x00
-        default:       return 191
+        default:       return alpha
         }
     }
 

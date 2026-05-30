@@ -14,6 +14,7 @@ struct CLIConfig {
     let stage1BusClass: Int
     let segModelPath: String?
     let segMinPixelCount: Int
+    let segAlpha: Int
     let stepsEnabled: Bool
     let debugDestination: String?
     let verbose: Bool
@@ -53,7 +54,7 @@ func parseArguments() throws -> CLIConfig {
     let knownKeys: Set<String> = [
         "input", "stage1Model",
         "detectorW", "detectorH", "stage1Conf", "stage1BusClass",
-        "segModel", "segMinPixelCount",
+        "segModel", "segMinPixelCount", "segAlpha",
         "steps", "debugDestination", "verbose", "json"
     ]
 
@@ -105,6 +106,7 @@ func parseArguments() throws -> CLIConfig {
         stage1BusClass: try intVal("stage1BusClass", default: 5),
         segModelPath: dict["segModel"],
         segMinPixelCount: try intVal("segMinPixelCount", default: 50),
+        segAlpha: try intVal("segAlpha", default: 191),
         stepsEnabled: stepsEnabled,
         debugDestination: debugDest,
         verbose: verbose,

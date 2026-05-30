@@ -7,10 +7,12 @@ import ImageIO
 
 final class CLIDebugOutput {
     let basePath: String
+    let segAlpha: UInt8
     private let ciContext: CIContext
 
-    init(basePath: String) {
+    init(basePath: String, segAlpha: Int = 191) {
         self.basePath = basePath
+        self.segAlpha = UInt8(clamping: segAlpha)
         self.ciContext = ImageLetterboxer.ciContext
     }
 
@@ -190,7 +192,7 @@ final class CLIDebugOutput {
                 pixels[offset + 0] = level.colorR
                 pixels[offset + 1] = level.colorG
                 pixels[offset + 2] = level.colorB
-                pixels[offset + 3] = level.colorA
+                pixels[offset + 3] = level.colorA(alpha: segAlpha)
             }
         }
 
