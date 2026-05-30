@@ -10,9 +10,9 @@ final class CLIDebugOutput {
     let segAlpha: UInt8
     private let ciContext: CIContext
 
-    init(basePath: String, segAlpha: Int = 191) {
+    init(basePath: String, segAlpha: Double = 0.75) {
         self.basePath = basePath
-        self.segAlpha = UInt8(clamping: segAlpha)
+        self.segAlpha = UInt8(clamping: Int((max(0, min(1, segAlpha)) * 255).rounded()))
         self.ciContext = ImageLetterboxer.ciContext
     }
 

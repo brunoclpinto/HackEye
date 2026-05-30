@@ -72,6 +72,7 @@ final class CLIProcessor {
 
         if config.stepsEnabled, let dest = config.debugDestination {
             debugOutput = CLIDebugOutput(basePath: dest, segAlpha: config.segAlpha)
+
         } else {
             debugOutput = nil
         }
