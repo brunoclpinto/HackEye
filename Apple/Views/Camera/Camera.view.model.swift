@@ -31,6 +31,12 @@ class CameraViewModel: ObservableObject {
   
   private var seenBusIDs: Set<String> = []
 
+  // Segmentation
+  private let segModel: YOLOModel?
+  private let safetySegmentation: SafetySegmentation?
+  private let segDetectorW: Int = 512
+  private let segDetectorH: Int = 896
+
   #if DevDebug
   private var frameSaver: DebugFrameSaver?
   private var lastFrameTime: CFAbsoluteTime = 0
@@ -43,6 +49,10 @@ class CameraViewModel: ObservableObject {
 
     let stage1 = try? YOLOModel(.bundle(name: "yolo26sINT8512x896"))
     self.tracker = BusApproachTracker(model: stage1)
+
+    let seg = try? YOLOModel(.bundle(name: "yolo26s-semINT8512x896"))
+    self.segModel = seg
+    self.safetySegmentation = seg != nil ? SafetySegmentation() : nil
   }
   
   func processFrame(_ frame: CIImage) async {
@@ -81,6 +91,32 @@ class CameraViewModel: ObservableObject {
       if !spokenString.isEmpty {
         speaker.speak(spokenString)
       }
+
+      // Safety segmentation (runs independently of bus pipeline)
+      var segGrid: SegmentationGrid? = nil
+      var segObjects: [SegmentedObject] = []
+      var segMs: Double = 0
+
+      if let segModel = segModel, let segProcessor = safetySegmentation {
+        let segStart = CFAbsoluteTimeGetCurrent()
+        let srcW = Double(frame.extent.width)
+        let srcH = Double(frame.extent.height)
+        let dstW = Double(segDetectorW)
+        let dstH = Double(segDetectorH)
+
+        let (letterboxed, segMeta) = ImageLetterboxer.letterboxWithMeta(
+          frame, srcW: srcW, srcH: srcH, dstW: dstW, dstH: dstH
+        )
+        let pb = try ImageLetterboxer.makePixelBuffer(width: segDetectorW, height: segDetectorH)
+        ImageLetterboxer.render(letterboxed, to: pb)
+
+        let segRaw = try segModel.predict(pixelBuffer: pb)
+        segGrid = segProcessor.parseGrid(segRaw, letterboxMeta: segMeta)
+        if let grid = segGrid {
+          segObjects = segProcessor.extractObjects(from: grid, meta: segMeta)
+        }
+        segMs = (CFAbsoluteTimeGetCurrent() - segStart) * 1000
+      }
       
       #if DevDebug
       frameSaver?.appendFrame(
@@ -88,7 +124,12 @@ class CameraViewModel: ObservableObject {
         timing: lastTiming,
         currentFPS: currentFPS,
         busResults: results,
-        spokenString: spokenString
+        spokenString: spokenString,
+        segGrid: segGrid,
+        segObjects: segObjects,
+        segMs: segMs,
+        segDetectorW: segDetectorW,
+        segDetectorH: segDetectorH
       )
       #endif
     } catch {

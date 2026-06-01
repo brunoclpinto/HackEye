@@ -106,7 +106,7 @@ func parseArguments() throws -> CLIConfig {
         stage1BusClass: try intVal("stage1BusClass", default: 5),
         segModelPath: dict["segModel"],
         segMinPixelCount: try intVal("segMinPixelCount", default: 50),
-        segAlpha: try doubleVal("segAlpha", default: 0.75),
+        segAlpha: try doubleVal("segAlpha", default: 0.55),
         stepsEnabled: stepsEnabled,
         debugDestination: debugDest,
         verbose: verbose,

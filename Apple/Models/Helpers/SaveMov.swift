@@ -1,4 +1,5 @@
 import CoreImage
+import CoreGraphics
 import ImageIO
 import Foundation
 import UniformTypeIdentifiers
@@ -86,7 +87,12 @@ final class DebugFrameSaver {
     timing: BusApproachTracker.TimingInfo?,
     currentFPS: Double,
     busResults: [BusApproachTracker.BusResult],
-    spokenString: String
+    spokenString: String,
+    segGrid: SegmentationGrid? = nil,
+    segObjects: [SegmentedObject] = [],
+    segMs: Double = 0,
+    segDetectorW: Int = 0,
+    segDetectorH: Int = 0
   ) {
     queue.async {
       guard let sessionDir = self.sessionDir else { return }
@@ -162,6 +168,20 @@ final class DebugFrameSaver {
       }
 
       self.manifest.append(entry)
+
+      // SafetySegmentation debug output
+      if let grid = segGrid {
+        self.saveSegmentationDebug(
+          frame: frame,
+          grid: grid,
+          objects: segObjects,
+          segMs: segMs,
+          segDetectorW: segDetectorW,
+          segDetectorH: segDetectorH,
+          sessionDir: sessionDir,
+          frameIndex: self.frameIndex
+        )
+      }
     }
   }
 
@@ -274,5 +294,106 @@ final class DebugFrameSaver {
     f.locale = Locale(identifier: "en_US_POSIX")
     f.dateFormat = "yyyyMMdd_HHmmss"
     return f.string(from: date)
+  }
+
+  // MARK: - Segmentation Debug Output
+
+  private static let segAlpha: UInt8 = UInt8(clamping: Int((0.55 * 255).rounded()))
+
+  private func saveSegmentationDebug(
+    frame: CIImage,
+    grid: SegmentationGrid,
+    objects: [SegmentedObject],
+    segMs: Double,
+    segDetectorW: Int,
+    segDetectorH: Int,
+    sessionDir: URL,
+    frameIndex: Int
+  ) {
+    let segFolder = sessionDir.appendingPathComponent(
+      String(format: "frame_%06d_seg", frameIndex)
+    )
+    do {
+      try FileManager.default.createDirectory(at: segFolder, withIntermediateDirectories: true)
+    } catch {
+      print("[DebugFrameSaver] Failed to create seg folder: \(error)")
+      return
+    }
+
+    // work.png — safety overlay on letterboxed frame
+    let srcW = Double(frame.extent.width)
+    let srcH = Double(frame.extent.height)
+    let dstW = Double(segDetectorW)
+    let dstH = Double(segDetectorH)
+
+    let (letterboxed, _) = ImageLetterboxer.letterboxWithMeta(
+      frame, srcW: srcW, srcH: srcH, dstW: dstW, dstH: dstH
+    )
+
+    let overlayW = Int(dstW)
+    let overlayH = Int(dstH)
+    let bpp = 4
+    var pixels = [UInt8](repeating: 0, count: overlayW * overlayH * bpp)
+
+    for py in 0..<overlayH {
+      for px in 0..<overlayW {
+        let gridCol = min(grid.gridW - 1, px * grid.gridW / overlayW)
+        let gridRow = min(grid.gridH - 1, py * grid.gridH / overlayH)
+        let gridIdx = gridRow * grid.gridW + gridCol
+        let level = grid.safetyLevels[gridIdx]
+
+        guard level != .ignored else { continue }
+
+        let offset = (py * overlayW + px) * bpp
+        pixels[offset + 0] = level.colorR
+        pixels[offset + 1] = level.colorG
+        pixels[offset + 2] = level.colorB
+        pixels[offset + 3] = level.colorA(alpha: Self.segAlpha)
+      }
+    }
+
+    let overlayImage = CIImage(
+      bitmapData: Data(pixels),
+      bytesPerRow: overlayW * bpp,
+      size: CGSize(width: overlayW, height: overlayH),
+      format: .RGBA8,
+      colorSpace: CGColorSpaceCreateDeviceRGB()
+    )
+
+    let composited = overlayImage.composited(over: letterboxed)
+    saveCIImageAsPNG(composited, to: segFolder.appendingPathComponent("work.png"))
+
+    // result.json
+    let resultDict: [String: Any] = [
+      "gridW": grid.gridW,
+      "gridH": grid.gridH,
+      "elapsedMs": segMs,
+      "objectCount": objects.count,
+      "objects": objects.map { obj in
+        [
+          "classId": obj.classId,
+          "className": obj.className,
+          "safetyLevel": obj.safetyLevel.rawValue,
+          "safetyLevelName": obj.safetyLevel.label,
+          "pixelCount": obj.pixelCount,
+          "polygon": obj.polygon.map { ["x": $0.x, "y": $0.y] }
+        ] as [String: Any]
+      }
+    ]
+
+    if let data = try? JSONSerialization.data(
+      withJSONObject: resultDict, options: [.prettyPrinted, .sortedKeys]
+    ) {
+      try? data.write(to: segFolder.appendingPathComponent("result.json"))
+    }
+  }
+
+  private func saveCIImageAsPNG(_ image: CIImage, to url: URL) {
+    guard let cgImage = ciContext.createCGImage(image, from: image.extent) else { return }
+    guard let dest = CGImageDestinationCreateWithURL(
+      url as CFURL, "public.png" as CFString, 1, nil
+    ) else { return }
+    CGImageDestinationAddImage(dest, cgImage, nil)
+    CGImageDestinationFinalize(dest)
   }
 }
