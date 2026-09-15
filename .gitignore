@@ -62,9 +62,6 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 .DS_Store
 
-# Claude Code
-memory/
-
 # Secrets (MWDAT credentials)
 Secrets.xcconfig
 Apple/build

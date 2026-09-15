@@ -7,10 +7,12 @@ import ImageIO
 
 final class CLIDebugOutput {
     let basePath: String
+    let segAlpha: UInt8
     private let ciContext: CIContext
 
-    init(basePath: String) {
+    init(basePath: String, segAlpha: Double = 0.55) {
         self.basePath = basePath
+        self.segAlpha = UInt8(clamping: Int((max(0, min(1, segAlpha)) * 255).rounded()))
         self.ciContext = ImageLetterboxer.ciContext
     }
 
@@ -38,8 +40,10 @@ final class CLIDebugOutput {
         meta: LetterboxMeta,
         detections: [BusDetection],
         tracked: [TrackedBus],
+        segGrid: SegmentationGrid?,
+        segObjects: [SegmentedObject],
         fps: Double?,
-        s1Ms: Double, s2Ms: Double, totalMs: Double
+        s1Ms: Double, s2Ms: Double, segMs: Double, totalMs: Double
     ) throws {
         let frameFolder = folder.appendingPathComponent(
             String(format: "frame_%04d", frameIndex)
@@ -114,7 +118,93 @@ final class CLIDebugOutput {
         ]
         saveJSON(trackResult, to: trackFolder.appendingPathComponent("result.json"))
 
+        // SafetySegmentation/
+        if let grid = segGrid {
+            let segFolder = frameFolder.appendingPathComponent("SafetySegmentation")
+            try FileManager.default.createDirectory(at: segFolder, withIntermediateDirectories: true)
 
+            // work.png — letterboxed frame with colored safety overlay
+            let overlayImage = renderSafetyOverlay(
+                grid: grid,
+                originalImage: originalImage,
+                meta: meta
+            )
+            saveCIImageAsPNG(overlayImage, to: segFolder.appendingPathComponent("work.png"))
+
+            // result.json
+            let segResultDict: [String: Any] = [
+                "gridW": grid.gridW,
+                "gridH": grid.gridH,
+                "elapsedMs": segMs,
+                "objectCount": segObjects.count,
+                "objects": segObjects.map { obj in
+                    [
+                        "classId": obj.classId,
+                        "className": obj.className,
+                        "safetyLevel": obj.safetyLevel.rawValue,
+                        "safetyLevelName": obj.safetyLevel.label,
+                        "pixelCount": obj.pixelCount,
+                        "polygon": obj.polygon.map { ["x": $0.x, "y": $0.y] }
+                    ] as [String: Any]
+                }
+            ]
+            saveJSON(segResultDict, to: segFolder.appendingPathComponent("result.json"))
+        }
+    }
+
+    // MARK: - Safety Overlay Rendering
+
+    /// Render the segmentation grid as a colored RGBA overlay composited
+    /// on top of the letterboxed frame image.
+    private func renderSafetyOverlay(
+        grid: SegmentationGrid,
+        originalImage: CIImage,
+        meta: LetterboxMeta
+    ) -> CIImage {
+        let detectorW = Int(meta.dstW)
+        let detectorH = Int(meta.dstH)
+
+        // Recreate letterboxed background
+        let (letterboxed, _) = ImageLetterboxer.letterboxWithMeta(
+            originalImage,
+            srcW: meta.srcW, srcH: meta.srcH,
+            dstW: meta.dstW, dstH: meta.dstH
+        )
+
+        // Build RGBA overlay bitmap at detector resolution.
+        // CIImage(bitmapData:) row 0 = bottom of image, but since both
+        // the letterboxed background and this overlay go through the same
+        // CIImage→CGImage→PNG pipeline, we write grid rows top-to-bottom
+        // into the bitmap without flipping — the compositing handles it.
+        let bpp = 4
+        var pixels = [UInt8](repeating: 0, count: detectorW * detectorH * bpp)
+
+        for py in 0..<detectorH {
+            for px in 0..<detectorW {
+                let gridCol = min(grid.gridW - 1, px * grid.gridW / detectorW)
+                let gridRow = min(grid.gridH - 1, py * grid.gridH / detectorH)
+                let gridIdx = gridRow * grid.gridW + gridCol
+                let level = grid.safetyLevels[gridIdx]
+
+                guard level != .ignored else { continue }
+
+                let offset = (py * detectorW + px) * bpp
+                pixels[offset + 0] = level.colorR
+                pixels[offset + 1] = level.colorG
+                pixels[offset + 2] = level.colorB
+                pixels[offset + 3] = level.colorA(alpha: segAlpha)
+            }
+        }
+
+        let overlayImage = CIImage(
+            bitmapData: Data(pixels),
+            bytesPerRow: detectorW * bpp,
+            size: CGSize(width: detectorW, height: detectorH),
+            format: .RGBA8,
+            colorSpace: CGColorSpaceCreateDeviceRGB()
+        )
+
+        return overlayImage.composited(over: letterboxed)
     }
 
     // MARK: - Image & JSON Helpers
