@@ -67,3 +67,7 @@ Secrets.xcconfig
 Apple/build
 
 media/
+
+# R&D (Linux rig, see RnD/README.md)
+debug/
+models/

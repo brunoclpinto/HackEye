@@ -1,0 +1,31 @@
+{
+  "_source": "Ported from Apple/Models/Domain/SafetySegmentation.swift (SafetyLevel, CityscapesMapping). Swift side still hardcodes these values — see common/README.md Stage 1 status.",
+  "safetyLevels": {
+    "0": { "label": "ignored", "color": [0, 0, 0] },
+    "1": { "label": "safe", "color": [0, 128, 0] },
+    "2": { "label": "safe-ish", "color": [255, 140, 0] },
+    "3": { "label": "danger", "color": [255, 0, 0] },
+    "4": { "label": "death", "color": [0, 0, 139] }
+  },
+  "classes": [
+    { "id": 0, "name": "road", "safetyLevel": 3 },
+    { "id": 1, "name": "sidewalk", "safetyLevel": 1 },
+    { "id": 2, "name": "building", "safetyLevel": 4 },
+    { "id": 3, "name": "wall", "safetyLevel": 4 },
+    { "id": 4, "name": "fence", "safetyLevel": 4 },
+    { "id": 5, "name": "pole", "safetyLevel": 4 },
+    { "id": 6, "name": "traffic light", "safetyLevel": 4 },
+    { "id": 7, "name": "traffic sign", "safetyLevel": 4 },
+    { "id": 8, "name": "vegetation", "safetyLevel": 4 },
+    { "id": 9, "name": "terrain", "safetyLevel": 4 },
+    { "id": 10, "name": "sky", "safetyLevel": 0 },
+    { "id": 11, "name": "person", "safetyLevel": 4 },
+    { "id": 12, "name": "rider", "safetyLevel": 4 },
+    { "id": 13, "name": "car", "safetyLevel": 4 },
+    { "id": 14, "name": "truck", "safetyLevel": 4 },
+    { "id": 15, "name": "bus", "safetyLevel": 4 },
+    { "id": 16, "name": "train", "safetyLevel": 4 },
+    { "id": 17, "name": "motorcycle", "safetyLevel": 4 },
+    { "id": 18, "name": "bicycle", "safetyLevel": 4 }
+  ]
+}

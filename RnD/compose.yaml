@@ -1,0 +1,21 @@
+services:
+  rnd:
+    build: .
+    image: hackeye-rnd
+    working_dir: /rnd
+    volumes:
+      - .:/rnd
+      - ../media:/media:ro
+      - ../models:/models
+      - ../debug:/debug
+      - ../common:/common
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Also settable via `docker compose run --gpus all`. The reservation above
+    # is the durable form so plain `docker compose run rnd ...` gets the GPU
+    # without remembering the flag every time.

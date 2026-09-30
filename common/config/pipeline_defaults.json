@@ -1,0 +1,21 @@
+{
+  "_source": "Ported from Apple/Models/Domain/{BusDetector,BusTracker,SafetySegmentation}.swift Config structs. Swift side still hardcodes these values — see common/README.md Stage 1 status.",
+  "detector": {
+    "width": 512,
+    "height": 896,
+    "busClass": 5,
+    "confidence": 0.51,
+    "cropMargin": 0.0
+  },
+  "tracker": {
+    "iouMatchThreshold": 0.2,
+    "maxMissedFrames": 40,
+    "approachWindow": 5,
+    "approachMinFrames": 2,
+    "approachRatioThreshold": 0.001
+  },
+  "segmentation": {
+    "minPixelCount": 50,
+    "alpha": 0.55
+  }
+}
