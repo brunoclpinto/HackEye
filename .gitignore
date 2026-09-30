@@ -65,3 +65,5 @@ fastlane/test_output
 # Secrets (MWDAT credentials)
 Secrets.xcconfig
 Apple/build
+
+media/
