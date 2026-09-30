@@ -3,6 +3,12 @@ services:
     build: .
     image: hackeye-rnd
     working_dir: /rnd
+    # Run as the host user, not root — otherwise every file this writes to
+    # the bind-mounted debug/models/media/common dirs (there will be
+    # thousands, once real runs start) ends up root-owned and needs sudo to
+    # clean up. Override with `UID=$(id -u) GID=$(id -g) docker compose ...`
+    # if your host user isn't uid/gid 1000.
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - .:/rnd
       - ../media:/media:ro
