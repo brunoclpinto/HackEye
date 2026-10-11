@@ -70,14 +70,12 @@ production grid. Prefer `--seg-min-pixel-fraction` for anything other than
 
 - **Detection**: uses Ultralytics' own `.predict()` (decode + NMS included).
   Reliable today.
-- **Segmentation**: Cityscapes 19-class *semantic* segmentation isn't a
-  standard Ultralytics task, so this calls the checkpoint's underlying
-  `nn.Module` directly for raw logits (`src/models.py:SegmentationModel`).
-  **Unverified against the actual checkpoint** — `src/segmentation.py`
-  raises a clear error if the channel count isn't 19, but a checkpoint whose
-  forward pass does its own postprocessing, or outputs something structurally
-  different, isn't guaranteed to be caught. Verify with `models/export.py`
-  first.
+- **Segmentation**: uses Ultralytics' own `.predict()` with task='semantic'
+  (`src/models.py:SegmentationModel`), producing the 124-class Mapillary
+  Vistas v2.0 taxonomy this pipeline expects (`common/config/safety_mapping.json`).
+  `src/segmentation.py` raises a clear error if the channel count doesn't
+  match, but a checkpoint whose forward pass does its own postprocessing, or
+  outputs something structurally different, isn't guaranteed to be caught.
 
 ## Cross-implementation parity (once you have both sides to compare)
 

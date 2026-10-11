@@ -19,7 +19,7 @@ from detect import BusDetector, DetectorConfig
 from letterbox import letterbox_with_meta
 from models import SegmentationModel
 from profiles import InputSpec, resolve_seg_min_pixel_count
-from segmentation import extract_objects, parse_grid
+from segmentation import extract_objects, grid_from_semantic_mask
 from track import BusTracker
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
@@ -36,6 +36,8 @@ class PipelineConfig:
     debug_destination: Path | None
     verbose: bool
     json_output: bool
+    target_fps: float | None = None  # video only; None = every frame
+    save_original_png: bool = True
 
 
 class Pipeline:
@@ -87,19 +89,40 @@ class Pipeline:
             sys.exit(1)
         fps = cap.get(cv2.CAP_PROP_FPS) or None
 
+        # Sample at target_fps using grab() (decode-free) for skipped frames
+        # and retrieve() (actual decode) only for frames we keep — this is
+        # what makes striding actually cut runtime, not just disk usage.
+        step = 1
+        if self.config.target_fps and fps:
+            step = max(1, round(fps / self.config.target_fps))
+            effective_fps = fps / step
+            print(
+                f"[pipeline] sampling every {step} frames ({fps:.2f}fps source -> "
+                f"~{effective_fps:.2f}fps analyzed)",
+                file=sys.stderr,
+            )
+
         out_folder = self._resolve_out_folder(path.stem)
         frames = []
-        index = 0
+        source_index = 0
+        kept_index = 0
         while True:
-            ok, bgr = cap.read()
+            ok = cap.grab()
             if not ok:
                 break
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            frames.append(self._process_frame(rgb, index=index, file_path=str(path), out_folder=out_folder, fps=fps))
-            index += 1
+            if source_index % step == 0:
+                ok, bgr = cap.retrieve()
+                if not ok:
+                    break
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                frames.append(self._process_frame(
+                    rgb, index=kept_index, file_path=str(path), out_folder=out_folder, fps=fps
+                ))
+                kept_index += 1
+            source_index += 1
         cap.release()
 
-        print(f"Processed {index} frames total", file=sys.stderr)
+        print(f"Processed {kept_index} of {source_index} source frames", file=sys.stderr)
         return {"input": str(path), "frames": frames}
 
     def _resolve_out_folder(self, input_name: str) -> Path | None:
@@ -130,8 +153,8 @@ class Pipeline:
 
         if self.seg_model is not None:
             seg_start = time.perf_counter()
-            raw = self.seg_model.forward(letterboxed)
-            seg_grid = parse_grid(raw, meta)
+            class_ids = self.seg_model.predict_class_grid(letterboxed, dst_w, dst_h)
+            seg_grid = grid_from_semantic_mask(class_ids, meta)
             min_px = resolve_seg_min_pixel_count(
                 seg_grid.grid_w, seg_grid.grid_h, self.config.input_spec,
                 self.config.seg_min_pixel_count, self.config.seg_min_pixel_fraction,
@@ -148,10 +171,11 @@ class Pipeline:
 
         if out_folder is not None:
             debug_output.save_frame(
-                folder=out_folder, frame_index=index, original_rgb=rgb, meta=meta,
+                folder=out_folder, frame_index=index, original_rgb=rgb, letterboxed_rgb=letterboxed, meta=meta,
                 detections=detections, tracked=tracked, seg_grid=seg_grid, seg_objects=seg_objects,
                 seg_alpha=self.config.seg_alpha, fps=fps,
                 s1_ms=s1_ms, s2_ms=s2_ms, seg_ms=seg_ms, total_ms=total_ms,
+                save_original=self.config.save_original_png,
             )
 
         result = {

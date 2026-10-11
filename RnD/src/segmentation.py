@@ -39,7 +39,7 @@ def _load_mapping() -> tuple[dict[int, dict], dict[int, dict]]:
 
 CLASSES, SAFETY_LEVELS = _load_mapping()
 NUM_CLASSES = len(CLASSES)
-SKY_CLASS_ID = next(c["id"] for c in CLASSES.values() if c["name"] == "sky")
+SKY_CLASS_ID = next(c["id"] for c in CLASSES.values() if c["name"] == "nature sky")
 
 
 @dataclass
@@ -50,19 +50,11 @@ class SegmentationGrid:
     safety_levels: np.ndarray  # (gridH, gridW) int
 
 
-def parse_grid(raw: np.ndarray, meta: LetterboxMeta) -> SegmentationGrid:
-    """raw: [1, numClasses, gridH, gridW] or [numClasses, gridH, gridW] logits."""
-    arr = np.asarray(raw)
-    if arr.ndim == 4:
-        arr = arr[0]
-    if arr.shape[0] != NUM_CLASSES:
-        raise ValueError(
-            f"Segmentation model produced {arr.shape[0]} classes, expected {NUM_CLASSES} "
-            f"(Cityscapes). This model may not be the semantic-segmentation checkpoint "
-            f"expected here — see RnD/README.md model verification notes."
-        )
-
-    num_classes, grid_h, grid_w = arr.shape
+def _mask_padding_and_finish(class_ids: np.ndarray, grid_w: int, grid_h: int, meta: LetterboxMeta) -> SegmentationGrid:
+    """Shared tail of both parse paths below: blank out the letterbox padding
+    region (the model doesn't know it's padding, not scene) and attach safety
+    levels.
+    """
     input_w, input_h = meta.dst_w, meta.dst_h
     scale_x, scale_y = input_w / grid_w, input_h / grid_h
 
@@ -71,15 +63,13 @@ def parse_grid(raw: np.ndarray, meta: LetterboxMeta) -> SegmentationGrid:
     valid_min_row = int(np.floor(meta.pad_y / scale_y))
     valid_max_row = int(np.ceil((input_h - meta.pad_y) / scale_y)) - 1
 
-    class_ids = np.argmax(arr, axis=0).astype(np.int32)
-
     rows = np.arange(grid_h)[:, None]
     cols = np.arange(grid_w)[None, :]
     valid = (
         (rows >= valid_min_row) & (rows <= valid_max_row)
         & (cols >= valid_min_col) & (cols <= valid_max_col)
     )
-    class_ids = np.where(valid, class_ids, SKY_CLASS_ID)
+    class_ids = np.where(valid, class_ids, SKY_CLASS_ID).astype(np.int32)
 
     level_lut = np.zeros(NUM_CLASSES, dtype=np.int32)
     for cid, info in CLASSES.items():
@@ -87,6 +77,37 @@ def parse_grid(raw: np.ndarray, meta: LetterboxMeta) -> SegmentationGrid:
     safety_levels = level_lut[class_ids]
 
     return SegmentationGrid(grid_w=grid_w, grid_h=grid_h, class_ids=class_ids, safety_levels=safety_levels)
+
+
+def parse_grid(raw: np.ndarray, meta: LetterboxMeta) -> SegmentationGrid:
+    """raw: [1, numClasses, gridH, gridW] or [numClasses, gridH, gridW] logits.
+
+    For the raw-tensor / parity-testing path only (see models.py). The
+    pipeline's normal path is grid_from_semantic_mask below.
+    """
+    arr = np.asarray(raw)
+    if arr.ndim == 4:
+        arr = arr[0]
+    if arr.shape[0] != NUM_CLASSES:
+        raise ValueError(
+            f"Segmentation model produced {arr.shape[0]} classes, expected {NUM_CLASSES} "
+            f"(Mapillary Vistas v2.0). This model may not be the semantic-segmentation "
+            f"checkpoint expected here — see RnD/README.md model verification notes."
+        )
+    _, grid_h, grid_w = arr.shape
+    class_ids = np.argmax(arr, axis=0)
+    return _mask_padding_and_finish(class_ids, grid_w, grid_h, meta)
+
+
+def grid_from_semantic_mask(class_ids: np.ndarray, meta: LetterboxMeta) -> SegmentationGrid:
+    """class_ids: (H, W) array of already-argmaxed class ids, as returned by
+    Ultralytics' Results.semantic_mask.data for a 'semantic' task model
+    (confirmed as of ultralytics 8.4.167 — see RnD/src/models.py). Already at
+    full detector-input resolution, not a downsampled grid, so grid_w/grid_h
+    equal meta.dst_w/dst_h.
+    """
+    grid_h, grid_w = class_ids.shape
+    return _mask_padding_and_finish(class_ids, grid_w, grid_h, meta)
 
 
 def extract_objects(grid: SegmentationGrid, meta: LetterboxMeta, min_pixel_count: int) -> list[dict]:

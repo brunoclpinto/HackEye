@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--seg-model", help="Path to segmentation .pt checkpoint (optional)")
 
     res = parser.add_mutually_exclusive_group()
-    res.add_argument("--profile", choices=["production", "half", "third"],
+    res.add_argument("--profile", choices=["production", "half", "third", "quarter"],
                       help="production=512x896 (pins app geometry); half/third=native aspect, scaled down")
     res.add_argument("--size", help="Explicit WxH detector input size")
     res.add_argument("--aspect", help="Explicit W:H aspect ratio, fit to native extent")
@@ -79,6 +79,12 @@ def main() -> None:
     parser.add_argument("--seg-alpha", type=float, default=config.SEGMENTATION["alpha"])
     parser.add_argument("--debug-destination", default="/debug", help="Where to write per-frame debug dumps")
     parser.add_argument("--no-debug", action="store_true", help="Skip debug dumps entirely")
+    parser.add_argument("--no-original-png", action="store_true",
+                         help="Skip writing original.png (BusDetection/work.png already carries the "
+                              "full frame at native profile) -- roughly halves per-frame debug size")
+    parser.add_argument("--target-fps", type=float, default=None,
+                         help="Video only: sample at this rate instead of every source frame, "
+                              "using grab()-only skips so runtime scales down too, not just disk")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
 
@@ -114,6 +120,8 @@ def main() -> None:
         debug_destination=None if args.no_debug else Path(args.debug_destination),
         verbose=args.verbose,
         json_output=args.json_output,
+        target_fps=args.target_fps,
+        save_original_png=not args.no_original_png,
     )
 
     Pipeline(pipeline_config, detector, seg_model).run()

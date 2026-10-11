@@ -1,16 +1,18 @@
 """Model loading.
 
-Detection uses Ultralytics' full predict() pipeline (see detect.py docstring
-for why). Segmentation cannot: a 19-class Cityscapes *semantic* segmentation
-head is not a task Ultralytics' high-level API knows about (its "segment"
-task is *instance* segmentation with a different output format), so we load
-the checkpoint via Ultralytics (for convenience) but call the underlying
-torch module directly to get raw [1, 19, gridH, gridW] logits.
+Both detection and segmentation use Ultralytics' own `.predict()` pipeline.
+Confirmed empirically (ultralytics 8.4.167, 2026-09-30): 'yolo26s-sem' is a
+first-class Ultralytics checkpoint with task='semantic', producing exactly
+the classes this pipeline expects (124-class Mapillary Vistas v2.0, see
+common/config/safety_mapping.json), and Results.semantic_mask gives an
+already-argmaxed per-pixel class-id tensor at full input resolution.
+This superseded an earlier raw-forward workaround written when semantic
+segmentation wasn't assumed to be a supported Ultralytics task — see git
+history on this file if that path is ever needed again (e.g. for a
+CoreML-export parity check against raw logits).
 """
 
 from __future__ import annotations
-
-import sys
 
 import torch
 from ultralytics import YOLO
@@ -23,33 +25,19 @@ def load_detector(path: str, device: torch.device) -> YOLO:
 
 
 class SegmentationModel:
-    """Wraps a YOLO checkpoint's underlying nn.Module for raw-logit forward
-    passes. Validates output shape on first use — see segmentation.parse_grid
-    for the actual channel-count check.
-    """
-
     def __init__(self, path: str, device: torch.device):
         self.device = device
-        self._yolo = YOLO(path)
-        self._yolo.to(device)
-        self.net = self._yolo.model
-        self.net.eval()
-
-    @torch.no_grad()
-    def forward(self, letterboxed_rgb) -> "torch.Tensor":
-        tensor = torch.from_numpy(
-            (letterboxed_rgb.astype("float32") / 255.0)
-        ).permute(2, 0, 1).unsqueeze(0).to(self.device)
-
-        raw = self.net(tensor)
-        if isinstance(raw, (tuple, list)):
-            raw = raw[0]
-        if not isinstance(raw, torch.Tensor):
+        self.model = YOLO(path)
+        self.model.to(device)
+        if self.model.task != "semantic":
             print(
-                f"[models] segmentation model forward() returned {type(raw)}, "
-                "expected a raw tensor. The checkpoint's forward pass may include "
-                "its own postprocessing — inspect RnD/src/models.py:SegmentationModel.",
-                file=sys.stderr,
+                f"[models] WARNING: {path} has task={self.model.task!r}, expected 'semantic'. "
+                f"Results.semantic_mask may not exist — see models/README.md."
             )
-            sys.exit(1)
-        return raw.detach().float().cpu().numpy()
+
+    def predict_class_grid(self, letterboxed_rgb, dst_w: int, dst_h: int):
+        """Returns a (dst_h, dst_w) numpy array of class ids."""
+        results = self.model.predict(
+            source=letterboxed_rgb, imgsz=(dst_h, dst_w), device=self.device, verbose=False,
+        )
+        return results[0].semantic_mask.data.cpu().numpy()

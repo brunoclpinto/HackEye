@@ -45,14 +45,14 @@ def resolve_input_spec(
         w, h = PRODUCTION_SIZE
         return InputSpec(w, h, is_native_aspect=False, description="production (512x896, pinned)")
 
-    if profile in ("half", "third"):
-        divisor = 2 if profile == "half" else 3
+    if profile in ("half", "third", "quarter"):
+        divisor = {"half": 2, "third": 3, "quarter": 4}[profile]
         w = _align_up(round(src_w / divisor))
         h = _align_up(round(src_h / divisor))
         return InputSpec(w, h, is_native_aspect=True, description=f"{profile} of native, stride-aligned")
 
     if profile is not None:
-        raise ValueError(f"Unknown profile: {profile!r} (expected production, half, third)")
+        raise ValueError(f"Unknown profile: {profile!r} (expected production, half, third, quarter)")
 
     if size is not None:
         try:

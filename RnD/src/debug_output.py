@@ -11,7 +11,6 @@ import cv2
 import numpy as np
 
 from geometry import LetterboxMeta
-from letterbox import letterbox_with_meta
 from overlay import render_safety_overlay
 from segmentation import SegmentationGrid
 from track import BusDetection, TrackedBus
@@ -43,6 +42,7 @@ def save_frame(
     folder: Path,
     frame_index: int,
     original_rgb: np.ndarray,
+    letterboxed_rgb: np.ndarray,
     meta: LetterboxMeta,
     detections: list[BusDetection],
     tracked: list[TrackedBus],
@@ -51,11 +51,13 @@ def save_frame(
     seg_alpha: float,
     fps: float | None,
     s1_ms: float, s2_ms: float, seg_ms: float, total_ms: float,
+    save_original: bool = True,
 ) -> None:
     frame_folder = folder / f"frame_{frame_index:04d}"
     frame_folder.mkdir(parents=True, exist_ok=True)
 
-    _save_png(original_rgb, frame_folder / "original.png")
+    if save_original:
+        _save_png(original_rgb, frame_folder / "original.png")
 
     info = {
         "frameIndex": frame_index,
@@ -68,8 +70,7 @@ def save_frame(
     _save_json(info, frame_folder / "info.json")
 
     # BusDetection/
-    letterboxed, _ = letterbox_with_meta(original_rgb, int(meta.dst_w), int(meta.dst_h))
-    _save_png(letterboxed, frame_folder / "BusDetection" / "work.png")
+    _save_png(letterboxed_rgb, frame_folder / "BusDetection" / "work.png")
     _save_json({
         "detected": len(detections) > 0,
         "count": len(detections),
@@ -105,7 +106,7 @@ def save_frame(
 
     # SafetySegmentation/
     if seg_grid is not None:
-        overlay = render_safety_overlay(letterboxed, seg_grid, seg_alpha)
+        overlay = render_safety_overlay(letterboxed_rgb, seg_grid, seg_alpha)
         _save_png(overlay, frame_folder / "SafetySegmentation" / "work.png")
         _save_json({
             "gridW": seg_grid.grid_w,

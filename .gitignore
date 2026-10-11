@@ -71,3 +71,4 @@ media/
 # R&D (Linux rig, see RnD/README.md)
 debug/
 models/
+__pycache__/
