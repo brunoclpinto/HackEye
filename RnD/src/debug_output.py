@@ -5,6 +5,8 @@ output is directly comparable side by side with the macOS CLI's debug dumps.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 
 import cv2
@@ -30,6 +32,19 @@ def resolve_output_folder(base_path: Path, input_name: str) -> Path:
 def _save_png(rgb: np.ndarray, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(path), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+
+
+def _collect(src: Path, dst: Path) -> None:
+    """Gather a per-frame image into one run-level folder for flipping through
+    in an image viewer. Hard link so it costs no extra disk; copy if the
+    filesystem won't link.
+    """
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.unlink(missing_ok=True)
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copyfile(src, dst)
 
 
 def _save_json(data: dict, path: Path) -> None:
@@ -107,7 +122,9 @@ def save_frame(
     # SafetySegmentation/
     if seg_grid is not None:
         overlay = render_safety_overlay(letterboxed_rgb, seg_grid, seg_alpha)
-        _save_png(overlay, frame_folder / "SafetySegmentation" / "work.png")
+        work_png = frame_folder / "SafetySegmentation" / "work.png"
+        _save_png(overlay, work_png)
+        _collect(work_png, folder / "SafetySegmentation" / f"{frame_folder.name}.png")
         _save_json({
             "gridW": seg_grid.grid_w,
             "gridH": seg_grid.grid_h,
