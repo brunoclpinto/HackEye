@@ -71,10 +71,13 @@ production grid. Prefer `--seg-min-pixel-fraction` for anything other than
 - **Detection**: uses Ultralytics' own `.predict()` (decode + NMS included).
   Reliable today.
 - **Segmentation**: uses Ultralytics' own `.predict()` with task='semantic'
-  (`src/models.py:SegmentationModel`), producing the 124-class Mapillary
-  Vistas v2.0 taxonomy this pipeline expects (`common/config/safety_mapping.json`).
-  `src/segmentation.py` raises a clear error if the channel count doesn't
-  match, but a checkpoint whose forward pass does its own postprocessing, or
+  (`src/models.py:SegmentationModel`). The safety mapping is picked by
+  matching the checkpoint's class names against
+  `common/config/safety_mapping*.json` (124-class Mapillary Vistas v2.0 ->
+  `safety_mapping.json`; 48-class HackEye merge, e.g.
+  `Yolo26m-sem-HackEye20261011.pt` -> `safety_mapping_hackeye48.json`), and
+  loading fails if none matches. `src/segmentation.py` also raises a clear
+  error if the channel count doesn't match, but a checkpoint whose forward pass does its own postprocessing, or
   outputs something structurally different, isn't guaranteed to be caught.
 
 ## Cross-implementation parity (once you have both sides to compare)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
@@ -24,22 +25,52 @@ from scipy import ndimage
 from common_paths import find_common_dir
 from geometry import LetterboxMeta
 
-_CONFIG_PATH = find_common_dir() / "config" / "safety_mapping.json"
+_CONFIG_DIR = find_common_dir() / "config"
+_CONFIG_PATH = _CONFIG_DIR / "safety_mapping.json"
 
 _4_CONNECTIVITY = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
 
 
-def _load_mapping() -> tuple[dict[int, dict], dict[int, dict]]:
-    with open(_CONFIG_PATH) as f:
+def _load_mapping(path: Path = _CONFIG_PATH) -> tuple[dict[int, dict], dict[int, dict]]:
+    with open(path) as f:
         data = json.load(f)
     classes = {c["id"]: c for c in data["classes"]}
     levels = {int(k): v for k, v in data["safetyLevels"].items()}
     return classes, levels
 
 
+# Defaults to the 124-class Vistas mapping until select_mapping() is called
+# with a loaded model's class names (see models.SegmentationModel).
 CLASSES, SAFETY_LEVELS = _load_mapping()
 NUM_CLASSES = len(CLASSES)
 SKY_CLASS_ID = next(c["id"] for c in CLASSES.values() if c["name"] == "nature sky")
+
+
+def select_mapping(model_names: list[str]) -> Path:
+    """Switch to the common/config/safety_mapping*.json whose class names
+    match model_names exactly, in id order. Mapping is by class id, so a
+    checkpoint with a different taxonomy would otherwise be mislabeled
+    silently. Raises if no mapping file matches.
+
+    CLASSES / SAFETY_LEVELS are updated in place because overlay.py binds
+    them at import time.
+    """
+    global NUM_CLASSES, SKY_CLASS_ID
+    for path in sorted(_CONFIG_DIR.glob("safety_mapping*.json")):
+        classes, levels = _load_mapping(path)
+        if [classes[i]["name"] for i in sorted(classes)] == list(model_names):
+            CLASSES.clear()
+            CLASSES.update(classes)
+            SAFETY_LEVELS.clear()
+            SAFETY_LEVELS.update(levels)
+            NUM_CLASSES = len(CLASSES)
+            SKY_CLASS_ID = next(c["id"] for c in CLASSES.values() if c["name"] == "nature sky")
+            return path
+    raise ValueError(
+        f"No safety mapping in {_CONFIG_DIR} matches this segmentation model's "
+        f"{len(model_names)} class names. Add a safety_mapping_<name>.json whose "
+        f"classes list the model's names in id order."
+    )
 
 
 @dataclass
@@ -91,7 +122,7 @@ def parse_grid(raw: np.ndarray, meta: LetterboxMeta) -> SegmentationGrid:
     if arr.shape[0] != NUM_CLASSES:
         raise ValueError(
             f"Segmentation model produced {arr.shape[0]} classes, expected {NUM_CLASSES} "
-            f"(Mapillary Vistas v2.0). This model may not be the semantic-segmentation "
+            f"(per the selected safety mapping). This model may not be the semantic-segmentation "
             f"checkpoint expected here — see RnD/README.md model verification notes."
         )
     _, grid_h, grid_w = arr.shape

@@ -9,7 +9,11 @@ Cross-implementation shared state for HackEye — currently **data, not code**.
   `Apple/Models/Domain/{BusDetector,BusTracker,SafetySegmentation}.swift`'s
   19-class Cityscapes table, but `RnD/` has since moved to a model trained on
   124-class Mapillary Vistas v2.0, so `config/safety_mapping.json` now
-  reflects that instead (see its own `_source` field). Consumed today by
+  reflects that instead (see its own `_source` field).
+  `config/safety_mapping_hackeye48.json` is the same table collapsed to the
+  48-class HackEye merge (`HackEye-Models/.../merges/v1.yaml`) used by
+  `Yolo26m-sem-HackEye20261011.pt`; `RnD/` picks whichever mapping's class
+  names match the loaded checkpoint. Consumed today by
   `RnD/` (Python). **Not yet consumed by the Swift app** — the Swift
   `Config` structs and `CityscapesMapping.classes` still hold their own
   hardcoded Cityscapes copies, now diverged from this file. Wiring the app
