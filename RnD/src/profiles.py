@@ -1,11 +1,12 @@
 """Input resolution policy for the R&D rig.
 
-Default is the footage's native size and aspect ratio. Production geometry
+Default is 960px wide at the footage's native aspect ratio (never upscaled);
+--profile native keeps the full source size. Production geometry
 (512x896, portrait) is only used when explicitly requested via
 --profile production — letterboxing this landscape GoPro footage into a
 portrait target throws away ~68% of the frame as padding and downscales
-content ~7.5x (see plan doc). Native-by-default avoids drawing conclusions
-from that garbage.
+content ~7.5x (see plan doc). Native-aspect-by-default avoids drawing
+conclusions from that garbage.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import config
 
 STRIDE = 32
 PRODUCTION_SIZE = (512, 896)  # (w, h) — matches BusDetector.Config in Swift
+DEFAULT_WIDTH = 960
 
 
 @dataclass
@@ -51,8 +53,8 @@ def resolve_input_spec(
         h = _align_up(round(src_h / divisor))
         return InputSpec(w, h, is_native_aspect=True, description=f"{profile} of native, stride-aligned")
 
-    if profile is not None:
-        raise ValueError(f"Unknown profile: {profile!r} (expected production, half, third, quarter)")
+    if profile is not None and profile != "native":
+        raise ValueError(f"Unknown profile: {profile!r} (expected production, native, half, third, quarter)")
 
     if size is not None:
         try:
@@ -94,7 +96,15 @@ def resolve_input_spec(
             description=f"custom aspect {aspect} -> {aligned_w}x{aligned_h}",
         )
 
-    # Default: native size, stride-aligned.
+    if profile is None:
+        # Default: DEFAULT_WIDTH wide at native aspect, stride-aligned.
+        w = min(DEFAULT_WIDTH, src_w)
+        h = round(src_h * w / src_w)
+        aligned_w, aligned_h = _align_up(w), _align_up(h)
+        return InputSpec(aligned_w, aligned_h, is_native_aspect=True,
+                         description=f"default {w}w of native {src_w}x{src_h}, stride-aligned")
+
+    # --profile native: native size, stride-aligned.
     aligned_w, aligned_h = _align_up(src_w), _align_up(src_h)
     if (aligned_w, aligned_h) != (src_w, src_h):
         # The letterbox step (geometry.letterbox_params, applied per-frame)

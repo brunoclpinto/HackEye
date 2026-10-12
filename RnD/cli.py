@@ -63,8 +63,9 @@ def main() -> None:
     parser.add_argument("--seg-model", help="Path to segmentation .pt checkpoint (optional)")
 
     res = parser.add_mutually_exclusive_group()
-    res.add_argument("--profile", choices=["production", "half", "third", "quarter"],
-                      help="production=512x896 (pins app geometry); half/third=native aspect, scaled down")
+    res.add_argument("--profile", choices=["production", "native", "half", "third", "quarter"],
+                      help="Default (no flag) is 960px wide at native aspect. production=512x896 (pins app "
+                           "geometry); native=full source size; half/third/quarter=native aspect, scaled down")
     res.add_argument("--size", help="Explicit WxH detector input size")
     res.add_argument("--aspect", help="Explicit W:H aspect ratio, fit to native extent")
 

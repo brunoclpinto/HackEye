@@ -42,16 +42,18 @@ so output is directly comparable to the macOS CLI's dumps.
 
 ## Input resolution — read this before drawing conclusions
 
-**Default is the footage's native size and aspect ratio.** The GoPro clips in
+**Default is 960px wide at the footage's native aspect ratio** (e.g.
+1920x1080 or 3840x2160 -> 960x544; never upscaled). The GoPro clips in
 `media/` are 3840x2160 (16:9, landscape); production's detector input is
 512x896 (portrait). Letterboxing native footage into the production shape
 would pad ~68% of the frame black and downscale content ~7.5x — see the plan
 doc for the numbers. Don't do that unless you're deliberately reproducing app
 geometry.
 
-- (no flag) — native size, stride-32 aligned (2160 -> 2176, reported not silent)
+- (no flag) — 960px wide, native aspect, stride-32 aligned (540 -> 544)
+- `--profile native` — native size, stride-32 aligned (2160 -> 2176, reported not silent)
 - `--profile production` — pins 512x896 to reproduce app geometry exactly
-- `--profile half` / `--profile third` — native aspect, scaled down for faster iteration
+- `--profile half` / `third` / `quarter` — native aspect, scaled down for faster iteration
 - `--size WxH` / `--aspect W:H` — explicit override
 
 **Caveat that doesn't go away with any flag:** this footage is landscape;

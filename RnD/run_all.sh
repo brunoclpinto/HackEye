@@ -11,7 +11,6 @@ for clip in GOPR4927 GP014927 GP024927; do
     --input "/media/${clip}.MP4" \
     --stage1-model /models/detector.pt \
     --seg-model /models/segmentation.pt \
-    --profile quarter \
     --target-fps 10 \
     --seg-min-pixel-fraction 0.0001089 \
     --no-original-png \
