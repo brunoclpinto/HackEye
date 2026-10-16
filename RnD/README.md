@@ -90,3 +90,38 @@ with logic differences. Instead: dump a raw output tensor from the Apple CLI
 for a few frames, feed that *same tensor* through
 `src/segmentation.parse_grid` / `src/detect.parse_detections`, and compare
 `result.json`. Exact match is the bar.
+
+## Lab (v26.1 — collision detection)
+
+A web UI for researching production behaviour on this headless box: pick
+footage from `media/`, analyse a time range with the segmentation model, then
+play it back with the safety mask, walking corridor and collision hazards
+drawn over the video, and hear the warnings (speech in clock notation —
+12 = straight ahead, 9 = left, 3 = right — plus left/right-panned beeps that
+speed up as an obstacle gets closer).
+
+- **Open:** `https://megabeast.tail97a14.ts.net/` from any tailnet device
+  (`tailscale serve` → `127.0.0.1:8765`). Fallback: `ssh -L 8765:localhost:8765 megabeast`
+  and open `http://localhost:8765`.
+- **Runs always:** compose service `lab` (`restart: unless-stopped`). The GPU
+  model loads per job and is released after 5 min idle.
+  `docker compose up -d lab` / `docker compose logs -f lab`.
+- **Workflow:**
+  1. Pick a recording and build its proxy (one-time 960p H.264 copy of all
+     chapters back to back).
+  2. Choose a range, model and fps, then click **Analyse**. Segmentation-only
+     runs take ~20 ms/frame, so 1 min at 6 fps finishes in seconds.
+  3. Play the result. Tap **Enable audio** first; iOS requires a tap.
+  4. Change the mount preset or HFOV, then **Re-run collision**. This only
+     re-runs the collision logic over the stored grids, with no new inference,
+     so tuning takes seconds.
+- **Code:**
+  - `lab/CONTRACTS.md`: the spec — coordinates, JSON shapes, API.
+  - `lab/server.py`, `lab/recordings.py`, `lab/analysis.py`: the backend.
+  - `lab/static/`: the frontend (vanilla JS).
+  - `src/collision.py`: the collision logic (pure; meant to be ported to Swift).
+  - `../common/config/collision.json`: the tunable rules. Bump its `version`
+    (`v26.1.x`) when behaviour changes.
+- **Output:** everything goes under `../debug/lab/` (gitignored): proxies,
+  runs (grids, masks, hazards/events), and per-recording settings.
+- **Tests:** `docker compose run --rm --entrypoint python rnd -m pytest tests -q`

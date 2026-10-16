@@ -1,0 +1,46 @@
+{
+  "version": "v26.1.0",
+  "obstacleClasses": {
+    "static": ["pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign",
+               "sidewalk-obstacle", "barrier", "barrier fence", "barrier guard-rail",
+               "divider", "barrier wall", "nature vegetation"],
+    "moving": ["person", "rider", "vehicle", "animal"]
+  },
+  "spokenLabels": {
+    "pole": "pole",
+    "sign": "sign",
+    "traffic-light": "traffic light",
+    "traffic-light pedestrians": "traffic light",
+    "traffic-sign": "traffic sign",
+    "sidewalk-obstacle": "obstacle",
+    "barrier": "barrier",
+    "barrier fence": "fence",
+    "barrier guard-rail": "guard rail",
+    "divider": "divider",
+    "barrier wall": "wall",
+    "nature vegetation": "vegetation",
+    "person": "person",
+    "rider": "cyclist",
+    "vehicle": "vehicle",
+    "animal": "animal"
+  },
+  "defaultMount": "chest",
+  "defaultHfovDeg": 118,
+  "mountPresets": {
+    "chest":    {"label": "Chest",          "corridor": {"horizon": 0.45, "bottomY": 1.0, "topWidth": 0.12, "bottomWidth": 0.60, "centerX": 0.5}},
+    "head":     {"label": "Head / helmet",  "corridor": {"horizon": 0.40, "bottomY": 1.0, "topWidth": 0.10, "bottomWidth": 0.45, "centerX": 0.5}},
+    "handheld": {"label": "Handheld",       "corridor": {"horizon": 0.50, "bottomY": 1.0, "topWidth": 0.14, "bottomWidth": 0.70, "centerX": 0.5}}
+  },
+  "minComponentFraction": 0.0004,
+  "urgency": {
+    "static": {"caution": {"proximity": 0.35, "ttc": null}, "warning": {"proximity": 0.60, "ttc": 3.0}, "imminent": {"proximity": 0.85, "ttc": 1.5}},
+    "moving": {"caution": {"proximity": 0.25, "ttc": null}, "warning": {"proximity": 0.50, "ttc": 4.0}, "imminent": {"proximity": 0.75, "ttc": 2.0}}
+  },
+  "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "approachWindowSeconds": 1.5},
+  "speech": {"template": "{label}, {clock} o'clock", "trackCooldownSeconds": 4.0, "globalMinGapSeconds": 1.2},
+  "tones": {
+    "intervalSeconds": {"caution": 1.0, "warning": 0.5, "imminent": 0.2},
+    "frequencyHz":     {"caution": 660, "warning": 880, "imminent": 1100},
+    "durationSeconds": 0.08
+  }
+}

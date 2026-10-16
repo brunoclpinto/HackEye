@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import config
-from geometry import Box
+from geometry import Box, iou
 
 
 @dataclass
@@ -160,10 +160,4 @@ def _compute_approach(tr: _Track, config: TrackerConfig) -> None:
 
 
 def _iou(a: Box, b: Box) -> float:
-    xa, ya = max(a.x1, b.x1), max(a.y1, b.y1)
-    xb, yb = min(a.x2, b.x2), min(a.y2, b.y2)
-    inter = max(0.0, xb - xa) * max(0.0, yb - ya)
-    union = a.area + b.area - inter
-    if union <= 0:
-        return 0.0
-    return inter / union
+    return iou(a, b)

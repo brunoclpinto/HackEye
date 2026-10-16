@@ -34,6 +34,17 @@ class Box:
         return self.w * self.h
 
 
+def iou(a: Box, b: Box) -> float:
+    """Intersection-over-union of two boxes; 0 when both are degenerate."""
+    xa, ya = max(a.x1, b.x1), max(a.y1, b.y1)
+    xb, yb = min(a.x2, b.x2), min(a.y2, b.y2)
+    inter = max(0.0, xb - xa) * max(0.0, yb - ya)
+    union = a.area + b.area - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
 @dataclass
 class LetterboxMeta:
     """Mirrors LetterboxMeta.swift — maps boxes between original <-> detector

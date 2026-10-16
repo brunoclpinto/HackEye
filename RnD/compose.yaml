@@ -25,3 +25,36 @@ services:
     # Also settable via `docker compose run --gpus all`. The reservation above
     # is the durable form so plain `docker compose run rnd ...` gets the GPU
     # without remembering the flag every time.
+
+  # HackEye Lab (lab/server.py): web UI for picking footage, analysing a range
+  # and playing it back with overlays + collision audio. Always on: the GPU
+  # model is loaded per job and released when idle, so this holds no VRAM
+  # between runs. Bound to localhost only; reached over Tailscale
+  # (`tailscale serve`) or an SSH tunnel -- see README.md "Lab".
+  lab:
+    image: hackeye-rnd
+    working_dir: /rnd
+    user: "${UID:-1000}:${GID:-1000}"
+    entrypoint: ["uvicorn", "lab.server:app", "--host", "0.0.0.0", "--port", "8765"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      # Ultralytics wants a writable config dir; the image's $HOME isn't
+      # writable for the host user (same issue HackEye-Models solved).
+      YOLO_CONFIG_DIR: /debug/lab/.ultralytics
+    volumes:
+      - .:/rnd
+      - ../media:/media:ro
+      - ../models:/models
+      - ../debug:/debug
+      - ../common:/common
+      # Trained HackEye releases, selectable in the Lab's model picker.
+      - ../../HackEye-Models/models:/hackeye-models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
