@@ -10,6 +10,7 @@
 // its caret.
 import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole } from "./util.js";
 import { api } from "./api.js";
+import { frameAt, orderCandidates, fillFor } from "./autofill.js";
 
 const VERDICTS = [["correct", "✓", "Correct (c)"], ["incorrect", "✗", "Incorrect (x)"], ["remove", "⊘", "Should not be said (r)"]];
 const ADD_ROLES = [...ROLES, "other"];
@@ -25,7 +26,7 @@ function el(tag, cls, text) {
 }
 
 export class Reviews {
-  /** hooks: {seek(t), getTime(), pause(), transport(id)} supplied by app.js */
+  /** hooks: {seek(t), getTime(), pause(), isPaused(), getFrames(), getTemplates(), transport(id)} supplied by app.js */
   constructor(hooks) {
     this.h = hooks;
     this.rec = null; this.run = null;
@@ -34,6 +35,7 @@ export class Reviews {
     this.items = []; this.curIdx = -2; this.lastT = 0;
     this.expanded = new Set(); this.drafts = new Map(); this.timers = new Map();
     this.queue = Promise.resolve(); this.loadToken = 0;
+    this.followPlayhead = false; this.cand = null; // add-form state (§10a)
     this.list = $("#rvList"); this.empty = $("#rvEmpty");
     this._wire();
     this.render();
@@ -342,12 +344,44 @@ export class Reviews {
   // ------------------------------------------------------------ add form
   openAdd() {
     if (!this.rec) return;
-    const f = $("#rvAddForm");
-    f.hidden = false;
+    $("#rvAddForm").hidden = false;
+    this.followPlayhead = true; this._resetAuto();
     $("#rvAddT").value = fmtTime(this.h.getTime(), 1);
     $("#rvAddText").focus();
   }
-  closeAdd() { $("#rvAddForm").hidden = true; $("#rvAddText").value = ""; $("#rvAddNote").value = ""; }
+  closeAdd() {
+    $("#rvAddForm").hidden = true; $("#rvAddText").value = ""; $("#rvAddNote").value = "";
+    this.followPlayhead = false; this._resetAuto();
+  }
+
+  /** app.js calls this on pause / seeked / frame step: a paused playhead drives the add form's time (§10a). */
+  playheadChanged() {
+    if ($("#rvAddForm").hidden || !this.h.isPaused()) return;
+    this.followPlayhead = true; // a pause, seek or step re-enables tracking after a manual edit
+    const v = fmtTime(this.h.getTime(), 1), inp = $("#rvAddT");
+    if (inp.value !== v) { inp.value = v; this._resetAuto(); }
+  }
+  _resetAuto() { this.cand = null; const i = $("#rvAddAutoInfo"); i.hidden = true; i.textContent = ""; }
+
+  /** Fill text + role from the analysed frame at the form time; repeated clicks cycle candidates. */
+  autofill() {
+    const t = parseTime($("#rvAddT").value);
+    if (!(t >= 0)) { toast("Enter a valid time first."); return; }
+    if (!this.cand || this.cand.t !== t) {
+      const frame = frameAt(this.h.getFrames(), t);
+      if (!frame) { toast(this.run ? "No analysed frame at this time (outside the run range)." : "Load a run to auto-fill."); return; }
+      this.cand = { t, list: orderCandidates(frame), i: -1 };
+    }
+    const c = this.cand;
+    if (!c.list.length) { toast("nothing detected at this time", "info"); return; }
+    c.i = (c.i + 1) % c.list.length;
+    const it = c.list[c.i], { text, role } = fillFor(it, this.h.getTemplates());
+    $("#rvAddText").value = text.slice(0, 300);
+    $("#rvAddRole").value = role;
+    const info = $("#rvAddAutoInfo");
+    info.textContent = `${c.i + 1}/${c.list.length} · ${it.className ?? it.label} · ${it.role ?? "none"}`;
+    info.hidden = false;
+  }
 
   async submitAdd() {
     if (!this.rec) return;
@@ -392,7 +426,9 @@ export class Reviews {
     for (const r of ADD_ROLES) sel.add(new Option(r, r));
     sel.value = "danger";
     $("#rvAddBtn").addEventListener("click", () => ($("#rvAddForm").hidden ? this.openAdd() : this.closeAdd()));
-    $("#rvAddHead").addEventListener("click", () => { $("#rvAddT").value = fmtTime(this.h.getTime(), 1); });
+    $("#rvAddHead").addEventListener("click", () => { this.followPlayhead = true; $("#rvAddT").value = fmtTime(this.h.getTime(), 1); this._resetAuto(); });
+    $("#rvAddT").addEventListener("input", () => { this.followPlayhead = false; this._resetAuto(); });
+    $("#rvAddAuto").addEventListener("click", () => this.autofill());
     $("#rvAddCancel").addEventListener("click", () => this.closeAdd());
     $("#rvAddSubmit").addEventListener("click", () => this.submitAdd());
     $("#rvAddText").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); this.submitAdd(); } });

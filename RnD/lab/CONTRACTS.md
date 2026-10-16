@@ -503,3 +503,21 @@ Same as v26.1.0, with these differences:
   - `c` / `x` / `r` toggle correct / incorrect / remove on the highlighted row.
   - `a` opens "add at playhead".
 - **Optimistic updates:** on API failure, show a toast with `detail` and revert. Reviews load when a recording is selected; they don't depend on a run being loaded, but verdict rows need a run.
+
+### 10a. Add-form helpers (v26.1.3)
+- **Time follows the paused playhead.**
+  - While the video is paused, the add form's time field tracks the playhead. It updates on `seeked`, on frame step and on `pause`, and is filled when the form opens.
+  - A manual edit of the time field stops this until the next pause, seek or reopen of the form. The "⟲ playhead" button also re-enables it.
+  - While playing, the field is left alone.
+- **Auto-fill button** (next to the text field):
+  - **Frame:** the analysed frame with the largest `t ≤ form time` from the loaded run's hazards (nothing if outside the run range: show a toast).
+  - **Candidates:** all of that frame's `hazards` items, ordered by role (`final` → `danger` → `feature` → `context` → `none`), then by `stepsTo` ascending (nulls last).
+  - **Fill:** text from `collision.json` `speech.templates` (from `GET /api/config/collision`):
+    - danger/final/none → `danger`
+    - feature → `feature`
+    - context → `context`
+    - movers with `moving === true` and positive `closingMps` → `approach`
+    
+    Use `{label}`, `{clock}` and `{steps}` = round(`stepsTo`). The role select is set to the item's role; `none` maps to `danger`, since a missed item is usually a missed warning, and the user can change it.
+  - **Cycling:** clicking Auto-fill again cycles to the next candidate. An indicator shows `n/N · <className> · <role>`. Changing the form time resets the cycle.
+  - **Behaviour:** the text stays editable after auto-fill; auto-fill only overwrites text and role, never the note. With no candidates, show a toast "nothing detected at this time".

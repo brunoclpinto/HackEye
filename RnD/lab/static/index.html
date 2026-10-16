@@ -137,7 +137,11 @@
           <button type="button" id="rvAddHead" title="Set to playhead">&#10226; playhead</button>
           <select id="rvAddRole" aria-label="Role"></select>
         </div>
-        <input id="rvAddText" maxlength="300" placeholder="What should have been said, e.g. bench, 1 o'clock, 4 steps" autocomplete="off">
+        <div class="row rv-textline">
+          <input id="rvAddText" maxlength="300" placeholder="What should have been said, e.g. bench, 1 o'clock, 4 steps" autocomplete="off">
+          <button type="button" id="rvAddAuto" title="Fill from what is detected at this time (click again for the next candidate)">Auto-fill</button>
+        </div>
+        <div id="rvAddAutoInfo" class="hint" hidden></div>
         <textarea id="rvAddNote" rows="2" maxlength="2000" placeholder="Note (optional)"></textarea>
         <div class="row"><button type="button" id="rvAddSubmit" class="primary">Add</button><button type="button" id="rvAddCancel">Cancel</button></div>
       </div>

@@ -131,6 +131,7 @@ input[type=range] { max-width: 140px; }
 .rv-transport button { min-width: 44px; }
 .rv-addform { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px dashed var(--accent); border-radius: 6px; margin-bottom: 8px; background: var(--panel); }
 .rv-addform .row > * { min-height: 40px; } .rv-addform .row input { flex: 0 0 90px; }
+.rv-addform .rv-textline input { flex: 1 1 auto; min-width: 0; } .rv-addform #rvAddAutoInfo { margin: 0; font-size: 12px; }
 .rv-addform input, .rv-addform textarea, .rv-addform select { font: inherit; }
 textarea { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; width: 100%; resize: vertical; }
 

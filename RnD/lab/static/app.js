@@ -23,6 +23,9 @@ const reviews = new Reviews({
   seek: (t) => seekTo(t),
   pause: () => video.pause(),
   getTime: () => video.currentTime || 0,
+  isPaused: () => video.paused,
+  getFrames: () => S.hazards?.frames ?? [],
+  getTemplates: () => S.config?.speech?.templates ?? null,
   transport: (id) => $(`#${id}`).click(),
 });
 
@@ -440,10 +443,10 @@ function wire() {
     if (video.currentSrc) toast(`Video failed to load (${video.error?.message || "unsupported or missing proxy"})`);
   });
   video.addEventListener("play", () => { $("#playBtn").innerHTML = "&#10074;&#10074;"; });
-  video.addEventListener("pause", () => { $("#playBtn").innerHTML = "&#9654;"; writeHash(); });
+  video.addEventListener("pause", () => { $("#playBtn").innerHTML = "&#9654;"; writeHash(); reviews.playheadChanged(); });
   video.addEventListener("ended", () => { $("#playBtn").innerHTML = "&#9654;"; });
   video.addEventListener("timeupdate", () => { if (!("requestVideoFrameCallback" in video)) updateTime(video.currentTime); });
-  video.addEventListener("seeked", () => { updateTime(video.currentTime); syncDefaultRange(); writeHash(); });
+  video.addEventListener("seeked", () => { updateTime(video.currentTime); syncDefaultRange(); writeHash(); reviews.playheadChanged(); });
   overlay.onFrame = updateTime; // exact presented-frame time from rVFC (or currentTime in fallback)
   setInterval(() => { if (!video.paused) writeHash(); }, 1000);
 
