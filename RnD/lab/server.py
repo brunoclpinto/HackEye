@@ -333,7 +333,7 @@ def get_mask(run_id: str, index: int) -> FileResponse:
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
 
-# --- speech reviews (§10) ----------------------------------------------------
+# --- notification (speech + beeps) reviews (§10, §14) ----------------------------------------------------
 
 def _review_call(fn, *args):
     try:

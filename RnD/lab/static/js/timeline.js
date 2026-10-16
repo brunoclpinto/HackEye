@@ -1,4 +1,5 @@
-// Timeline strip: speech ticks (role colours, filterable), tone-density heat row, playhead; click/drag to seek.
+// Timeline strip: speech ticks (role colours, filterable), beep episodes as bars (role colours; runs without
+// `beeps` events fall back to the tone-density heat row), playhead; click/drag to seek.
 import { eventColor, eventRole, URGENCY_RANK, fmtTime, clamp } from "./util.js";
 
 export class Timeline {
@@ -7,7 +8,7 @@ export class Timeline {
     this.ctx = canvas.getContext("2d");
     this.onSeek = onSeek;
     this.start = 0; this.end = 0;
-    this.allSpeech = []; this.speech = []; this.tones = [];
+    this.allSpeech = []; this.speech = []; this.tones = []; this.allBeeps = []; this.beeps = [];
     this.roles = null;       // Set of visible roles, null = all
     this.playhead = null;
     this.heat = null;
@@ -24,6 +25,7 @@ export class Timeline {
     this.start = run ? run.request.start : 0;
     this.end = run ? run.request.end : 0;
     this.allSpeech = events.filter((e) => e.type === "speech");
+    this.allBeeps = events.filter((e) => e.type === "beeps" && e.tEnd > e.t);
     this.applyRoles();
     this.tones = events.filter((e) => e.type === "tone");
     this.heat = null;
@@ -31,7 +33,9 @@ export class Timeline {
   }
 
   applyRoles() {
-    this.speech = this.roles ? this.allSpeech.filter((e) => this.roles.has(eventRole(e))) : this.allSpeech;
+    const vis = (list) => (this.roles ? list.filter((e) => this.roles.has(eventRole(e))) : list);
+    this.speech = vis(this.allSpeech);
+    this.beeps = vis(this.allBeeps);
   }
 
   setRoles(roles) { this.roles = roles; this.applyRoles(); this.draw(); }
@@ -99,15 +103,26 @@ export class Timeline {
       ctx.strokeStyle = eventColor(s);
       ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, tickH); ctx.stroke();
     }
-    // tone-density heat row
-    if (!this.heat) this.computeHeat(w);
-    const { counts, max } = this.heat;
-    const bw = w / counts.length, hy = tickH + 4;
-    counts.forEach((n, i) => {
-      if (!n) return;
-      ctx.fillStyle = `rgba(255,140,26,${(0.15 + 0.85 * n / max).toFixed(3)})`;
-      ctx.fillRect(i * bw, hy, Math.ceil(bw), 10);
-    });
+    const hy = tickH + 4;
+    c.dataset.beeps = String(this.beeps.length);   // E2E hook: beep bars drawn
+    if (this.allBeeps.length) {
+      // beep episodes: one bar per episode, coloured by role (at least 2 px wide so short ones stay visible)
+      for (const b of this.beeps) {
+        const x0 = this.xOf(b.t, w), x1 = this.xOf(b.tEnd, w);
+        ctx.fillStyle = eventColor(b);
+        ctx.fillRect(x0, hy, Math.max(2, x1 - x0), 10);
+      }
+    } else {
+      // older runs: tone-density heat row
+      if (!this.heat) this.computeHeat(w);
+      const { counts, max } = this.heat;
+      const bw = w / counts.length;
+      counts.forEach((n, i) => {
+        if (!n) return;
+        ctx.fillStyle = `rgba(255,140,26,${(0.15 + 0.85 * n / max).toFixed(3)})`;
+        ctx.fillRect(i * bw, hy, Math.ceil(bw), 10);
+      });
+    }
     // labels
     ctx.fillStyle = css.getPropertyValue("--muted").trim() || "#888";
     ctx.font = "11px system-ui, sans-serif";

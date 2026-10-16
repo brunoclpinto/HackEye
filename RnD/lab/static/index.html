@@ -89,7 +89,7 @@
         <legend>Audio</legend>
         <button type="button" id="audioBtn" class="on" aria-pressed="true">&#128266; Audio on</button>
         <label class="inline"><input type="checkbox" id="speechChk" checked> Speech</label>
-        <label class="inline"><input type="checkbox" id="tonesChk" checked> Tones</label>
+        <label class="inline"><input type="checkbox" id="tonesChk" checked> Beeps</label>
         <label class="inline" title="Playback speaks your added phrases and skips the ones you marked as should-not-be-said"><input type="checkbox" id="reviewPreviewChk" checked> Hear review edits</label>
         <label class="inline"><input type="checkbox" id="muteChk"> Mute all (m)</label>
         <label class="inline"><input type="checkbox" id="videoSoundChk"> Video sound</label>
@@ -111,38 +111,45 @@
     <canvas id="timeline" aria-label="Run timeline"></canvas>
     <div id="roleChips" class="chips" role="group" aria-label="Show roles"></div>
     <div class="legend">
-      <span class="muted">ticks = speech by role, orange bar = beep density</span>
+      <span class="muted">ticks = speech by role, bars = beep episodes (collisions)</span>
     </div>
   </main>
 
-  <aside id="reviewPanel" aria-label="Speech review">
+  <aside id="reviewPanel" aria-label="Notification review">
     <div class="rv-head">
-      <h2>Speech review</h2>
+      <h2>Notification review</h2>
+      <div id="rvTotal" class="hint rv-total"></div>
       <div class="rv-counts" aria-live="polite">
         <span class="rv-c ok" title="Correct">&#10003; <b id="rvCorrect">0</b></span>
         <span class="rv-c bad" title="Incorrect">&#10007; <b id="rvIncorrect">0</b></span>
         <span class="rv-c rm" title="Should not be said">&#8856; <b id="rvRemove">0</b></span>
         <span class="rv-c add" title="Added by you">+ <b id="rvAdded">0</b></span>
-        <span class="rv-c un" title="Spoken, not yet reviewed"><b id="rvUnrev">&ndash;</b> unreviewed</span>
+        <span class="rv-c un" title="Notified (spoken or beeped), not yet reviewed"><b id="rvUnrev">&ndash;</b> unreviewed</span>
       </div>
       <div class="rv-bar">
-        <button type="button" id="rvAddBtn" class="primary" disabled title="Add a phrase the system missed (a)">+ Add speech at playhead</button>
+        <button type="button" id="rvAddBtn" class="primary" disabled title="Add a notification the system missed (a)">+ Add notification at playhead</button>
         <span class="rv-transport">
           <button type="button" id="rvPrev" aria-label="Previous frame">&#9664;&#9664;</button>
           <button type="button" id="rvPlay" aria-label="Play / pause">&#9199;</button>
           <button type="button" id="rvNext" aria-label="Next frame">&#9654;&#9654;</button>
         </span>
-        <a id="rvExport" href="#" download="speech-reviews.json" hidden>Export</a>
+        <a id="rvExport" href="#" download="notification-reviews.json" hidden>Export</a>
       </div>
       <div id="rvAddForm" class="rv-addform" hidden>
         <div class="row">
           <input id="rvAddT" class="mono" inputmode="decimal" aria-label="Time" autocomplete="off">
           <button type="button" id="rvAddHead" title="Set to playhead">&#10226; playhead</button>
           <span id="rvAddFollow" class="rv-follow" hidden title="While paused, the time follows every seek and frame step. Typing a time stops this.">&#8635; following playhead</span>
+          <select id="rvAddType" aria-label="Type"><option value="speech">speech</option><option value="beeps">beeps</option></select>
           <select id="rvAddRole" aria-label="Role"></select>
         </div>
+        <div id="rvAddEndRow" class="row" hidden>
+          <label class="inline" for="rvAddEnd">End</label>
+          <input id="rvAddEnd" class="mono" inputmode="decimal" aria-label="End time" autocomplete="off">
+          <button type="button" id="rvAddEndHead" title="Set the end of the beeps to the playhead">&#10226; end from playhead</button>
+        </div>
         <div class="row rv-textline">
-          <input id="rvAddText" maxlength="300" placeholder="What should have been said, e.g. bench, 1 o'clock, 4 steps" autocomplete="off">
+          <input id="rvAddText" maxlength="300" placeholder="What should have been said, e.g. bench, 1 o'clock, 4 steps (beeps: beeps · pole at 12)" autocomplete="off">
           <button type="button" id="rvAddAuto" title="Fill from what is detected at this time (click again for the next candidate)">Auto-fill</button>
         </div>
         <div id="rvAddAutoInfo" class="hint" hidden></div>

@@ -12,7 +12,7 @@ const video = $("#video");
 
 const S = {
   recs: [], rec: null, settings: null, config: null, models: null,
-  runs: [], run: null, events: [], speech: [], roles: new Set(ROLES),
+  runs: [], run: null, events: [], speech: [], tones: [], notes: [], roles: new Set(ROLES),
   pendingSeek: null, seekGen: 0, rangeTouched: false, runPoll: null, recPoll: null, loadedVideoRec: null,
 };
 
@@ -225,8 +225,8 @@ async function rerunCollision() {
     const ms = performance.now() - t0;
     const fmt = (v) => (v < 1000 ? Math.round(v) + " ms" : (v / 1000).toFixed(2) + " s");
     const compute = r.elapsedSeconds != null ? `${fmt(r.elapsedSeconds * 1000)} compute, ` : "";
-    info.textContent = `Collision ${r.version ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events`;
-    api(`/api/runs/${S.run.id}`, { quiet: true }).then((run) => { S.run = run; applyRunMeta(); reviews.setRun(run, S.speech); }).catch(() => {});
+    info.textContent = `Collision ${r.version ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events · ${S.events.filter((e) => e.type === "beeps").length} beeps`;
+    api(`/api/runs/${S.run.id}`, { quiet: true }).then((run) => { S.run = run; applyRunMeta(); reviews.setRun(run, S.notes); }).catch(() => {});
   } catch { info.textContent = "Failed (see error)"; }
   finally { btn.disabled = !S.run; }
 }
@@ -348,7 +348,7 @@ function watchRun(runId) {
 }
 
 function unloadRun() {
-  S.run = null; S.events = []; S.speech = [];
+  S.run = null; S.events = []; S.speech = []; S.tones = []; S.notes = [];
   hazards.setRun(null);
   overlay.setRun(null);
   audio.setEvents([]);
@@ -363,6 +363,9 @@ async function loadRunData(run, links) {
   const events = await api(ev);
   S.events = events.events ?? [];
   S.speech = S.events.filter((e) => e.type === "speech");
+  S.tones = S.events.filter((e) => e.type === "tone");
+  // Notifications (CONTRACTS §14): speech phrases and beeps episodes; runs without `beeps` events just show speech.
+  S.notes = S.events.filter((e) => e.type === "speech" || e.type === "beeps").sort((a, b) => a.t - b.t);
   // Only the window around the playhead is fetched (never the whole hazards.json); it streams in behind the UI.
   hazards.setRun(run);
   overlay.setRun(run);
@@ -370,7 +373,7 @@ async function loadRunData(run, links) {
   audio.setEvents(S.events);
   refreshAudioEvents();
   timeline.set(run, S.events);
-  reviews.setRun(run, S.speech);
+  reviews.setRun(run, S.notes);
 }
 
 /** Where the playhead will be once this run is shown (a pending seek wins, then the current time, clamped into the run). */
@@ -379,12 +382,25 @@ function playheadForRun(run) {
   return clamp(t, run.request.start, run.request.end);
 }
 
-/** System events + (with "Hear review edits") the user's added phrases, minus the ⊘ removed ones. */
+/**
+ * System events + (with "Hear review edits") the user's added phrases and beeps, minus the ⊘ removed
+ * phrases and the tones of ⊘ removed beeps episodes.
+ */
 function refreshAudioEvents() {
   const preview = $("#reviewPreviewChk").checked;
-  let speech = S.speech;
-  if (preview) speech = [...speech.filter((e) => !reviews.isRemoved(e)), ...reviews.addedEvents()];
+  let speech = S.speech, tones = S.tones;
+  if (preview) {
+    speech = [...speech.filter((e) => !reviews.isRemoved(e)), ...reviews.addedEvents()];
+    const silenced = reviews.silencedBeeps();
+    if (silenced.length) {
+      const EPS = 0.05;
+      tones = tones.filter((e) => !silenced.some((b) => e.t >= b.t - EPS && e.t <= (b.tEnd ?? b.t) + EPS
+        && (b.trackId === undefined || e.trackId === undefined || b.trackId === e.trackId)));
+    }
+    tones = [...tones, ...reviews.addedTones()];
+  }
   audio.setSpeechEvents(speech);
+  audio.setToneEvents(tones);
 }
 
 function applyRunMeta() {

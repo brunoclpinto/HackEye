@@ -1,0 +1,449 @@
+{
+ "source": "User's second Lab review (Lab v26.1.5, collision v26.1.5) on recording 4929, run 7b9d5ac14e14 (0-3093 s, fps 6, Yolo26m-sem-HackEye20261012-544.pt, chest mount defaults). Kept in the repo because version bumps wipe Lab runs/reviews.",
+ "windows": [
+  {
+   "key": "w0",
+   "start": 0.0,
+   "end": 10.0
+  },
+  {
+   "key": "w1",
+   "start": 28.0,
+   "end": 42.0
+  },
+  {
+   "key": "w2",
+   "start": 45.0,
+   "end": 62.0
+  },
+  {
+   "key": "w3",
+   "start": 70.0,
+   "end": 80.0
+  },
+  {
+   "key": "w4",
+   "start": 114.0,
+   "end": 126.0
+  }
+ ],
+ "classNames": [
+  "animal",
+  "barrier",
+  "curb",
+  "barrier fence",
+  "barrier guard-rail",
+  "divider",
+  "barrier wall",
+  "flat bike-lane",
+  "crosswalk",
+  "flat driveway",
+  "parking",
+  "flat pedestrian-area",
+  "flat rail-track",
+  "flat road",
+  "flat road-shoulder",
+  "flat service-lane",
+  "flat sidewalk",
+  "flat traffic-island",
+  "structure bridge",
+  "building",
+  "structure tunnel",
+  "person",
+  "rider",
+  "lane-line-dashed",
+  "continuous solid",
+  "marking-other",
+  "discrete stop-line",
+  "symbol bicycle",
+  "nature mountain",
+  "terrain",
+  "nature sky",
+  "nature snow",
+  "nature vegetation",
+  "nature water",
+  "sign",
+  "sidewalk-obstacle",
+  "utility-cover",
+  "pole",
+  "object pothole",
+  "traffic-light",
+  "traffic-light pedestrians",
+  "traffic-sign",
+  "vehicle",
+  "ego-vehicle",
+  "void dynamic",
+  "void ground",
+  "void static",
+  "void unlabeled"
+ ],
+ "gridW": 240,
+ "gridH": 135,
+ "srcW": 1920,
+ "srcH": 1080,
+ "settings": {
+  "mount": "chest",
+  "hfovDeg": null,
+  "cameraHeightM": null,
+  "stepLengthM": null
+ },
+ "systemSpeechV26_1_5": [
+  {
+   "t": 0.6673,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 11, building at 2",
+   "trackId": 2,
+   "urgency": "none",
+   "clock": 11,
+   "pan": -0.6489
+  },
+  {
+   "t": 3.1698,
+   "type": "speech",
+   "role": "context",
+   "text": "vehicle at 12",
+   "trackId": 33,
+   "urgency": "none",
+   "clock": 12,
+   "pan": -0.0623
+  },
+  {
+   "t": 6.3397,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 10, building at 1, vehicle at 11",
+   "trackId": 53,
+   "urgency": "none",
+   "clock": 10,
+   "pan": -0.7449
+  },
+  {
+   "t": 35.327,
+   "type": "speech",
+   "role": "danger",
+   "text": "obstacle, 12 o'clock, 5 steps",
+   "trackId": 385,
+   "urgency": "danger",
+   "clock": 12,
+   "pan": 0.0069
+  },
+  {
+   "t": 44.5028,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 12",
+   "trackId": 874,
+   "urgency": "none",
+   "clock": 12,
+   "pan": 0.1708
+  },
+  {
+   "t": 48.5068,
+   "type": "speech",
+   "role": "danger",
+   "text": "obstacle, 12 o'clock, 6 steps",
+   "trackId": 969,
+   "urgency": "danger",
+   "clock": 12,
+   "pan": -0.1171
+  },
+  {
+   "t": 52.344,
+   "type": "speech",
+   "role": "context",
+   "text": "parked car at 10",
+   "trackId": 1161,
+   "urgency": "none",
+   "clock": 10,
+   "pan": -0.8419
+  },
+  {
+   "t": 55.5138,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 2, building at 10",
+   "trackId": 1324,
+   "urgency": "none",
+   "clock": 2,
+   "pan": 0.8523
+  },
+  {
+   "t": 58.0163,
+   "type": "speech",
+   "role": "context",
+   "text": "vehicle at 11",
+   "trackId": 1511,
+   "urgency": "none",
+   "clock": 11,
+   "pan": -0.6235
+  },
+  {
+   "t": 75.4922,
+   "type": "speech",
+   "role": "danger",
+   "text": "person approaching, 12 o'clock",
+   "trackId": 2030,
+   "urgency": "danger",
+   "clock": 12,
+   "pan": 0.1171
+  },
+  {
+   "t": 120.8292,
+   "type": "speech",
+   "role": "surface",
+   "text": "road",
+   "trackId": null,
+   "urgency": "none",
+   "clock": null,
+   "pan": 0.0
+  },
+  {
+   "t": 123.3317,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 2",
+   "trackId": 3167,
+   "urgency": "none",
+   "clock": 2,
+   "pan": 0.8562
+  },
+  {
+   "t": 125.8342,
+   "type": "speech",
+   "role": "context",
+   "text": "parked car at 10",
+   "trackId": 2935,
+   "urgency": "none",
+   "clock": 10,
+   "pan": -0.8543
+  }
+ ],
+ "annotations": [
+  {
+   "id": "f0ee380f",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 0.6673,
+   "event": {
+    "t": 0.6673,
+    "text": "obstacle at 11, building at 2",
+    "role": "context",
+    "trackId": 2,
+    "urgency": "none",
+    "clock": 11
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:30:00Z",
+   "updatedAt": "2026-10-16T16:30:00Z"
+  },
+  {
+   "id": "13a68d0f",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 3.1698,
+   "event": {
+    "t": 3.1698,
+    "text": "vehicle at 12",
+    "role": "context",
+    "trackId": 33,
+    "urgency": "none",
+    "clock": 12
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:30:03Z",
+   "updatedAt": "2026-10-16T16:30:03Z"
+  },
+  {
+   "id": "56a7eff6",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 6.3397,
+   "event": {
+    "t": 6.3397,
+    "text": "obstacle at 10, building at 1, vehicle at 11",
+    "role": "context",
+    "trackId": 53,
+    "urgency": "none",
+    "clock": 10
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:30:12Z",
+   "updatedAt": "2026-10-16T16:30:12Z"
+  },
+  {
+   "id": "0a51ad44",
+   "kind": "added",
+   "t": 33.9,
+   "text": "crosswalk",
+   "role": "feature",
+   "note": "crosswalks are important to notify, they usually serve as position/location markers. add direction and steps.",
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "createdAt": "2026-10-16T16:38:57Z",
+   "updatedAt": "2026-10-16T16:38:57Z"
+  },
+  {
+   "id": "dcc765e3",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 35.327,
+   "event": {
+    "t": 35.327,
+    "text": "obstacle, 12 o'clock, 5 steps",
+    "role": "danger",
+    "trackId": 385,
+    "urgency": "danger",
+    "clock": 12
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:30:16Z",
+   "updatedAt": "2026-10-16T16:30:16Z"
+  },
+  {
+   "id": "d8e3a6a6",
+   "kind": "added",
+   "t": 38.8,
+   "text": "curb at 12 in 10, beware poles",
+   "role": "feature",
+   "note": "Poles and thin objects should be warned about when noticed.",
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "createdAt": "2026-10-16T16:34:53Z",
+   "updatedAt": "2026-10-16T16:39:37Z"
+  },
+  {
+   "id": "ec70e79c",
+   "kind": "added",
+   "t": 49.1,
+   "text": "Obstacle at 12 in 6, person at 1 and 2",
+   "role": "danger",
+   "note": "Person are moving, they should be tracked for collision. being notifed sooner would be great if possible.",
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "createdAt": "2026-10-16T16:29:54Z",
+   "updatedAt": "2026-10-16T16:41:13Z"
+  },
+  {
+   "id": "d5067729",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "to far away, not important. and not parked by the way.",
+   "t": 52.344,
+   "event": {
+    "t": 52.344,
+    "text": "parked car at 10",
+    "role": "context",
+    "trackId": 1161,
+    "urgency": "none",
+    "clock": 10
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:40:57Z",
+   "updatedAt": "2026-10-16T16:42:47Z"
+  },
+  {
+   "id": "4a3fff75",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "to far away as well.",
+   "t": 55.5138,
+   "event": {
+    "t": 55.5138,
+    "text": "obstacle at 2, building at 10",
+    "role": "context",
+    "trackId": 1324,
+    "urgency": "none",
+    "clock": 2
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:42:32Z",
+   "updatedAt": "2026-10-16T16:42:53Z"
+  },
+  {
+   "id": "233fd92e",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "too far away and not in collision course.",
+   "t": 58.0163,
+   "event": {
+    "t": 58.0163,
+    "text": "vehicle at 11",
+    "role": "context",
+    "trackId": 1511,
+    "urgency": "none",
+    "clock": 11
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:42:56Z",
+   "updatedAt": "2026-10-16T16:43:06Z"
+  },
+  {
+   "id": "38901ba9",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "can drop the o'clock, use \"at\" time instead. example \"person approaching at 12\"",
+   "t": 75.4922,
+   "event": {
+    "t": 75.4922,
+    "text": "person approaching, 12 o'clock",
+    "role": "danger",
+    "trackId": 2030,
+    "urgency": "danger",
+    "clock": 12
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:43:40Z",
+   "updatedAt": "2026-10-16T16:44:28Z"
+  },
+  {
+   "id": "46cd70c9",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "path did not change, no curbs being passed over so same path bad call from the model detection, it happens, make sure to not cry wolf without at least some frames to confirm",
+   "t": 120.8292,
+   "event": {
+    "t": 120.8292,
+    "text": "road",
+    "role": "surface",
+    "trackId": null,
+    "urgency": "none",
+    "clock": null
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.5",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T16:44:52Z",
+   "updatedAt": "2026-10-16T16:46:33Z"
+  }
+ ]
+}

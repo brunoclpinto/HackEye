@@ -1,4 +1,4 @@
-"""Lab browser tests for v26.1.5 (CONTRACTS sections 12.1, 12.2, 13)."""
+"""Lab browser tests: v26.1.5 (CONTRACTS 12.1, 12.2, 13) and v26.1.6 notification review / beeps (14.2, 14.3)."""
 import gzip
 import json
 import re
@@ -260,3 +260,244 @@ def test_windowed_endpoints():
         api(f"/api/runs/{FULL_RUN}/hazards?from=0&to=601")
     with pytest.raises(AssertionError, match="404"):
         api(f"/api/runs/{FULL_RUN}/frame?t=99999")
+
+
+# ---------------------------------------------------------------- 14.2 notification review: beeps
+
+BEEP_T0, BEEP_T1 = 40.0, 100.0
+BEEP_TEXT = "beeps · e2e pole at 12 · 9→2 steps"
+BEEP_FREQ = 1234.5          # distinctive, so injected tones can't be confused with real ones
+BEEP_TRACK = 987654
+
+
+def _beep_events():
+    """A synthetic beeps episode + its tones (gapless every 0.5 s over the first 6 s), injected into events.json."""
+    beeps = {"type": "beeps", "t": BEEP_T0, "tEnd": BEEP_T1, "trackId": BEEP_TRACK, "label": "pole", "clock": 12,
+             "minSteps": 2, "role": "danger", "text": BEEP_TEXT}
+    tones = [{"t": BEEP_T0 + 0.5 * i, "type": "tone", "role": "danger", "trackId": BEEP_TRACK, "urgency": "danger",
+              "pan": 0.0, "frequencyHz": BEEP_FREQ, "durationSeconds": 0.08} for i in range(12)]
+    return beeps, tones
+
+
+def inject_beeps(page):
+    """Older runs have no beeps events (and the collision worker's change may not have landed): add ours on the wire."""
+    beeps, tones = _beep_events()
+
+    def handle(route):
+        resp = route.fetch()
+        doc = resp.json()
+        doc["events"] = [e for e in doc["events"] if e.get("trackId") != BEEP_TRACK] + [beeps] + tones
+        route.fulfill(response=resp, json=doc)
+
+    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+
+
+def beep_snapshot():
+    beeps, _ = _beep_events()
+    return {k: beeps[k] for k in ("t", "text", "role", "trackId", "type", "tEnd", "label", "minSteps")}
+
+
+def post_beep_verdict(verdict, created):
+    run = api(f"/api/runs/{FULL_RUN}")
+    ann = api(f"/api/recordings/{LONG_REC}/reviews", "POST",
+              {"kind": "verdict", "verdict": verdict, "t": BEEP_T0, "event": beep_snapshot(),
+               "runId": FULL_RUN, "collisionVersion": run.get("collisionVersion")})
+    created.append((LONG_REC, ann["id"]))
+    return ann
+
+
+def beep_tones(page, source="system"):
+    return [e for e in audio_log(page) if e["type"] == "tone" and e.get("freq") == pytest.approx(BEEP_FREQ, abs=0.1)
+            and e["source"] == source]
+
+
+def play_window(page, a, b):
+    page.evaluate("window.__labAudioLog.length = 0")
+    seek(page, a)
+    page.click("#playBtn")
+    page.wait_for_function(f"() => document.querySelector('#video').currentTime > {b}", timeout=30_000)
+    page.click("#playBtn")        # pause
+
+
+def test_renamed_labels(page):
+    open_lab(page, SHORT_REC)
+    assert page.inner_text("#reviewPanel h2") == "Notification review"
+    assert page.get_attribute("#reviewPanel", "aria-label") == "Notification review"
+    assert "Beeps" in page.inner_text("label:has(#tonesChk)") and "Tones" not in page.inner_text("label:has(#tonesChk)")
+    assert "notification" in page.inner_text("#rvAddBtn").lower() and "speech" not in page.inner_text("#rvAddBtn").lower()
+    assert page.get_attribute("#rvExport", "download") == "notification-reviews.json"
+    assert "Speech review" not in page.inner_text("body")
+    page.click("#rvAddBtn")
+    assert page.eval_on_selector_all("#rvAddType option", "os => os.map(o => o.value)") == ["speech", "beeps"]
+
+
+def test_counts_line_and_old_runs_without_beeps(page):
+    """A run without beeps events (no injection) shows just its speech rows, no beep rows, and a '… · 0 beeps' count."""
+    open_lab(page, LONG_REC, run=FULL_RUN)
+    page.wait_for_selector("#rvList .rv-row")
+    assert re.fullmatch(r"\d+ notifications · \d+ beeps?s?", page.inner_text("#rvTotal")), page.inner_text("#rvTotal")
+    assert page.is_visible("#timeline") and page.errors == []
+
+
+def test_beeps_row_renders_and_saves_verdict(page, created_reviews):
+    inject_beeps(page)
+    open_lab(page, LONG_REC, run=FULL_RUN)
+    row = page.locator(".rv-row.beeps", has_text="e2e pole")
+    row.wait_for()
+    assert "🔔" in row.inner_text()
+    assert "60.0 s" in row.inner_text()           # duration of the episode
+    m = re.fullmatch(r"(\d+) notifications · (\d+) beeps?s?", page.inner_text("#rvTotal"))
+    assert m and int(m.group(2)) >= 1
+    before = {a["id"] for a in annotations(LONG_REC)}
+    row.locator(".rv-v.correct").click()
+    row.locator("textarea").fill("e2e beep note")
+    page.wait_for_timeout(1200)       # note autosave (600 ms)
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    created_reviews.extend((LONG_REC, a["id"]) for a in new)
+    assert len(new) == 1
+    a = new[0]
+    assert a["verdict"] == "correct" and a["note"] == "e2e beep note"
+    assert a["event"]["type"] == "beeps" and a["event"]["text"] == BEEP_TEXT and a["event"]["tEnd"] == BEEP_T1
+    assert a["runId"] == FULL_RUN
+    # reload: the verdict stays attached through the matching key
+    open_lab(page, LONG_REC, run=FULL_RUN)
+    row = page.locator(".rv-row.beeps", has_text="e2e pole")
+    row.wait_for()
+    assert "v-correct" in row.get_attribute("class")
+    # toggling the active one deletes it again
+    row.locator(".rv-v.correct").click()
+    page.wait_for_function("() => !document.querySelector('.rv-row.beeps.v-correct')")
+
+
+def test_remove_on_beeps_row_silences_its_tones(page, created_reviews):
+    post_beep_verdict("remove", created_reviews)
+    inject_beeps(page)
+    open_lab(page, LONG_REC, run=FULL_RUN, t=BEEP_T0 - 1)
+    page.locator(".rv-row.beeps.v-remove", has_text="e2e pole").wait_for()
+    page.mouse.click(5, 5)
+    # control: preview off -> the episode's tones are scheduled
+    page.uncheck("#reviewPreviewChk")
+    play_window(page, BEEP_T0 - 1, BEEP_T0 + 2.2)
+    assert len(beep_tones(page)) >= 3, audio_log(page)
+    # preview on (default) -> silenced
+    page.check("#reviewPreviewChk")
+    play_window(page, BEEP_T0 - 1, BEEP_T0 + 2.2)
+    assert beep_tones(page) == [], beep_tones(page)
+    # and removing the ⊘ brings them back
+    page.locator(".rv-row.beeps", has_text="e2e pole").locator(".rv-v.remove").click()
+    page.wait_for_function("() => !document.querySelector('.rv-row.beeps.v-remove')")
+    play_window(page, BEEP_T0 - 1, BEEP_T0 + 2.2)
+    assert len(beep_tones(page)) >= 3
+
+
+def test_add_beeps_entry_and_hear_it_in_preview(page, created_reviews):
+    open_lab(page, SHORT_REC)
+    before = {a["id"] for a in annotations(SHORT_REC)}
+    seek(page, 0.4)
+    page.click("#rvAddBtn")
+    assert page.is_hidden("#rvAddEndRow")
+    page.select_option("#rvAddType", "beeps")
+    page.wait_for_selector("#rvAddEndRow", state="visible")
+    assert page.input_value("#rvAddEnd") == "0:03.2"      # default end = start + 3 s, clamped to the recording (3.295)
+    seek(page, 1.9)                                      # a beeps entry has two times: seeking leaves the start alone
+    assert page.input_value("#rvAddT") == "0:00.4"
+    page.click("#rvAddEndHead")
+    assert page.input_value("#rvAddEnd") == "0:01.9"
+    page.fill("#rvAddText", "beeps · e2e bollard at 1")
+    page.click("#rvAddSubmit")
+    page.wait_for_function("() => document.querySelector('#rvAddForm').hidden")
+    new = [a for a in annotations(SHORT_REC) if a["id"] not in before]
+    created_reviews.extend((SHORT_REC, a["id"]) for a in new)
+    assert len(new) == 1
+    a = new[0]
+    assert a["type"] == "beeps" and a["kind"] == "added" and a["t"] == pytest.approx(0.4, abs=0.06)
+    assert a["tEnd"] == pytest.approx(1.9, abs=0.06) and a["text"] == "beeps · e2e bollard at 1"
+    row = page.locator(".rv-row.added.beeps")
+    assert "🔔" in row.inner_text() and row.locator("input[aria-label='End time']").count() == 1
+    # preview: parking-style beeps over [t, tEnd], tagged "added"
+    seek(page, 0.0)
+    page.evaluate("window.__labAudioLog.length = 0")
+    page.click("#playBtn")
+    page.wait_for_function("() => document.querySelector('#video').currentTime > 2.1", timeout=15_000)
+    page.click("#playBtn")
+    added = [e for e in audio_log(page) if e["type"] == "tone" and e["source"] == "added"]
+    assert len(added) >= 3, audio_log(page)
+    assert all(0.35 <= e["mediaT"] <= 1.95 for e in added), added
+    gaps = [b["mediaT"] - a_["mediaT"] for a_, b in zip(added, added[1:])]
+    assert all(g == pytest.approx(0.5, abs=0.01) for g in gaps), gaps       # medium, steady rate
+    # with the preview off they are not played
+    page.uncheck("#reviewPreviewChk")
+    seek(page, 0.0)
+    page.evaluate("window.__labAudioLog.length = 0")
+    page.click("#playBtn")
+    page.wait_for_function("() => document.querySelector('#video').currentTime > 2.1", timeout=15_000)
+    page.click("#playBtn")
+    assert [e for e in audio_log(page) if e["source"] == "added"] == []
+
+
+def test_timeline_draws_beep_bars(page):
+    inject_beeps(page)
+    open_lab(page, LONG_REC, run=FULL_RUN)
+    page.wait_for_function("() => +document.querySelector('#timeline').dataset.beeps >= 1")
+    run = api(f"/api/runs/{FULL_RUN}")["request"]
+    px = page.evaluate("""([start, end, t]) => {
+        const c = document.querySelector('#timeline'), ctx = c.getContext('2d');
+        const x = Math.round((t - start) / (end - start) * c.width), y = Math.round(c.height * (c.clientHeight - 32 + 4 + 5) / c.clientHeight);
+        return Array.from(ctx.getImageData(x, y, 1, 1).data);
+    }""", [run["start"], run["end"], (BEEP_T0 + BEEP_T1) / 2])
+    r, g, b, _ = px
+    assert r > 200 and 100 < g < 180 and b < 80, px      # the danger colour (#ff8c1a), not the panel background
+
+
+# ---------------------------------------------------------------- 14.3 backend validation
+
+def test_beeps_annotation_validation(created_reviews):
+    base = f"/api/recordings/{SHORT_REC}/reviews"
+
+    def post(body):
+        try:
+            return api(base, "POST", body)
+        except AssertionError as e:
+            return str(e)
+
+    ok = post({"kind": "added", "type": "beeps", "t": 0.5, "tEnd": 2.0, "text": "beeps · e2e api", "role": "danger"})
+    assert isinstance(ok, dict) and ok["type"] == "beeps" and ok["tEnd"] == 2.0
+    created_reviews.append((SHORT_REC, ok["id"]))
+    for bad in ({"tEnd": None}, {"tEnd": 0.5}, {"tEnd": 0.2}, {"tEnd": 99}, {"type": "tone"}):
+        body = {"kind": "added", "type": "beeps", "t": 0.5, "tEnd": 2.0, "text": "beeps · e2e bad", "role": "danger", **bad}
+        assert "422" in str(post(body)), bad
+    assert "422" in str(post({"kind": "added", "type": "speech", "t": 0.5, "tEnd": 2.0, "text": "x"}))
+    # an old-style annotation (no type) stays valid and means speech
+    old = post({"kind": "added", "t": 1.0, "text": "e2e old style", "role": "context"})
+    assert isinstance(old, dict)
+    created_reviews.append((SHORT_REC, old["id"]))
+    assert old.get("type", "speech") == "speech" and "tEnd" not in old
+    # PUT: tEnd must stay after t
+    assert "422" in str(api_put(f"{base}/{ok['id']}", {"tEnd": 0.1}))
+    assert api_put(f"{base}/{ok['id']}", {"tEnd": 2.5})["tEnd"] == 2.5
+    exp = api(f"/api/reviews/export?recording={SHORT_REC}")["recordings"][0]["annotations"]
+    by_id = {a["id"]: a for a in exp}
+    assert by_id[ok["id"]]["type"] == "beeps" and by_id[ok["id"]]["tEnd"] == 2.5
+    assert by_id[old["id"]].get("type", "speech") == "speech"
+    # verdict snapshots carry type/tEnd and validate tEnd
+    ann = api(f"/api/recordings/{LONG_REC}/reviews", "POST",
+              {"kind": "verdict", "verdict": "incorrect", "t": BEEP_T0, "event": beep_snapshot(),
+               "runId": FULL_RUN})
+    created_reviews.append((LONG_REC, ann["id"]))
+    assert ann["event"]["type"] == "beeps" and ann["event"]["tEnd"] == BEEP_T1
+    bad = {**beep_snapshot(), "tEnd": BEEP_T0 - 1}
+    assert "422" in str(post_raw(f"/api/recordings/{LONG_REC}/reviews", {"kind": "verdict", "verdict": "correct", "t": BEEP_T0, "event": bad, "runId": FULL_RUN}))
+
+
+def api_put(path, body):
+    try:
+        return api(path, "PUT", body)
+    except AssertionError as e:
+        return str(e)
+
+
+def post_raw(path, body):
+    try:
+        return api(path, "POST", body)
+    except AssertionError as e:
+        return str(e)

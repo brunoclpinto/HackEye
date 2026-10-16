@@ -1,4 +1,4 @@
-"""Collision context, hazards and audio warning events from class grids (v26.1.5).
+"""Collision context, hazards and audio warning events from class grids (v26.1.6).
 
 Why this was rewritten
 ----------------------
@@ -77,6 +77,25 @@ v26.1.5 (CONTRACTS.md section 12.3, from the user's review of real footage)
 * Start summary: the first context phrase of a run and after a turn needs only the confirmation
   (no track age, no adopted surface) and is held ``speech.summaryHoldSeconds`` so one phrase
   covers the whole first view.
+
+v26.1.6 (CONTRACTS.md section 14, from the user's second review)
+-----------------------------------------------------------------
+* **Gait-calibrated scale k.** The pinhole metres assume a camera height and field of view that
+  are only roughly right (real footage: 2-4x too small). Walking gives a ruler: the median
+  cadence times a prior step length (0.70 m) is the ego speed in real metres, the median of the
+  witness-based raw ego speed is the same speed in model metres, and their ratio is k. All
+  distances/laterals/areas are multiplied by k (equivalently, the camera height is ``H * k``);
+  the raw closing speeds used for it stay uncalibrated, so there is no feedback loop. k is held
+  while the user stands still and is 1 until the first estimate.
+* Steps are ``distance / step length`` with the prior (or per-recording) step length: no division
+  by a noisy instantaneous ego speed, so they do not swing.
+* Context only when near (``contextMaxSteps``, ``contextMaxLateralM``). People/riders/animals are
+  movers unless measured stationary, with a wider and earlier danger zone. A crosswalk is a
+  landmark (announced once, direction and steps). Thin objects (poles, lights, signs) are
+  warned about when noticed ("beware poles"). Phrases have no "o'clock" and same-label items are
+  merged ("person at 1 and 2"). A surface change needs persistence plus a curb/crosswalk
+  crossing. Beeps are parking-sensor beeps for collision tracks only (constant pitch, interval
+  by steps, gapless tones when very close) and are summarised as ``beeps`` episode events.
 
 Beyond the contract (small constants at the top / config): a track must live
 ``MIN_TRACK_AGE_S`` before it may speak or beep; no danger/feature role during the
@@ -372,6 +391,9 @@ class ClassIds:
     inside: np.ndarray
     items: dict[str, list[int]]               # group -> class ids (static/moving/feature)
     names: list[str]                          # class id -> name
+    people: frozenset = frozenset()           # class names treated as movers unless measured stationary
+    thin: frozenset = frozenset()             # class names warned about as "beware poles"
+    landmark: frozenset = frozenset()         # feature class names announced as a landmark (crosswalk)
 
 
 def resolve_class_ids(config: dict, class_names: list[str]) -> ClassIds:
@@ -391,7 +413,10 @@ def resolve_class_ids(config: dict, class_names: list[str]) -> ClassIds:
         surface_groups={g: ids_of(v["classes"]) for g, v in surf["groups"].items()},
         inside=ids_of(surf["inside"]),
         items={g: [int(i) for i in ids_of(config["classes"].get(g, []))] for g in ITEM_GROUPS},
-        names=list(class_names))
+        names=list(class_names),
+        people=frozenset(config["classes"].get("people", [])),
+        thin=frozenset(config["classes"].get("thin", [])),
+        landmark=frozenset(config["classes"].get("landmark", [])))
 
 
 # --------------------------------------------------------------------------
@@ -556,6 +581,15 @@ class _Item:
     settled: bool = False                     # track old enough to speak or beep
     family: str = ""                          # label family used as context-memory key ("" = use label)
     role_run: int = 0                         # consecutive frames the track has held ``role`` (incl. this one)
+    closing_raw: float | None = None          # closing speed in uncalibrated model metres (k = 1)
+    landmark: bool = False                    # a crosswalk: announced once as a location marker
+    receding: bool = False                    # a mover measured to walk away from us
+    ego_known: bool = False                   # our own speed is known, so this item's motion can be measured
+    summary_ok: bool = False                  # would be context but for the lateral cap: allowed in the first scene summary
+    people: bool = False                      # person / rider / animal: a mover unless measured stationary
+    thin: bool = False                        # pole, light, sign: easy to miss, warned about when noticed
+    collision: bool = False                   # a danger on a collision course: the only thing that beeps
+    present_run: int = 0                      # consecutive analysed frames the track has been seen
 
 
 def _bottom_point(rows: np.ndarray, cols: np.ndarray, sel: np.ndarray, gw: int) -> tuple[int, int]:
@@ -634,7 +668,9 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                     area_frac=rr.size / (gh * gw), clipped=bool(rr.max() == gh - 1),
                     touches=bool(inreg.any()), lane_hit=lane_hit,
                     along_path=along, lane_cover=cover, contact_y_raw=contact_y,
-                    area_m2=rr.size * (dist / geo.f) ** 2))
+                    area_m2=rr.size * (dist / geo.f) ** 2,
+                    people=ids.names[cid] in ids.people, thin=ids.names[cid] in ids.thin,
+                    landmark=ids.names[cid] in ids.landmark))
     return items
 
 
@@ -659,6 +695,9 @@ class _Track:
     danger_done: bool = False
     final_done: bool = False
     feature_done: bool = False
+    thin_done: bool = False
+    contact_s: float | None = None            # smoothed contact row: the distance (and so the steps) is read from it
+    present_run: int = 0                      # consecutive analysed frames this track was matched
     # confirmation: consecutive analysed frames holding the same role (v26.1.5)
     role: str = "none"
     role_run: int = 0
@@ -723,12 +762,10 @@ def _match(tracks: dict[int, _Track], items: list[_Item], t: float, trk: dict) -
 class _Ego:
     speed: float | None = None
     speed_t: float = -math.inf
-    step_est: float | None = None
     cadence: float | None = None
     heading: float | None = None
     ref_heading: float | None = None
     exceed_since: float | None = None
-    step_is_estimated: bool = False
 
     def update_speed(self, closings: list[float], t: float, cfg: dict) -> None:
         if len(closings) >= cfg["speedMinTracks"]:
@@ -737,21 +774,6 @@ class _Ego:
             self.speed_t = t
         elif self.speed is not None and t - self.speed_t > 5.0:
             self.speed = None                  # stale: do not judge parked-vs-moving on it
-
-    def step_length(self, settings: CollisionSettings, cfg: dict, default: float) -> float:
-        if settings.step_length_m is not None:
-            self.step_is_estimated = False
-            return settings.step_length_m
-        if self.speed is not None and self.cadence:
-            lo, hi = cfg["stepLengthRangeM"]
-            v = self.speed / self.cadence
-            if lo <= v <= hi:                      # an implausible ratio is dropped, not clamped:
-                self.step_est = v if self.step_est is None else 0.7 * self.step_est + 0.3 * v   # a clamp would pin 0.3
-        if self.step_est is not None:
-            self.step_is_estimated = True
-            return self.step_est
-        self.step_is_estimated = False
-        return default
 
     def update_heading(self, heading: float | None, t: float, cfg: dict, dt: float) -> bool:
         """True when the heading has stayed more than headingDeg off the slow reference for sustainSeconds."""
@@ -772,20 +794,100 @@ class _Ego:
         return False
 
 
-class _SurfaceTracker:
-    """Debounced surface group: a change must persist ``debounceSeconds``."""
+class _Scale:
+    """Gait calibration of the metric scale (CONTRACTS.md section 14.1.1).
 
-    def __init__(self, debounce_s: float):
-        self.debounce_s = debounce_s
+    ``k = median(cadence) * priorStepLengthM / median(raw ego speed)`` over the last
+    ``calibrationWindowSeconds`` of frames where both are known. Walking is the ruler: whatever
+    camera height / field of view error makes the raw metres wrong, the ratio absorbs it. The first
+    estimate is taken as soon as ``calibrationMinSamples`` frames exist (a cold start must not wait
+    20 s); later estimates are blended in with a slow, evidence-growing time constant. Without cadence (standing still)
+    nothing is added, so the last k is held; before the first estimate k is 1.
+    """
+
+    def __init__(self, cfg: dict, prior_step_m: float):
+        self.window_s = float(cfg.get("calibrationWindowSeconds", 20.0))
+        self.min_samples = int(cfg.get("calibrationMinSamples", 18))
+        self.tau_min_s = float(cfg.get("calibrationEmaMinSeconds", 3.0))
+        self.tau_s = float(cfg.get("calibrationEmaSeconds", 40.0))
+        self.age_s = 0.0                                          # seconds of estimates blended so far
+        self.lo, self.hi = cfg.get("scaleRange", [0.5, 4.0])
+        self.min_raw = float(cfg.get("calibrationMinRawSpeed", 0.2))
+        self.prior_step_m = prior_step_m
+        self.samples: list[tuple[float, float, float]] = []      # (t, cadence Hz, raw speed m/s)
+        self.k: float | None = None                               # the measured target (None until the first estimate)
+        self.applied = 1.0                                        # what the geometry uses: k slewed towards the target
+        self.max_rate = float(cfg.get("scaleMaxChangePerSecond", 0.25))
+        self.from_gait = False
+        prior = cfg.get("scalePrior")
+        if prior:                                                 # optional warm start (null = k 1 until measured)
+            self.k = self.applied = float(prior)
+            self.age_s = float(cfg.get("scalePriorSeconds", 30.0))
+
+    def update(self, t: float, cadence: float | None, raw_speed: float | None, dt: float) -> None:
+        if cadence is not None and cadence > 0 and raw_speed is not None and raw_speed > 0:
+            self.samples.append((t, cadence, raw_speed))
+        self.samples = [x for x in self.samples if x[0] >= t - self.window_s - 1e-9]
+        self._estimate(dt)
+        if self.k is not None and self.applied != self.k:
+            # steps are distance / step length, so a sudden change of k would make every step count jump:
+            # the applied scale moves towards the target at most ``scaleMaxChangePerSecond`` (25 percent/s)
+            lim = self.max_rate * max(dt, 0.0)
+            self.applied = math.exp(
+                math.log(self.applied) + max(-lim, min(lim, math.log(self.k) - math.log(self.applied))))
+
+    def _estimate(self, dt: float) -> None:
+        if len(self.samples) < self.min_samples:
+            return
+        v = float(np.median([x[2] for x in self.samples]))
+        if v < self.min_raw:
+            return
+        k_inst = min(self.hi, max(self.lo, float(np.median([x[1] for x in self.samples])) * self.prior_step_m / v))
+        if self.k is None:
+            self.k = k_inst
+            self.from_gait = True
+        else:
+            self.from_gait = True
+            # slow smoothing, but a young estimate (a cold start) may still move quickly: the time
+            # constant grows with the evidence, from ``calibrationEmaMinSeconds`` to ``calibrationEmaSeconds``
+            self.age_s += max(dt, 0.0)
+            tau = min(self.tau_s, max(self.tau_min_s, self.age_s))
+            a = 1.0 - math.exp(-max(dt, 0.0) / tau)
+            self.k = math.exp(math.log(self.k) + a * (math.log(k_inst) - math.log(self.k)))
+
+    @property
+    def value(self) -> float:
+        return self.applied
+
+
+class _SurfaceTracker:
+    """Debounced surface group (CONTRACTS.md 14.1.8).
+
+    Every change (and the first surface of a run) must persist ``minPersistSeconds`` without
+    interruption; a later change is *announced* only if a curb or crosswalk was
+    crossed (within ``crossingEvidenceSteps`` in the lane) around the transition, otherwise it is a
+    model relabel (the same pavement flickering road <-> sidewalk) and is adopted silently.
+    """
+
+    def __init__(self, cfg: dict):
+        self.debounce_s = cfg["debounceSeconds"]
+        self.persist_s = cfg.get("minPersistSeconds", cfg["debounceSeconds"])
+        self.need_evidence = bool(cfg.get("requireCrossingEvidence", False))
+        self.lookback_s = cfg.get("evidenceLookbackSeconds", 4.0)
         self.stable: str | None = None
         self._cand: str | None = None
         self._since = 0.0
+        self._evidence: list[float] = []
 
-    def update(self, t: float, group: str | None) -> tuple[str | None, str] | None:
-        """Returns (old, new) when a new group is adopted (old is None for the first), else None.
+    def note_evidence(self, t: float) -> None:
+        self._evidence.append(t)
+        self._evidence = [e for e in self._evidence if e >= t - 60.0]
 
-        Starting up, a surface is only adopted once it has persisted ``debounceSeconds`` too:
-        the first frame's seed box is as likely to straddle a lane edge as any other.
+    def update(self, t: float, group: str | None) -> tuple[str | None, str, bool] | None:
+        """Returns (old, new, announce) when a new group is adopted (old is None for the first), else None.
+
+        Starting up, a surface is only adopted once it has persisted too: the first frame's seed box
+        is as likely to straddle a lane edge as any other.
         """
         if group is None:
             self._cand = None
@@ -795,9 +897,11 @@ class _SurfaceTracker:
             return None
         if self._cand != group:
             self._cand, self._since = group, t
-        if t - self._since >= self.debounce_s - 1e-9:
+        need = self.persist_s       # the first surface of a run needs the same persistence: a model flicker at the start is no news
+        if t - self._since >= need - 1e-9:
             old, self.stable, self._cand = self.stable, group, None
-            return old, group
+            crossed = any(self._since - self.lookback_s <= e <= t for e in self._evidence)
+            return old, group, (old is None or crossed or not self.need_evidence)
         return None
 
 
@@ -805,16 +909,13 @@ class _SurfaceTracker:
 # Steps and roles
 # --------------------------------------------------------------------------
 
-def steps_to(distance_m: float, ego_speed: float | None, cadence: float | None, step_length_m: float) -> float:
-    """Steps until we reach the item: ``distance * cadence / speed``, else ``distance / step length``.
+def steps_to(distance_m: float, step_length_m: float) -> float:
+    """Steps until we reach the item: ``distance / step length`` (v26.1.6).
 
-    Distance and ego speed are both proportional to the assumed camera height,
-    so the first form is height independent. It is a *proximity* measure ("ten
-    of your steps away"), deliberately not a per-object time to contact: the
-    per-object closing speed is too noisy near the horizon to trust for that.
+    The distance is gait calibrated (see ``_Scale``) and the step length is the prior or the
+    per-recording value, so the number is stable: it no longer divides by a noisy instantaneous ego
+    speed (v26.1.5 steps swung 25.9 -> 12.7 in 0.2 s).
     """
-    if ego_speed is not None and ego_speed >= 0.3 and cadence:
-        return distance_m * cadence / ego_speed
     return distance_m / step_length_m
 
 
@@ -822,7 +923,7 @@ def _speed_witness(it: _Item) -> bool:
     """Can this item tell us our own speed? Only something that stands on the ground at a point:
     a pole, sign or lamp (tall and thin). The contact row of a wall, hedge or building is where the
     segmentation happens to end, so its "closing" is mostly zero or random and would drag the median."""
-    if it.group != "static" or it.closing is None or it.clipped or it.along_path:
+    if it.group != "static" or it.closing_raw is None or it.clipped or it.along_path:
         return False
     w, h = it.bbox[2] - it.bbox[0], it.bbox[3] - it.bbox[1]
     return h >= POINT_ASPECT * w
@@ -832,41 +933,72 @@ POINT_ASPECT = 3.0   # bbox height / width (normalised units, ~1.7 in pixels) of
 
 
 def _is_static_like(it: _Item) -> bool:
-    """Unknown movers (moving None) count as static: they never become "approaching"."""
-    return it.group == "static" or (it.group == "moving" and it.moving is not True)
+    """Static things, and vehicles of unknown or measured-stationary motion ("unknown movers count as
+    static": they never become "approaching"). People/riders/animals are movers, never
+    "stationary" (v26.1.6). Their motion is hard to
+    measure from a bobbing chest camera (people waiting at a crossing read as "stationary" at 48 s of the
+    review footage while they walked on) and they are the ones that step into the path, so their measured
+    motion only decides "approaching" / "receding"."""
+    if it.group == "static":
+        return True
+    if it.group == "moving":
+        return False if it.people else it.moving is not True
+    return False
 
 
-def _not_approaching(it: _Item, ego_speed: float | None) -> bool:
+def _not_approaching(it: _Item, ego_speed_raw: float | None) -> bool:
     """A ground object we walk towards closes at our speed. One whose contact row stays put while we
-    move is the end of a line running along the path (a median cut into pieces), not an obstacle."""
-    return (it.closing is not None and ego_speed is not None and ego_speed >= 0.5
-            and it.closing < 0.3 * ego_speed)
+    move is the end of a line running along the path (a median cut into pieces), not an obstacle.
+    Both speeds are raw (uncalibrated) model metres per second."""
+    return (it.closing_raw is not None and ego_speed_raw is not None and ego_speed_raw >= 0.5
+            and it.closing_raw < 0.3 * ego_speed_raw)
 
 
-def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_half_m: float) -> None:
+def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_half_m: float,
+                 step_length_m: float) -> None:
     danger_steps, final_steps = roles["dangerSteps"], roles["finalSteps"]
-    it.role, it.urgency = "none", "none"
+    it.role, it.urgency, it.collision, it.summary_ok = "none", "none", False, False
     big_enough = it.area_m2 >= roles.get("minObstacleAreaM2", 0.0)   # a 15 px blip 4 m away is segmentation noise
     if _is_static_like(it):
         if big_enough and it.lane_hit and not it.along_path and it.steps <= danger_steps:
-            it.role = "danger"
+            it.role, it.collision = "danger", True
         elif (it.touches and it.distance_m <= roles["contextMaxDistanceM"]
-              and it.area_frac >= roles.get("contextMinAreaFraction", 0.0)):
-            it.role = "context"
+              and it.area_frac >= roles.get("contextMinAreaFraction", 0.0)
+              and it.distance_m <= roles.get("contextMaxSteps", 1e9) * step_length_m):
+            # v26.1.6: only what is near; things far to the side stay silent, except in the very first
+            # scene summary of a run, which names the whole view (the user ticked "building at 2" there)
+            if abs(it.lateral_m) <= roles.get("contextMaxLateralM", 1e9):
+                it.role = "context"
+            else:
+                it.summary_ok = True
     elif it.group == "moving":
         in_span = span is not None and span[0] <= it.contact_y <= span[1] + 1e-9
-        if (big_enough and in_span and abs(it.lateral_m) <= lane_half_m + 1.0
-                and (it.approaching or abs(it.lateral_m) <= lane_half_m)
-                and it.steps <= danger_steps):
+        lat = abs(it.lateral_m)
+        if it.people:
+            wide = roles.get("movingLaneHalfWidthM", lane_half_m + 1.0)
+            limit = roles.get("movingDangerSteps", danger_steps)
+            receding = it.receding and lat > lane_half_m       # walking away beside us is no threat
+            in_span = in_span or span is None                  # on a crosswalk there is no surface seed, hence no region
+            if big_enough and in_span and lat <= wide and not receding and it.steps <= limit:
+                it.role = "danger"
+                it.collision = lat <= lane_half_m or (it.approaching and lat <= roles.get("movingCollisionHalfWidthM", wide))
+        elif (big_enough and in_span and lat <= lane_half_m + 1.0 and (it.approaching or lat <= lane_half_m)
+              and it.steps <= danger_steps):
             it.role = "danger"
+            it.collision = True
     elif it.group == "feature":
+        if it.landmark:
+            # a landmark (crosswalk) anywhere in or touching the walking region, once, with direction and steps
+            if it.touches and not it.clipped and it.steps <= roles.get("landmarkSteps", roles["featureSteps"]):
+                it.role = "feature"
         # a feature must cross the lane; a curb or median running along the path is boundary.
         # One already under our feet (touching the bottom edge) is not "ahead".
-        if (it.lane_hit and not it.along_path and not it.clipped
+        elif (it.lane_hit and not it.along_path and not it.clipped
                 and it.lane_cover >= roles["featureMinLaneCover"] and it.steps <= roles["featureSteps"]):
             it.role = "feature"
     if it.role == "danger":
-        it.urgency = "final" if it.steps <= final_steps else "danger"
+        # the final call is for a collision course; a person merely beside the path is a plain danger
+        it.urgency = "final" if (it.collision and it.steps <= final_steps) else "danger"
 
 
 # --------------------------------------------------------------------------
@@ -889,16 +1021,31 @@ class SpeechPolicy:
         self.final_steps = config["roles"]["finalSteps"]
         self.confirm = int(config["roles"].get("confirmFrames", 1))
         self.max_items = int(self.cfg.get("contextMaxItems", 1))
+        self.max_entries = int(self.cfg.get("maxEntries", 3))
+        self.thin_rearm_s = float(self.cfg.get("thinRearmSeconds", 8.0))
+        self.feature_gap_s = float(self.cfg.get("featureLabelGapSeconds", 6.0))
+        self.feature_new_steps = float(self.cfg.get("featureNewCrossingSteps", 5.0))
+        self.travel_steps = 0.0                                 # our own walking, in steps (set by the driver)
+        self.landmarks = frozenset(config["classes"].get("landmark", []))
+        self.thin_armed = True
+        self.last_thin_seen = -math.inf
+        self.thin_range = (float(config["roles"].get("thinNoticeSteps", 15)),
+                           float(config["roles"].get("thinNoticeLateralM", 2.5)))
+        self.danger_first: dict[int, float] = {}                # track id -> when it first was a confirmed danger
+        self.motion_wait_s = float(self.cfg.get("peopleMotionWaitSeconds", 1.5))
+        self.motion_wait_steps = float(self.cfg.get("peopleMotionWaitSteps", 6))
         self.last_t: float | None = None
+        self.last_prio_t: float | None = None
         self.memory: dict[str, float] = {}                      # context label (family) -> last seen
         self.pending_since: dict[str, float] = {}               # context waiting for the gap
-        self.feature_label_t: dict[str, float] = {}
+        self.feature_label_t: dict[str, tuple[float, float]] = {}   # label -> (time, position in steps along our walk)
         self.danger_label_t: dict[str, float] = {}
         self.surface_pending: tuple[str, str] | None = None   # (group, label) waiting to be spoken
         self.context_speak = set(config.get("contextSpeak", []))
         # start summary: the first context phrase of a run (and after a path change) needs only
         # ``confirmFrames`` frames, no track age and no adopted surface, so it comes within ~1 s
         self.summary = True
+        self.first_summary = True                # the run's first summary: not limited to near-lateral items
         self.summary_since: float | None = None
 
     # -- memory ----------------------------------------------------------
@@ -906,6 +1053,8 @@ class SpeechPolicy:
         """Forget what was said (a turn): the next context phrase is a fresh summary of the new view."""
         self.memory.clear()
         self.pending_since.clear()
+        self.thin_armed = True                   # a turn: a new view, "beware poles" may be said again
+        self.first_summary = False
         self.summary, self.summary_since = True, t
 
     @staticmethod
@@ -924,11 +1073,14 @@ class SpeechPolicy:
         for k in [k for k, seen in self.memory.items() if t - seen > self.forget_s]:
             del self.memory[k]
 
-    def surface_adopted(self, old: str | None, new: str, surfaces: dict) -> None:
+    def surface_adopted(self, old: str | None, new: str, surfaces: dict, announce: bool = True) -> None:
         """A debounced surface change. Only road/rail matter: those are where the user must be told
-        (starting on one, or moving into or out of one). Sidewalk <-> bike lane relabels stay silent."""
-        announce = set(surfaces.get("announceGroups", []))
-        if new in announce or (old is not None and old in announce):
+        (starting on one, or moving into or out of one). Sidewalk <-> bike lane relabels stay silent, and
+        so does any change the tracker could not back with crossing evidence (``announce`` False)."""
+        if not announce:
+            return
+        announce_groups = set(surfaces.get("announceGroups", []))
+        if new in announce_groups or (old is not None and old in announce_groups):
             self.surface_pending = (new, surfaces["groups"][new]["label"])
 
     # -- phrases ---------------------------------------------------------
@@ -936,18 +1088,62 @@ class SpeechPolicy:
     def _n(steps: float) -> int:
         return max(1, int(round(steps)))
 
+    @staticmethod
+    def _clock_order(c: int) -> int:
+        return c + 12 if c <= 3 else c                  # left to right: 9 10 11 12 1 2 3
+
+    @classmethod
+    def _join_clocks(cls, clocks) -> str:
+        cs = [str(c) for c in sorted(set(clocks), key=cls._clock_order)]
+        return cs[0] if len(cs) == 1 else ", ".join(cs[:-1]) + " and " + cs[-1]
+
     def _text(self, template: str, it: _Item | None = None, label: str = "") -> str:
         tpl = self.cfg["templates"][template]
         if it is None:
             return tpl.format(label=label)
         text = tpl.format(label=it.label, clock=it.clock, steps=self._n(it.steps))
-        return text.replace(" 1 steps", " 1 step")
+        return text.replace(" in 1", " in 1 step") if text.endswith(" in 1") else text
 
-    def _gap_ok(self, t: float) -> bool:
-        return self.last_t is None or t - self.last_t >= self.cfg["globalMinGapSeconds"] - 1e-9
+    def _entry(self, template: str, group: list[_Item]) -> str:
+        """One phrase entry for same-label items: "pole at 12 in 6" or, merged, "person at 1 and 2"."""
+        near = min(group, key=lambda i: i.steps)
+        clocks = {i.clock for i in group}
+        if len(clocks) == 1 or template == "approach":
+            if template == "approach":
+                return self.cfg["templates"]["approach"].format(label=near.label, clock=self._join_clocks(clocks))
+            return self._text(template, near)
+        return self.cfg["templates"]["multi"].format(label=near.label, clocks=self._join_clocks(clocks))
+
+    def _feature_allowed(self, t: float, it: _Item) -> bool:
+        """The same label is not repeated within featureLabelGapSeconds unless it is a different crossing: its
+        position along our walk (calibrated steps ahead plus steps walked) differs by >= featureNewCrossingSteps.
+        Fragments of one curb re-tracked under new ids sit at the same position and stay quiet."""
+        last = self.feature_label_t.get(it.label)
+        over = self.cfg.get("featureLabelOverrides", {}).get(it.class_name, {})
+        if last is None or t - last[0] >= over.get("gapSeconds", self.feature_gap_s):
+            return True
+        return abs(self.travel_steps + it.steps - last[1]) >= over.get("newCrossingSteps", self.feature_new_steps)
+
+    def _motion_pending(self, t: float, it: _Item, tracks: dict[int, _Track]) -> bool:
+        """A person whose motion is not measured yet may "approach": wait a moment (the closing speed needs
+        ~0.75 s of history) so that the phrase can say "approaching" - unless they are already close."""
+        return (it.people and it.moving is None and it.ego_known and it.steps > self.motion_wait_steps
+                and t - self.danger_first.get(it.track_id, t) < self.motion_wait_s)
+
+    def _gap_ok(self, t: float, priority: bool = False) -> bool:
+        """Global minimum gap between phrases. A danger/feature phrase (``priority``) waits only the
+        shorter ``priorityMinGapSeconds``: it must not queue behind a scene-context phrase."""
+        gap = self.cfg["globalMinGapSeconds"]
+        if priority:
+            # only earlier danger/feature phrases count: a context phrase never delays a danger
+            gap = min(gap, self.cfg.get("priorityMinGapSeconds", gap))
+            return self.last_prio_t is None or t - self.last_prio_t >= gap - 1e-9
+        return self.last_t is None or t - self.last_t >= gap - 1e-9
 
     def _event(self, t: float, role: str, text: str, it: _Item | None, urgency: str = "none") -> dict:
         self.last_t = t
+        if role in ("danger", "final", "feature"):
+            self.last_prio_t = t
         return {"t": round(t, 4), "type": "speech", "role": role, "text": text,
                 "trackId": None if it is None else it.track_id, "urgency": urgency,
                 "clock": None if it is None else it.clock, "pan": 0.0 if it is None else round(it.pan, 4)}
@@ -958,42 +1154,79 @@ class SpeechPolicy:
         if self.summary_since is None:
             self.summary_since = t
         if self.summary and t - self.summary_since > WARMUP_S + 1e-9 and surface_known:
-            self.summary = False                # the scene had its chance to be summarised; back to normal
+            self.summary = self.first_summary = False   # the scene had its chance to be summarised; back to normal
         everything = items
+        # "beware poles" is said once, then not again while any thin object stays noticed (within thinNoticeSteps);
+        # it re-arms after thinRearmSeconds with none noticed, or on a turn
+        if any(i.thin and i.steps <= self.thin_range[0] for i in everything):
+            self.last_thin_seen = t
+        elif not self.thin_armed and t - self.last_thin_seen >= self.thin_rearm_s:
+            self.thin_armed = True
         items = [i for i in items if i.settled]
         ok = lambda i: i.role_run >= self.confirm          # noqa: E731  (confirmed over consecutive frames)
         danger = sorted((i for i in items if i.role == "danger" and ok(i)), key=lambda i: i.steps)
+        for i in danger:
+            self.danger_first.setdefault(i.track_id, t)
         # 1. final: once per track, ignores the global gap
         for it in danger:
             tr = tracks[it.track_id]
             if it.urgency == "final" and not tr.final_done:
                 tr.final_done = tr.danger_done = True
+                tr.thin_done = tr.thin_done or it.thin
                 self.memory_if_spoken(t, it)
                 return self._event(t, "final", self._text("final", it), it, "final")
-        # 2. danger
-        pending = [i for i in danger if not tracks[i.track_id].danger_done
-                   and t - self.danger_label_t.get(i.label, -math.inf) >= self.LABEL_COOLDOWN_S]
-        if pending:
-            if not self._gap_ok(t):
+        # 2./3. danger, features and "beware poles", one phrase: danger leads, then features, then the note
+        pend_d = [i for i in danger if not tracks[i.track_id].danger_done
+                  and t - self.danger_label_t.get(i.label, -math.inf) >= self.LABEL_COOLDOWN_S
+                  and not self._motion_pending(t, i, tracks)]
+        pend_f = sorted((i for i in items if i.role == "feature" and ok(i) and not tracks[i.track_id].feature_done
+                         and self._feature_allowed(t, i)),
+                        key=lambda i: (i.class_name not in self.landmarks, i.steps))   # crosswalks before curbs
+        pend_t = [i for i in items if i.thin and i.present_run >= self.confirm and not tracks[i.track_id].thin_done
+                  and i.steps <= self.thin_range[0] and abs(i.lateral_m) <= self.thin_range[1]]
+        in_danger = {i.track_id for i in pend_d}
+        note = [i for i in pend_t if i.track_id not in in_danger]
+        if not self.thin_armed:
+            note = []                           # said already; a noticed thin object keeps it quiet
+        if pend_d or pend_f or note:
+            if not self._gap_ok(t, priority=True):
                 return None
-            it = pending[0]
-            tracks[it.track_id].danger_done = True
-            self.danger_label_t[it.label] = t
-            self.memory_if_spoken(t, it)
-            if it.approaching:
-                return self._event(t, "danger", self._text("approach", it), it, "danger")
-            return self._event(t, "danger", self._text("danger", it), it, "danger")
-        # 3. feature
-        feats = sorted((i for i in items if i.role == "feature" and ok(i) and not tracks[i.track_id].feature_done
-                        and t - self.feature_label_t.get(i.label, -math.inf) >= self.LABEL_COOLDOWN_S),
-                       key=lambda i: i.steps)
-        if feats:
-            if not self._gap_ok(t):
-                return None
-            it = feats[0]
-            tracks[it.track_id].feature_done = True
-            self.feature_label_t[it.label] = t
-            return self._event(t, "feature", self._text("feature", it), it)
+            entries: list[tuple[str, list[_Item]]] = []      # (kind, same-label items)
+            for kind, pool in (("danger", pend_d), ("feature", pend_f)):
+                by: dict[tuple, list[_Item]] = {}
+                for i in pool:
+                    by.setdefault((i.label, kind == "danger" and i.approaching), []).append(i)
+                for (_, approaching), grp in by.items():
+                    entries.append(("approach" if approaching else "danger" if kind == "danger" else "feature", grp))
+            if note:
+                entries.append(("thin", note))
+            entries = entries[:self.max_entries]
+            texts, spoken_danger = [], False
+            for kind, grp in entries:
+                if kind == "thin":
+                    texts.append(self.cfg["templates"]["thin"])
+                    for i in pend_t:
+                        tracks[i.track_id].thin_done = True
+                    for i in items:                 # the whole cluster in view counts as warned about
+                        if i.thin:
+                            tracks[i.track_id].thin_done = True
+                    self.thin_armed = False
+                    continue
+                texts.append(self._entry(kind, grp))
+                for i in grp:
+                    tr = tracks[i.track_id]
+                    if kind == "feature":
+                        tr.feature_done = True
+                        self.feature_label_t[i.label] = (t, self.travel_steps + i.steps)
+                    else:
+                        tr.danger_done, spoken_danger = True, True
+                        tr.thin_done = tr.thin_done or i.thin
+                        self.danger_label_t[i.label] = t
+                        self.memory_if_spoken(t, i)
+            lead = next((grp[0] for kind, grp in entries if kind != "thin"), entries[0][1][0])
+            if spoken_danger:
+                return self._event(t, "danger", ", ".join(texts), lead, "danger")
+            return self._event(t, "feature", ", ".join(texts), lead)
         if danger:                              # context and surface wait while a danger is active
             self.pending_since.clear()
             return None
@@ -1008,13 +1241,16 @@ class SpeechPolicy:
         #    the start summary does not wait for it and needs no track age, only the confirmation)
         if self.summary:
             pool = [i for i in everything if i.role_run >= self.confirm]
+            if self.first_summary:
+                pool = [i for i in pool if i.role == "context" or i.summary_ok]
         elif surface_known:
             pool = items
         else:
             return None
         cands: dict[str, _Item] = {}                 # one per label, the nearest
         for it in pool:
-            if it.role == "context" and it.label in self.context_speak:
+            if (it.role == "context" or (self.summary and self.first_summary and it.summary_ok)) \
+                    and it.label in self.context_speak:
                 key = self._key(it)
                 if not self._known(key) and (key not in cands or it.distance_m < cands[key].distance_m):
                     cands[key] = it
@@ -1036,7 +1272,7 @@ class SpeechPolicy:
         for key in chosen:
             self.memory[key] = t
             self.pending_since.pop(key, None)
-        self.summary = False
+        self.summary = self.first_summary = False
         first = cands[chosen[0]]
         items_txt = ", ".join(self._text("context", cands[k]) for k in chosen)
         text = self.cfg["templates"].get("contextGroup", "{items}").format(items=items_txt)
@@ -1052,36 +1288,82 @@ class SpeechPolicy:
 # Tones
 # --------------------------------------------------------------------------
 
-def _tone_params(steps: float, by_steps: list[list[float]]) -> tuple[float, float]:
-    """(intervalSeconds, frequencyHz) linearly interpolated by steps, clamped to the table ends."""
+def _tone_interval(steps: float, by_steps: list[list[float]]) -> float:
+    """Beep interval in seconds, linearly interpolated by steps, clamped to the table ends.
+    ``by_steps`` rows are ``[steps, intervalSeconds]`` (extra columns are ignored)."""
     table = sorted(by_steps, key=lambda r: r[0])
-    xs = [r[0] for r in table]
-    return (float(np.interp(steps, xs, [r[1] for r in table])),
-            float(np.interp(steps, xs, [r[2] for r in table])))
+    return float(np.interp(steps, [r[0] for r in table], [r[1] for r in table]))
 
 
-def _tone_events(frame_danger: list[_Item | None], times: np.ndarray, tones_cfg: dict) -> list[dict]:
-    """One phase-continuous beep stream driven by the nearest danger item of each frame."""
+def _tone_events(frame_collision: list[tuple[_Item | None, bool]], times: np.ndarray,
+                 tones_cfg: dict) -> tuple[list[dict], list[dict]]:
+    """Parking-sensor beeps (CONTRACTS.md 14.1.9/10) -> (tone events, beep-episode events).
+
+    One phase-continuous stream driven by the nearest collision track of each frame: constant pitch,
+    interval shrinking with steps, a gapless continuous tone at ``continuousSteps`` or closer. A track
+    that is merely lost from view (absent from the frame, not changed to a non-collision) keeps beeping
+    for ``holdSeconds``. ``frame_collision`` holds, per frame, (nearest collision item or None, track ids
+    present in that frame).
+    """
     last_dt = float(np.median(np.diff(times))) if len(times) > 1 else 1.0
+    freq = float(tones_cfg.get("frequencyHz", 880.0))
+    dur = float(tones_cfg["durationSeconds"])
+    chunk = float(tones_cfg.get("continuousChunkSeconds", 0.25))
+    cont_steps = float(tones_cfg.get("continuousSteps", 1.5))
+    hold_s = float(tones_cfg.get("holdSeconds", 0.5))
+    gap_s = float(tones_cfg.get("episodeGapSeconds", 1.5))
+    by_steps = tones_cfg["bySteps"]
     events: list[dict] = []
+    marks: list[tuple[float, float, _Item]] = []            # (t, tEnd, driving item) per tone event
     next_due = -math.inf
     last_beep = -math.inf
-    for i, top in enumerate(frame_danger):
-        if top is None:
-            continue
+    held: tuple[_Item, float] | None = None
+    for i, (top, present) in enumerate(frame_collision):
         t0 = float(times[i])
         t1 = float(times[i + 1]) if i + 1 < len(times) else t0 + last_dt
-        interval, freq = _tone_params(top.steps, tones_cfg["bySteps"])
+        if top is not None:
+            held = (top, t0)
+        elif held is not None and held[0].track_id not in present and t0 - held[1] <= hold_s:
+            top = held[0]
+        else:
+            held = None
+            continue
+        continuous = top.steps <= cont_steps
+        interval = chunk if continuous else _tone_interval(top.steps, by_steps)
+        length = chunk if continuous else dur
         # a faster stream must not wait out the previous slower interval
         due = max(t0, min(next_due, last_beep + interval))
         while due < t1 - 1e-9:
             events.append({"t": round(due, 4), "type": "tone", "role": "danger", "trackId": top.track_id,
                            "urgency": top.urgency, "pan": round(top.pan, 4), "frequencyHz": round(freq, 1),
-                           "durationSeconds": tones_cfg["durationSeconds"]})
+                           "durationSeconds": round(length, 4)})
+            marks.append((due, due + length, top))
             last_beep = due
             due += interval
         next_due = due
-    return events
+    # episodes: one per continuous stream of one track (gap < episodeGapSeconds)
+    episodes: list[dict] = []
+    cur: list[tuple[float, float, _Item]] = []
+
+    def flush() -> None:
+        if not cur:
+            return
+        nearest = min(cur, key=lambda m: m[2].steps)[2]
+        first = cur[0][2]
+        lo, hi = max(1, int(round(nearest.steps))), max(1, int(round(first.steps)))
+        steps_txt = f"{hi}\u2192{lo} steps" if hi != lo else f"{lo} steps"
+        episodes.append({"t": round(cur[0][0], 4), "tEnd": round(cur[-1][1], 4), "type": "beeps", "role": "danger",
+                         "trackId": nearest.track_id, "label": nearest.label, "clock": nearest.clock,
+                         "minSteps": round(nearest.steps, 1), "urgency": nearest.urgency,
+                         "text": f"beeps \u00b7 {nearest.label} at {nearest.clock} \u00b7 {steps_txt}"})
+
+    for m in marks:
+        if cur and (m[2].track_id != cur[-1][2].track_id or m[0] - cur[-1][1] >= gap_s):
+            flush()
+            cur = []
+        cur.append(m)
+    flush()
+    return events, episodes
 
 
 # --------------------------------------------------------------------------
@@ -1121,7 +1403,7 @@ def _hazard_json(it: _Item) -> dict:
             "bearingDeg": round(it.bearing, 2), "clock": it.clock, "pan": round(it.pan, 4),
             "distanceM": round(it.distance_m, 2), "lateralM": round(it.lateral_m, 2),
             "stepsTo": round(it.steps, 1), "closingMps": _r(it.closing, 2),
-            "urgency": it.urgency, "areaFrac": round(it.area_frac, 5)}
+            "urgency": it.urgency, "areaFrac": round(it.area_frac, 5), "collision": bool(it.collision)}
 
 
 # --------------------------------------------------------------------------
@@ -1157,10 +1439,14 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
     parked_labels = config.get("parkedLabels", {})
     default_step = geo_cfg["defaultStepLengthM"]
     ego_cfg = config["ego"]
+    # steps and the gait calibration use this step length: the per-recording value overrides the prior
+    step_len = settings.step_length_m if settings.step_length_m is not None else float(
+        ego_cfg.get("priorStepLengthM", default_step))
 
     mser = _motion_series(motion, settings.hfov_deg, ego_cfg)
     ego = _Ego()
-    surface = _SurfaceTracker(config["surfaces"]["debounceSeconds"])
+    surface = _SurfaceTracker(config["surfaces"])
+    scale = _Scale(ego_cfg, step_len)
     policy = SpeechPolicy(config)
     tracks: dict[int, _Track] = {}
     next_id = 1
@@ -1171,7 +1457,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
     last_estimate_t = -math.inf
     first_t: float | None = None
     frames_out: list[dict] = []
-    frame_danger: list[_Item | None] = []
+    frame_collision: list[tuple[_Item | None, set]] = []
     events: list[dict] = []
     prev_t = float(times[0]) if n else 0.0
 
@@ -1186,7 +1472,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
         group = None if region is None else region.group
         adopted = surface.update(t, group)
         if adopted is not None:
-            policy.surface_adopted(*adopted, config["surfaces"])
+            policy.surface_adopted(adopted[0], adopted[1], config["surfaces"], adopted[2])
         if group != prev_group:
             prev_left = prev_right = None         # smoothing restarts with a new surface
         prev_group = group
@@ -1211,7 +1497,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
             horizon += max(-geo_cfg["horizonMaxStep"], min(geo_cfg["horizonMaxStep"], step))
 
         # 3. items
-        geo = _frame_geometry(gh, gw, horizon, settings.camera_height_m, f, settings.hfov_deg, lane_half,
+        k = scale.value                            # gait scale from the frames so far: metres are real-world
+        geo = _frame_geometry(gh, gw, horizon, settings.camera_height_m * k, f, settings.hfov_deg, lane_half,
                               region, roles["boundaryMarginPx"])
         items = detect_items(grid, ids, geo, config)
 
@@ -1231,9 +1518,23 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
             else:
                 tr.history.append((t, it.contact_y_raw))
                 tr.history = [h for h in tr.history if h[0] >= t - trk["historySeconds"] - 1e-9]
-            tr.closing = _closing_mps(tr.history, horizon, settings.camera_height_m, gh, f,
-                                      trk["motionMinRowsBelowHorizon"], trk["motionMinSeconds"])
-            it.track_id, it.closing = tid, tr.closing
+            raw_closing = _closing_mps(tr.history, horizon, settings.camera_height_m, gh, f,
+                                       trk["motionMinRowsBelowHorizon"], trk["motionMinSeconds"])
+            tr.closing = None if raw_closing is None else raw_closing * k     # same units as the distances
+            tr.present_run += 1
+            # the contact row jumps by a row or two with segmentation noise (up to 20-50 percent of a near
+            # item's steps): the distance, lateral and steps are read from a per-track smoothed row
+            if it.clipped:
+                tr.contact_s = None
+            else:
+                a_c = trk.get("contactEma", 0.5)
+                tr.contact_s = it.contact_y if tr.contact_s is None else a_c * it.contact_y + (1 - a_c) * tr.contact_s
+                d_s = ground_distance_m(tr.contact_s, horizon, settings.camera_height_m * k, gh, f)
+                if d_s is not None and it.distance_m > 0:
+                    it.lateral_m *= d_s / it.distance_m
+                    it.distance_m = d_s
+            it.track_id, it.closing_raw, it.closing = tid, raw_closing, tr.closing
+            it.present_run = tr.present_run
             it.settled = t - tr.first_t >= MIN_TRACK_AGE_S - 1e-9
 
         # 5. ego
@@ -1246,9 +1547,17 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
             cadence = None if np.isnan(cad[j]) else float(cad[j])
             heading = float(np.interp(t, mt, hcum))
         ego.cadence = cadence
-        ego.update_speed([it.closing for it in items
-                          if _speed_witness(it) and 0.0 <= it.closing <= ego_cfg["speedMaxMps"]], t, ego_cfg)
-        step_len = ego.step_length(settings, ego_cfg, default_step)
+        ego.update_speed([it.closing_raw for it in items
+                          if _speed_witness(it) and 0.0 <= it.closing_raw <= ego_cfg["speedMaxMps"]], t, ego_cfg)
+        scale.update(t, cadence, ego.speed, dt)
+        # ego speed in the units of the (calibrated) distances: walking cadence times the step length once
+        # the scale is known, else the witness speed times the scale
+        if scale.k is not None and cadence:
+            ego_speed = cadence * step_len
+        elif ego.speed is not None:
+            ego_speed = ego.speed * scale.value
+        else:
+            ego_speed = None
         turned = ego.update_heading(heading, t, config["pathChange"], dt)
 
         # 6-8. steps, parked vs moving, roles
@@ -1260,23 +1569,28 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
         for it in items:
             tr = tracks[it.track_id]
             it.moving, it.approaching = (None, False)
+            it.ego_known = ego_speed is not None
             if it.group == "static" or it.group == "feature":
                 it.moving = False
-            elif it.closing is not None and ego.speed is not None:
-                ground = it.closing - ego.speed
+            elif it.closing is not None and ego_speed is not None:
+                ground = it.closing - ego_speed
                 limit = roles["stationaryMps"] * (1.5 if tr.moving is False else 1.0)   # hysteresis
                 it.moving = abs(ground) >= limit
                 it.approaching = it.moving and ground > roles["approachingMps"]
+                it.receding = it.moving and ground < -roles["approachingMps"]
             tr.moving = it.moving
-            it.steps = steps_to(it.distance_m, ego.speed, cadence, step_len)
+            it.steps = steps_to(it.distance_m, step_len)
             base = labels.get(it.class_name, it.class_name.replace("-", " "))
             it.family = base
             it.label = parked_labels.get(it.class_name, base) if (it.group == "moving" and it.moving is False) else base
             if _not_approaching(it, ego.speed) and it.group != "moving":
                 it.along_path = True
-            _assign_role(it, span, roles, lane_half)
+            _assign_role(it, span, roles, lane_half, step_len)
             if not warm and it.role in ("danger", "feature"):
-                it.role, it.urgency = "none", "none"   # distances are meaningless on a guessed horizon
+                it.role, it.urgency, it.collision = "none", "none", False   # no distances on a guessed horizon
+            if (it.group == "feature" and it.class_name in ("curb", "crosswalk") and it.lane_hit
+                    and (it.steps <= config["surfaces"].get("crossingEvidenceSteps", 2) or it.clipped)):
+                surface.note_evidence(t)               # a curb / crosswalk under or just ahead of our feet
 
         # confirmation: how many consecutive analysed frames each track has held its role
         seen_tracks = set()
@@ -1288,7 +1602,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
             seen_tracks.add(it.track_id)
         for tid, tr in tracks.items():
             if tid not in seen_tracks:
-                tr.role, tr.role_run = "none", 0
+                tr.role, tr.role_run, tr.present_run = "none", 0, 0
 
         # 9. path change
         path_change = turned or (config["pathChange"]["onSurfaceChange"] and adopted is not None
@@ -1300,36 +1614,46 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
                                    if it.role in ("context", "danger") and _is_static_like(it)})
 
         # speech
-        speech = policy.step(t, items, tracks, surface.stable is not None)
+        # context waits for the first surface (up to the old debounce, no longer: the persistence needed
+        # to *announce* a surface is longer now, but the scene summary must not wait for it)
+        surface_known = surface.stable is not None or t - first_t >= config["surfaces"]["debounceSeconds"] - 1e-9
+        if ego_speed is not None:
+            policy.travel_steps += ego_speed * dt / step_len
+        speech = policy.step(t, items, tracks, surface_known)
         if speech:
             events.append(speech)
 
-        danger = [it for it in items if it.role == "danger" and it.settled]
-        frame_danger.append(min(danger, key=lambda it: it.steps) if danger else None)
+        beeping = [it for it in items if it.role == "danger" and it.collision and it.settled
+                   and it.role_run >= policy.confirm and it.steps <= config["tones"].get("maxSteps", roles["dangerSteps"])]
+        frame_collision.append((min(beeping, key=lambda it: it.steps) if beeping else None,
+                                {it.track_id for it in items}))
 
-        speed_known = ego.speed is not None
+        speed_known = ego_speed is not None
         frames_out.append({
             "index": i, "t": round(t, 4),
             "horizonY": round(horizon, 4), "horizonEstimated": raw is not None,
             "region": None if region is None else {"surface": region.group, "label": region.label,
                                                    "rows": _region_rows(region)},
             "lane": _lane_polygon(geo, lane_half, roles["dangerSteps"] * step_len),
-            "ego": {"speedMps": _r(ego.speed, 2), "cadenceHz": _r(cadence, 2), "stepLengthM": round(step_len, 2),
+            "ego": {"speedMps": _r(ego_speed, 2), "cadenceHz": _r(cadence, 2), "stepLengthM": round(step_len, 2),
                     "headingDeg": _r(heading, 1),
+                    "scale": round(scale.value, 3), "scaleSource": "gait" if scale.from_gait else "prior" if scale.k is not None else "none",
                     "estimated": {"speed": speed_known, "cadence": cadence is not None,
-                                  "stepLength": ego.step_is_estimated}},
+                                  "stepLength": False}},
             "pathChange": bool(path_change),
             "hazards": [_hazard_json(it) for it in sorted(items, key=lambda it: it.steps)],
         })
 
-    events.extend(_tone_events(frame_danger, times, config["tones"]))
-    events.sort(key=lambda e: (e["t"], e["type"] != "speech"))
+    tone_events, episodes = _tone_events(frame_collision, times, config["tones"])
+    events.extend(tone_events)
+    events.extend(episodes)
+    events.sort(key=lambda e: (e["t"], e["type"] != "speech", e["type"] != "beeps"))
     version = config["version"]
     hazards_doc = {
         "version": version,
         "settings": {"mount": settings.mount, "hfovDeg": settings.hfov_deg,
                      "cameraHeightM": settings.camera_height_m, "stepLengthM": settings.step_length_m,
-                     "laneHalfWidthM": lane_half},
+                     "laneHalfWidthM": lane_half, "priorStepLengthM": step_len},
         "gridW": gw, "gridH": gh, "egoAvailable": mser is not None, "frames": frames_out,
     }
     return hazards_doc, {"version": version, "events": events}

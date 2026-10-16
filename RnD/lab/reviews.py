@@ -1,8 +1,8 @@
-"""Speech reviews: the user's ground truth about what the Lab should say (§10).
+"""Notification reviews: the user's ground truth about what the Lab should say or beep (§10, §14).
 
 Reviews belong to the *recording*, not to a run: what should be spoken at a
 given recording time stays true across re-analysis and new collision
-versions. Each verdict snapshots the speech event it judged plus the run and
+versions. Each verdict snapshots the notification (speech phrase or beeps episode) it judged plus the run and
 collision version it came from; `added` annotations are phrases the system
 missed. One JSON file per recording (`LAB_DIR/reviews/<recId>.json`), written
 atomically. A process-wide lock serialises read-modify-write (the endpoints
@@ -33,7 +33,8 @@ KINDS = ("verdict", "added")
 MAX_NOTE = 2000
 MAX_TEXT = 300
 NEARBY_SECONDS = 3.0
-_EVENT_KEYS = ("t", "text", "role", "trackId", "urgency", "clock")
+TYPES = ("speech", "beeps")
+_EVENT_KEYS = ("t", "text", "role", "trackId", "urgency", "clock", "type", "tEnd", "label", "minSteps")
 
 _lock = threading.Lock()
 
@@ -123,6 +124,20 @@ def _check_t(v, duration: float) -> float:
     return float(v)
 
 
+def _check_type(v) -> str:
+    if v not in TYPES:
+        raise _bad(f"type must be one of {list(TYPES)}")
+    return v
+
+
+def _check_t_end(v, t: float, duration: float) -> float:
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+        raise _bad("tEnd must be a number")
+    if not t < v <= duration:
+        raise _bad(f"tEnd must be greater than t and at most {duration:g} (recording duration)")
+    return float(v)
+
+
 def _check_text(v) -> str:
     if not isinstance(v, str) or not v.strip():
         raise _bad("text is required")
@@ -174,11 +189,20 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
         ann["t"] = ev_t
         ann["event"] = {k: ev[k] for k in _EVENT_KEYS if k in ev}
         ann["event"]["t"] = ev_t
+        if "type" in ev:
+            _check_type(ev["type"])
+        if "tEnd" in ev:
+            ann["event"]["tEnd"] = _check_t_end(ev["tEnd"], ev_t, duration)
     else:
         ann["t"] = _check_t(body.get("t"), duration)
         ann["text"] = _check_text(body.get("text"))
         ann["role"] = _check_role(body.get("role", "danger"))
         ann["note"] = _check_note(body.get("note"))
+        ann["type"] = _check_type(body.get("type", "speech"))
+        if ann["type"] == "beeps":
+            ann["tEnd"] = _check_t_end(body.get("tEnd"), ann["t"], duration)
+        elif body.get("tEnd") is not None:
+            raise _bad("tEnd only applies to type beeps")
 
     if run is not None:
         ann["runId"] = run["id"]
@@ -217,11 +241,18 @@ def update(rec_id: str, duration: float, ann_id: str, body: dict) -> dict:
             if kind != "verdict":
                 raise _bad("verdict only applies to verdict annotations")
             new["verdict"] = _check_verdict(body["verdict"])
-        for field in ("t", "text", "role"):
+        for field in ("t", "text", "role", "tEnd"):
             if field in body:
                 if kind != "added":
                     raise _bad(f"{field} can only be changed on added annotations")
+                if field == "tEnd":
+                    continue
                 new[field] = {"t": lambda v: _check_t(v, duration), "text": _check_text, "role": _check_role}[field](body[field])
+        if kind == "added":
+            if "tEnd" in body and new.get("type", "speech") != "beeps":
+                raise _bad("tEnd only applies to type beeps")
+            if new.get("type") == "beeps":
+                new["tEnd"] = _check_t_end(body.get("tEnd", new.get("tEnd")), new["t"], duration)
         new["updatedAt"] = _now()
         doc["annotations"] = _sorted([new if a["id"] == ann_id else a for a in doc["annotations"]])
         _save(rec_id, doc)
@@ -256,12 +287,14 @@ class _RunData:
         self.frames: list[dict] = []
         self.frame_ts: list[float] = []
         self.speech: list[dict] = []
+        self.beeps: list[dict] = []
         base = analysis.run_dir(run_id)
         try:
             self.frames = json.loads((base / "hazards.json").read_text()).get("frames", [])
             self.frame_ts = [f["t"] for f in self.frames]
             events = json.loads((base / "events.json").read_text()).get("events", [])
             self.speech = [e for e in events if e.get("type") == "speech"]
+            self.beeps = [e for e in events if e.get("type") == "beeps"]
         except (OSError, ValueError, KeyError) as exc:
             _log(f"export: run {run_id} data unavailable ({exc})")
 
@@ -280,6 +313,7 @@ class _RunData:
             "surfaceLabel": (region or {}).get("label"),
             "horizonY": f.get("horizonY"),
             "nearbySpeech": [e for e in self.speech if abs(e["t"] - t) <= NEARBY_SECONDS],
+            "nearbyBeeps": [e for e in self.beeps if e["t"] - NEARBY_SECONDS <= t <= e.get("tEnd", e["t"]) + NEARBY_SECONDS],
         }
 
 

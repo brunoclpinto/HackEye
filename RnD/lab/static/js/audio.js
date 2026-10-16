@@ -10,6 +10,7 @@ const LOG_MAX = 2000;
 
 // E2E hook (CONTRACTS 12.2): one entry per speech phrase spoken / tone scheduled.
 // {at (performance.now, ms), mediaT, type: "speech"|"tone", text|freq, source: "system"|"added"}
+// (tones are beeps: parking-sensor style, CONTRACTS §14)
 export const audioLog = (window.__labAudioLog = window.__labAudioLog || []);
 function logAudio(entry) {
   audioLog.push({ at: performance.now(), ...entry });
@@ -29,7 +30,7 @@ export class AudioEngine {
     this.offsetS = 0;          // user-tunable audio delay (+ = audio later), for sync experiments
     this.tones = [];           // tone events sorted by t
     this.speech = [];          // speech events sorted by t
-    this.scheduled = new Set();// indices into this.tones already scheduled
+    this.scheduled = new Set();// tone event objects already scheduled
     this.nodes = new Set();    // live {osc, gain, pan}
     this.lastT = null;         // previous tick's media time (speech crossing detection)
 
@@ -91,6 +92,11 @@ export class AudioEngine {
     this.reset();
   }
 
+  /** Replace only the tone list (⊘-silenced beeps removed, added beeps merged) without cutting off tones already scheduled. */
+  setToneEvents(tones) {
+    this.tones = [...tones].sort((a, b) => a.t - b.t);
+  }
+
   /** Replace only the speech list (review edits merged / removed) without cutting off tones or the phrase being spoken. */
   setSpeechEvents(speech) {
     this.speech = [...speech].sort((a, b) => a.t - b.t);
@@ -148,8 +154,8 @@ export class AudioEngine {
     for (let i = firstAtOrAfter(this.tones, lo); i < this.tones.length; i++) {
       const e = this.tones[i];
       if (e.t > hi) break;
-      if (this.scheduled.has(i)) continue;
-      this.scheduled.add(i);
+      if (this.scheduled.has(e)) continue;
+      this.scheduled.add(e);
       const when = now + (e.t + shift - cur) / rate;
       this.playTone(e, Math.max(when, now));
     }

@@ -111,7 +111,7 @@ input[type=range] { max-width: 140px; }
 .chip:not(.on) i { background: transparent; border: 1px solid var(--c); }
 .chip:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* ---------------- speech review panel (CONTRACTS §10) ---------------- */
+/* ---------------- notification review panel (CONTRACTS §10, §14) ---------------- */
 @media (min-width: 1200px) {
   .layout { grid-template-columns: 320px minmax(0, 1fr) 380px; }
   #sidebar { grid-row: auto; }
@@ -174,3 +174,12 @@ textarea { font: inherit; color: var(--fg); background: var(--panel2); border: 1
 #rvAddAuto.busy { opacity: .6; cursor: progress; }
 #audioBtn:not(.on) { opacity: .75; }
 .rv-addform .row { flex-wrap: wrap; }
+
+/* ---------------- beeps in the review panel (CONTRACTS §14.2) ---------------- */
+.rv-total { margin: 0 0 4px; }
+.rv-bell { font-size: 11px; font-weight: 700; color: var(--fg); background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 1px 7px; }
+.rv-dur { font-size: 12px; color: var(--muted); }
+.rv-row.beeps .rv-text { font-style: italic; }
+.rv-t.end { width: 76px; }
+#rvAddEndRow label { flex: 0 0 auto; margin: 0; }
+#rvAddEndRow[hidden] { display: none; }

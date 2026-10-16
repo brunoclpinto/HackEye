@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1.5)
+# HackEye Lab — contracts (v26.1.6)
 
 The single source of truth that `lab/server.py`, `src/collision.py` and
 `lab/static/` are built against. Change this file first, then the code.
@@ -614,3 +614,95 @@ The user's rule: **each new version cleans up the previous version's Lab content
 - Run with `RnD/tests/e2e/run.sh`.
 - Tests create their own short runs/reviews (on 4928, or a short 4929 range) and delete them afterwards.
 - Never trigger a version change.
+
+## 14. v26.1.6 — from the user's second review (`RnD/tests/fixtures/4929_review2.json`)
+
+**The user's review:**
+| t (s) | Verdict | System said | Note |
+|---|---|---|---|
+| 0.67 / 3.17 / 6.34 | ✓ | grouped context phrases | — |
+| 33.9 | + added | — | "crosswalk": crosswalks are important; they are position/location markers. Add direction and steps. |
+| 35.33 | ✓ | "obstacle, 12 o'clock, 5 steps" | — |
+| 38.8 | + added | — | "curb at 12 in 10, beware poles": poles and thin objects should be warned about when noticed. |
+| 49.1 | + added | (system: "obstacle, 12 o'clock, 6 steps" at 48.51) | "Obstacle at 12 in 6, person at 1 and 2": people are moving and should be tracked for collision; notifying sooner would be great. |
+| 52.34 | ✗ | "parked car at 10" | too far away, not important, and not parked |
+| 55.51 | ✗ | "obstacle at 2, building at 10" | too far away |
+| 58.02 | ✗ | "vehicle at 11" | too far away, not on collision course |
+| 75.49 | ✓ | "person approaching, 12 o'clock" | drop "o'clock", say "person approaching at 12" |
+| 120.83 | ✗ | surface "road" | path didn't change and no curb was passed: a model flicker. Don't cry wolf without more frames. |
+
+**Diagnosis from the data** (hazards around each time):
+- **Distance scale is broken.** Ego speed reads 0.3–0.7 m/s at a 2.1 Hz cadence (implying 0.15–0.35 m steps). Metre distances are therefore 2–4× too small: the "too far" car at 52.3 s is computed at 3.1 m. Steps swing (25.9 → 12.7 in 0.2 s) because they divide by a noisy instantaneous ego speed. So `contextMaxDistanceM` filters nothing, and the person warnings come late.
+- **Crosswalk at 34 s:** detected at 12 o'clock, about 5 m raw (12 → 7 steps), but role none, because features had to cross the lane and be closing.
+- **People at 48–49 s:** at 1 and 2 o'clock, `moving=False` (their motion isn't measurable), so they were treated as static outside the lane, and no warning was given.
+- **Poles at 38 s:** three poles at 11, 12 and 1 (11–17 steps), none in the lane, so nothing was said.
+- **Surface 116–125 s:** flips road ↔ sidewalk every 0.2–6 s. The 3 s debounce let "road" through with no curb crossed.
+
+
+### 14.1 Collision — Collision v26.1.6 (`RnD/src/collision.py`, `common/config/collision.json`)
+1. **Gait-calibrated scale** (fixes distances, steps and the "too far" calls):
+   - Over a long window (`ego.calibrationWindowSeconds` 20), compute `k = median(cadence) × priorStepLengthM / median(raw ego speed)`, using frames where both are known and the user is walking (cadence present). Smooth k slowly.
+   - `priorStepLengthM` defaults to 0.70. The per-recording `stepLengthM` overrides it.
+   - All distances, laterals and speeds are multiplied by k, so metres are real-world.
+   - `stepsTo = distanceM / stepLengthM`, which is stable and no longer uses the instantaneous ego speed.
+   - Without cadence (standing still) the last k is held; with no k yet, k = 1. The HUD shows k as `scale ×2.4 (gait)`.
+2. **Context only when near:**
+   - Context needs `distanceM ≤ contextMaxSteps (8) × stepLength` **and** `|lateralM| ≤ contextMaxLateralM (3.0)`.
+   - Items beside the path but far ahead or far to the side stay silent.
+   - Vehicles are "parked" only if measured stationary. Unknown motion gives the label "vehicle", and it is context only when near (fixes 52.3 s, 55.5 s, 58.0 s).
+3. **People are tracked as moving:**
+   - `person`/`rider`/`animal` are treated as moving unless measured stationary.
+   - Their danger zone is wider (`movingLaneHalfWidthM` 1.5) and earlier (`movingDangerSteps` 15).
+   - They're included in the danger phrase when near the path: "obstacle at 12 in 6, person at 1 and 2".
+4. **Crosswalk as a landmark:** a crosswalk anywhere in the walking region (or touching it) within `landmarkSteps` (15) is announced **once per crosswalk** as a feature, with direction and steps: "crosswalk at 12 in 8". It no longer has to cross the lane.
+5. **Poles and thin objects warned when noticed:**
+   - `pole`, `traffic-light*`, `traffic-sign`, `sign`: when first confirmed within `thinNoticeSteps` (15) and `|lateral| ≤ 2.5` m, they join the next phrase as "beware poles" (grouped, once per cluster).
+   - A pole in the lane still becomes danger as before.
+6. **Curb ahead as a feature**, with the new phrasing: "curb at 12 in 10". The cross-lane rule is kept (curbs running alongside the path stay silent).
+7. **Phrasing:** templates use "at {clock}" with no "o'clock":
+   - danger and final: `"{label} at {clock} in {steps}"`
+   - approach: `"{label} approaching at {clock}"`
+   - feature: `"{label} at {clock} in {steps}"`
+   - context: `"{label} at {clock}"`
+   
+   **Grouping** merges same-label items into one entry, e.g. "person at 1 and 2". At most 3 entries; danger leads, then features, then the "beware poles" note.
+8. **Surface change needs evidence:** announce a surface change only if the new surface persists ≥ `surfaces.minPersistSeconds` (8), **and** a curb or crosswalk was within 2 steps in the lane during the transition (`requireCrossingEvidence: true`). This fixes 120.8 s.
+9. **Parking-sensor beeps, collisions only:**
+   - **Who beeps:** only the single nearest **collision** track, i.e. a danger whose contact is in the lane, or an approaching mover heading for the lane. Features and context never beep.
+   - **Sound:** **constant pitch** (`tones.frequencyHz` 880), with the interval shrinking smoothly with steps (`tones.bySteps`: 10 → 1.0 s, 6 → 0.5 s, 3 → 0.25 s, 2 → 0.12 s).
+   - **Very close:** at ≤ `tones.continuousSteps` (1.5), a **continuous tone**. Emitted as gapless back-to-back tone events, so the audio engine needs no change.
+   - **Stopping:** the beeps stop as soon as the track stops being a collision (passed, left the lane, or lost for more than 0.5 s).
+10. **Beep episodes for review:** besides the individual tone events, `events.json` gets `{"type": "beeps", "t", "tEnd", "trackId", "label", "clock", "minSteps", "text": "beeps · pole at 12 · 9→2 steps"}` per continuous beep stream (gap < 1.5 s). The review panel uses these.
+11. Bump `collision.json` `version` to `v26.1.6`.
+
+**Regression:** `tests/test_collision_regression.py` gains review-2 cases on the fixture windows:
+- a crosswalk feature with "at 12 in" near 33.9 s;
+- a curb feature plus "poles" near 38.8 s;
+- a phrase with "person" near 48.5–49.5 s (danger or grouped);
+- no context at 52.34 / 55.51 / 58.02 s;
+- no "o'clock" in any phrase;
+- no surface event near 120.83 s;
+- a stable step count (no jump of more than 30% between consecutive frames for one track, while walking).
+
+Review-1 tests stay green, with their phrase expectations updated to the new phrasing.
+
+### 14.2 Lab — Lab (`RnD/lab/`)
+1. **Naming:** "Speech review" becomes **"Notification review"**. Rows are "notifications" (speech or beeps), and the counts read e.g. "12 notifications · 3 beeps".
+   - CONTRACTS terms follow suit.
+   - The stored kind `verdict` and the event snapshot stay compatible. `event.type` is `"speech"` or `"beeps"`.
+2. **Beep episodes as review rows:** each `beeps` event is a row with a 🔔 badge:
+   - its text, e.g. "beeps · pole at 12 · 9→2 steps", and its duration;
+   - the same ✓ / ✗ / ⊘ plus note;
+   - matching key `(runId, collisionVersion, round(t, 3), text)`.
+   
+   ⊘ on a beep episode silences that episode in "Hear review edits".
+3. **Add a missing notification:** the add form gets a **type** select (speech or beeps). An added "beeps" entry has `t`, `tEnd` (default t + 3 s, "set end from playhead" button) and a text, e.g. "beeps · pole at 12". In preview it plays parking-style beeps at a medium rate.
+4. **Audio engine:** continuous tone is gapless back-to-back tone events, so no engine change beyond verifying there are no clicks. Beep volume comes from the existing master volume. The tones checkbox becomes "Beeps".
+5. **Timeline:** beep episodes are drawn as bars, coloured by role, instead of the density heat-row.
+6. **E2E** (`tests/e2e`): add tests for beep rows (verdict save, ⊘ silences the episode in preview through `__labAudioLog`), adding a beeps entry, and the renamed labels.
+
+
+### 14.3 Event/annotation shapes (binding)
+- **`events.json`** adds `{"type": "beeps", "t", "tEnd", "trackId", "label", "clock", "minSteps", "role": "danger", "text"}`. Individual `tone` events stay, and drive audio.
+- **Review annotations:** `event` snapshots carry `type: "speech" | "beeps"`; old snapshots without `type` mean speech. An `added` annotation may have `type: "beeps"` with `tEnd > t`. `added` without `type` means speech.
+- **Matching key:** unchanged, `(runId, collisionVersion, round(event.t, 3), event.text)`.

@@ -1,6 +1,6 @@
-// Speech review panel (CONTRACTS §10): one row per spoken phrase of the loaded
-// run plus user-added phrases; the user marks each correct / incorrect /
-// should-not-be-said with a note. Reviews belong to the recording, so they load
+// Notification review panel (CONTRACTS §10, §14.2): one row per notification of the loaded
+// run (a spoken phrase, or a beeps episode with a 🔔 badge) plus user-added ones; the user
+// marks each correct / incorrect / should-not-be-said with a note. Reviews belong to the recording, so they load
 // on recording select and don't need a run (verdict rows do).
 //
 // Updates are optimistic: local state changes first, a single serial queue
@@ -15,6 +15,12 @@ import { orderCandidates, fillFor } from "./autofill.js";
 const VERDICTS = [["correct", "✓", "Correct (c)"], ["incorrect", "✗", "Incorrect (x)"], ["remove", "⊘", "Should not be said (r)"]];
 const ADD_ROLES = [...ROLES, "other"];
 const SAVE_DELAY_MS = 600;
+const DEFAULT_BEEP_S = 3;            // default length of an added beeps entry
+const BEEP_INTERVAL_S = 0.5;         // "medium" parking-sensor rate for added beeps in preview
+const BEEP_FREQ_HZ = 780;
+const BEEP_DUR_S = 0.08;
+const isBeeps = (o) => o?.type === "beeps";
+const fmtDur = (s) => `${(+s).toFixed(1)} s`;
 const roleColor = (r) => ROLE_COLOR[r] ?? ROLE_COLOR.none;
 const t3 = (t) => (+t).toFixed(3);
 
@@ -30,12 +36,14 @@ export class Reviews {
   constructor(hooks) {
     this.h = hooks;
     this.rec = null; this.run = null;
-    this.speech = []; this.roles = new Set(ROLES);
+    this.notes = []; this.roles = new Set(ROLES);
     this.anns = []; this.vmap = new Map();
     this.items = []; this.curIdx = -2; this.lastT = 0;
     this.expanded = new Set(); this.drafts = new Map(); this.timers = new Map();
     this.queue = Promise.resolve(); this.loadToken = 0;
     this.followPlayhead = false; this.cand = null; this.addToken = 0; // add-form state (§10a)
+    this.endTouched = false; // the user set the beeps end by hand: stop deriving it from the start
+    this.formEnd = null; // exact end of an added beeps entry while the end field still shows fmtTime(formEnd, 1)
     this.formT = null;   // exact (unrounded) time behind the add form's time field while it still shows fmtTime(formT, 1)
     this.list = $("#rvList"); this.empty = $("#rvEmpty");
     this._wire();
@@ -59,9 +67,9 @@ export class Reviews {
     } catch { /* toasted */ }
   }
 
-  /** run: run.json (needs id, collisionVersion) or null; speech: its speech events sorted by t. */
-  setRun(run, speech) {
-    this.run = run; this.speech = speech ?? [];
+  /** run: run.json (needs id, collisionVersion) or null; notes: its speech + beeps events sorted by t. */
+  setRun(run, notes) {
+    this.run = run; this.notes = notes ?? [];
     this._reindex(); this.render();
   }
   setRoles(roles) { this.roles = roles; this.render(); }
@@ -76,16 +84,29 @@ export class Reviews {
   }
 
   // ------------------------------------------------------------ playback preview (§12.2)
-  /** True when the loaded run's speech event carries a ⊘ "should not be said" verdict. */
+  /** True when the loaded run's speech phrase / beeps episode carries a ⊘ "should not be notified" verdict. */
   isRemoved(ev) { return !!this.run && this.vmap.get(this._evKey(ev))?.verdict === "remove"; }
-  /** Added phrases as speech events for the audio engine. */
+  /** Added speech phrases as speech events for the audio engine. */
   addedEvents() {
-    return this.anns.filter((a) => a.kind === "added")
+    return this.anns.filter((a) => a.kind === "added" && !isBeeps(a))
       .map((a) => ({ t: a.t, type: "speech", role: a.role, text: a.text, source: "added" }));
   }
+  /** Added beeps entries as parking-style tone events (medium rate, constant pitch) for the audio engine. */
+  addedTones() {
+    const out = [];
+    for (const a of this.anns) {
+      if (a.kind !== "added" || !isBeeps(a) || !(a.tEnd > a.t)) continue;
+      for (let t = a.t; t < a.tEnd - 1e-9; t += BEEP_INTERVAL_S) {
+        out.push({ t: +t.toFixed(4), type: "tone", role: a.role, urgency: "danger", pan: 0, frequencyHz: BEEP_FREQ_HZ, durationSeconds: BEEP_DUR_S, source: "added" });
+      }
+    }
+    return out;
+  }
+  /** Beeps episodes of the loaded run the user marked ⊘: their tone events are silenced in preview. */
+  silencedBeeps() { return this.notes.filter((e) => isBeeps(e) && this.isRemoved(e)); }
   _matchedIds() {
     const ids = new Set();
-    if (this.run) for (const ev of this.speech) { const a = this.vmap.get(this._evKey(ev)); if (a) ids.add(a); }
+    if (this.run) for (const ev of this.notes) { const a = this.vmap.get(this._evKey(ev)); if (a) ids.add(a); }
     return ids;
   }
 
@@ -94,7 +115,7 @@ export class Reviews {
     const matched = this._matchedIds();
     const items = [];
     if (this.run) {
-      for (const ev of this.speech) {
+      for (const ev of this.notes) {
         if (!this.roles.has(eventRole(ev))) continue;
         items.push({ rk: `ev:${this._evKey(ev)}`, t: ev.t, ev });
       }
@@ -109,7 +130,7 @@ export class Reviews {
 
     this.list.replaceChildren(...items.map((it) => this._row(it)));
     this.empty.textContent = !this.rec ? "Select a recording."
-      : items.length ? "" : this.run ? "No speech events match the role filter." : "Load a run to review its speech, or add phrases below.";
+      : items.length ? "" : this.run ? "No notifications match the role filter." : "Load a run to review its notifications, or add some below.";
     this._header(matched);
     this._others(matched);
     this.curIdx = -2;
@@ -120,7 +141,10 @@ export class Reviews {
     const c = { correct: 0, incorrect: 0, remove: 0 };
     for (const a of matched) c[a.verdict]++;
     const added = this.anns.filter((a) => a.kind === "added").length;
-    const unreviewed = this.run ? this.speech.length - matched.size : 0;
+    const unreviewed = this.run ? this.notes.length - matched.size : 0;
+    const nBeeps = this.notes.filter(isBeeps).length + this.anns.filter((a) => a.kind === "added" && isBeeps(a)).length;
+    const nAll = (this.run ? this.notes.length : 0) + added;
+    $("#rvTotal").textContent = this.rec ? `${nAll} notification${nAll === 1 ? "" : "s"} · ${nBeeps} beep${nBeeps === 1 ? "" : "s"}` : "";
     const set = (id, n) => { $(id).textContent = n; };
     set("#rvCorrect", c.correct); set("#rvIncorrect", c.incorrect); set("#rvRemove", c.remove);
     set("#rvAdded", added); set("#rvUnrev", this.run ? unreviewed : "–");
@@ -142,7 +166,7 @@ export class Reviews {
       const tb = el("button", "rv-time mono", fmtTime(a.t, 1)); tb.type = "button";
       tb.addEventListener("click", () => this._seek(a.t));
       const v = VERDICTS.find((x) => x[0] === a.verdict);
-      top.append(tb, el("span", "rv-vmark " + a.verdict, v[1]), el("span", "rv-text" + (a.verdict === "remove" ? " struck" : ""), a.event.text));
+      top.append(tb, el("span", "rv-vmark " + a.verdict, v[1]), el("span", "rv-text" + (a.verdict === "remove" ? " struck" : ""), (isBeeps(a.event) ? "🔔 " : "") + a.event.text));
       const del = el("button", "rv-icon", "🗑"); del.type = "button"; del.title = "Delete";
       del.addEventListener("click", () => this._delete(a, "Delete this verdict from another run/version?"));
       top.append(del);
@@ -159,14 +183,19 @@ export class Reviews {
     const { ev, rk } = it;
     const a = this.vmap.get(this._evKey(ev));
     const role = eventRole(ev);
-    const li = el("li", "rv-row" + (a ? " v-" + a.verdict : ""));
+    const li = el("li", "rv-row" + (isBeeps(ev) ? " beeps" : "") + (a ? " v-" + a.verdict : ""));
     li.dataset.rk = rk;
     li.style.setProperty("--c", roleColor(role));
     const top = el("div", "rv-main");
     const tb = el("button", "rv-time mono", fmtTime(ev.t, 1)); tb.type = "button"; tb.title = "Seek here";
     tb.addEventListener("click", () => this._seek(ev.t));
     const badge = el("span", "rv-role", role); badge.style.color = roleColor(role);
-    top.append(tb, badge, this._toggles(a, (v) => this.toggleVerdict(ev, v)));
+    if (isBeeps(ev)) {
+      const bell = el("span", "rv-bell", "🔔 beeps"); bell.title = "Beeps episode";
+      top.append(tb, bell, badge);
+      if (ev.tEnd > ev.t) top.append(el("span", "rv-dur mono", fmtDur(ev.tEnd - ev.t)));
+    } else top.append(tb, badge);
+    top.append(this._toggles(a, (v) => this.toggleVerdict(ev, v)));
     const text = el("div", "rv-text" + (a?.verdict === "remove" ? " struck" : ""), ev.text);
     li.append(top, text);
     const showNote = a || this.expanded.has(rk);
@@ -204,27 +233,45 @@ export class Reviews {
 
   _addedRow(it) {
     const a = it.ann, rk = it.rk;
-    const li = el("li", "rv-row added");
+    const beeps = isBeeps(a);
+    const li = el("li", "rv-row added" + (beeps ? " beeps" : ""));
     li.dataset.rk = rk;
     li.style.setProperty("--c", roleColor(a.role));
     const top = el("div", "rv-main");
     top.append(el("span", "rv-addbadge", "+ added"));
+    if (beeps) top.append(el("span", "rv-bell", "🔔 beeps"));
     const tin = el("input", "rv-t mono"); tin.value = fmtTime(a.t, 1); tin.inputMode = "decimal"; tin.size = 7; tin.setAttribute("aria-label", "Time");
     tin.addEventListener("change", () => {
       const v = parseTime(tin.value);
       if (!(v >= 0) || (this.rec && v > this.rec.duration)) { toast("Time must be within the recording."); tin.value = fmtTime(a.t, 1); return; }
-      this._editAdded(a, { t: v }, true);
+      this._editAdded(a, this._moveFields(a, v), true);
     });
     const head = el("button", "rv-icon", "⟲"); head.type = "button"; head.title = "Set to playhead";
-    head.addEventListener("click", () => this._editAdded(a, { t: this.h.getTime() }, true));
+    head.addEventListener("click", () => this._editAdded(a, this._moveFields(a, this.h.getTime()), true));
     const go = el("button", "rv-icon", "▸"); go.type = "button"; go.title = "Seek here";
     go.addEventListener("click", () => this._seek(a.t));
     const sel = this._roleSelect(a.role);
     sel.addEventListener("change", () => this._editAdded(a, { role: sel.value }, true));
     const del = el("button", "rv-icon", "🗑"); del.type = "button"; del.title = "Delete";
-    del.addEventListener("click", () => this._delete(a, "Delete this added phrase?"));
-    top.append(tin, head, go, sel, del);
-    const txt = el("input", "rv-textin"); txt.value = a.text; txt.maxLength = 300; txt.setAttribute("aria-label", "Spoken text");
+    del.addEventListener("click", () => this._delete(a, "Delete this added notification?"));
+    top.append(tin, head);
+    if (beeps) {
+      const ein = el("input", "rv-t end mono"); ein.value = fmtTime(a.tEnd, 1); ein.inputMode = "decimal"; ein.size = 7; ein.setAttribute("aria-label", "End time"); ein.title = "End of the beeps";
+      ein.addEventListener("change", () => {
+        const v = parseTime(ein.value);
+        if (!(v > a.t) || (this.rec && v > this.rec.duration)) { toast("End must be after the start and within the recording."); ein.value = fmtTime(a.tEnd, 1); return; }
+        this._editAdded(a, { tEnd: v }, true);
+      });
+      const eh = el("button", "rv-icon", "⟲"); eh.type = "button"; eh.title = "Set end to playhead";
+      eh.addEventListener("click", () => {
+        const v = this.h.getTime();
+        if (!(v > a.t)) { toast("The playhead must be after the start."); return; }
+        this._editAdded(a, { tEnd: v }, true);
+      });
+      top.append(ein, eh);
+    }
+    top.append(go, sel, del);
+    const txt = el("input", "rv-textin"); txt.value = a.text; txt.maxLength = 300; txt.setAttribute("aria-label", beeps ? "Beeps text" : "Spoken text");
     const tsaved = el("span", "rv-saved");
     const saveText = () => {
       const v = txt.value.trim();
@@ -243,6 +290,13 @@ export class Reviews {
     for (const r of ADD_ROLES) sel.add(new Option(r, r));
     sel.value = value; sel.setAttribute("aria-label", "Role");
     return sel;
+  }
+
+  /** Fields for moving an added entry to start `t`; a beeps entry keeps its length (clamped to the recording). */
+  _moveFields(a, t) {
+    if (!isBeeps(a)) return { t };
+    const end = Math.min(t + (a.tEnd - a.t), this.rec?.duration ?? Infinity);
+    return end > t ? { t, tEnd: end } : { t };
   }
 
   _rowEl(rk) { return [...this.list.children].find((n) => n.dataset.rk === rk) ?? null; }
@@ -309,7 +363,7 @@ export class Reviews {
       return;
     }
     const snapshot = {};
-    for (const k of ["t", "text", "role", "trackId", "urgency", "clock"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
+    for (const k of ["t", "text", "role", "trackId", "urgency", "clock", "type", "tEnd", "label", "minSteps"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
     const run = this.run, rec = this.rec;
     const draft = this.drafts.get(rk) ?? "";
     this.drafts.delete(rk);
@@ -362,6 +416,7 @@ export class Reviews {
   _setFormTime(t) {
     this.formT = t; this.followPlayhead = true;
     $("#rvAddT").value = this._fmtT();
+    if (!this.endTouched) this._resetEnd();
     this._resetAuto(); this._followUi();
   }
   /** The form's time: the exact playhead while the field is untouched, else what was typed. */
@@ -369,6 +424,18 @@ export class Reviews {
     const typed = parseTime($("#rvAddT").value);
     return this.formT !== null && $("#rvAddT").value === this._fmtT() ? this.formT : typed;
   }
+  _addType() { return $("#rvAddType").value; }
+  /** Beeps end: default start + 3 s (clamped to the recording) until the user edits the end field. */
+  _resetEnd() {
+    const dur = this.rec?.duration ?? Infinity;
+    this.formEnd = this.formT === null ? null : Math.min(this.formT + DEFAULT_BEEP_S, dur);
+    $("#rvAddEnd").value = this.formEnd === null ? "" : fmtTime(this.formEnd, 1);
+  }
+  _formEnd() {
+    const typed = parseTime($("#rvAddEnd").value);
+    return this.formEnd !== null && $("#rvAddEnd").value === fmtTime(this.formEnd, 1) ? this.formEnd : typed;
+  }
+  _typeUi() { $("#rvAddEndRow").hidden = this._addType() !== "beeps"; }
   _followUi() {
     $("#rvAddFollow").hidden = $("#rvAddForm").hidden || !(this.followPlayhead && this.h.isPaused());
   }
@@ -383,6 +450,7 @@ export class Reviews {
     $("#rvAddForm").hidden = true;
     $("#rvAddT").value = ""; $("#rvAddText").value = ""; $("#rvAddNote").value = "";
     $("#rvAddRole").value = "danger";
+    $("#rvAddType").value = "speech"; $("#rvAddEnd").value = ""; this.formEnd = null; this.endTouched = false; this._typeUi();
     this.formT = null; this.followPlayhead = false; this.addToken++;
     this._resetAuto(); this._followUi();
   }
@@ -390,7 +458,8 @@ export class Reviews {
   /** app.js calls this on play / pause / seeked / frame step: a paused playhead drives the add form's time. */
   playheadChanged() {
     if ($("#rvAddForm").hidden) return;
-    if (!this.h.isPaused()) { this._followUi(); return; }
+    // A beeps entry has two times (start, end), so a seek must not drag them: use ⟲ playhead / end from playhead.
+    if (!this.h.isPaused() || this._addType() === "beeps") { this._followUi(); return; }
     const t = this.h.getTime();
     if (this.formT === null || t !== this.formT || !this.followPlayhead) this._setFormTime(t);
     else this._followUi();
@@ -415,7 +484,9 @@ export class Reviews {
     const c = this.cand;
     if (!c.list.length) { toast("nothing detected at this time", "info"); return; }
     c.i = (c.i + 1) % c.list.length;
-    const it = c.list[c.i], { text, role } = fillFor(it, this.h.getTemplates());
+    const it = c.list[c.i];
+    let { text, role } = fillFor(it, this.h.getTemplates());
+    if (this._addType() === "beeps") text = `beeps · ${it.label ?? it.className ?? "object"} at ${it.clock ?? "?"}`;
     $("#rvAddText").value = text.slice(0, 300);
     $("#rvAddRole").value = role;
     const info = $("#rvAddAutoInfo");
@@ -427,8 +498,14 @@ export class Reviews {
     if (!this.rec) return;
     const t = this._formTime(), text = $("#rvAddText").value.trim();
     if (!(t >= 0) || t > this.rec.duration) { toast("Time must be within the recording."); return; }
-    if (!text) { toast("Enter the phrase that should have been spoken."); $("#rvAddText").focus(); return; }
-    const body = { kind: "added", t, text, role: $("#rvAddRole").value, note: $("#rvAddNote").value };
+    const type = this._addType();
+    if (!text) { toast(type === "beeps" ? "Enter a description of the beeps, e.g. beeps · pole at 12." : "Enter the phrase that should have been spoken."); $("#rvAddText").focus(); return; }
+    const body = { kind: "added", type, t, text, role: $("#rvAddRole").value, note: $("#rvAddNote").value };
+    if (type === "beeps") {
+      const tEnd = this._formEnd();
+      if (!(tEnd > t) || tEnd > this.rec.duration) { toast("End must be after the start and within the recording."); return; }
+      body.tEnd = tEnd;
+    }
     if (this.run) { body.runId = this.run.id; body.collisionVersion = this.run.collisionVersion ?? undefined; }
     const btn = $("#rvAddSubmit"); btn.disabled = true;
     try {
@@ -466,6 +543,9 @@ export class Reviews {
     for (const r of ADD_ROLES) sel.add(new Option(r, r));
     sel.value = "danger";
     $("#rvAddBtn").addEventListener("click", () => ($("#rvAddForm").hidden ? this.openAdd() : this.closeAdd()));
+    $("#rvAddEnd").addEventListener("input", () => { this.endTouched = true; });
+    $("#rvAddType").addEventListener("change", () => { this._typeUi(); if (this._addType() === "beeps") { this.followPlayhead = false; this._followUi(); } if (this._addType() === "beeps" && this.formEnd === null) this._resetEnd(); });
+    $("#rvAddEndHead").addEventListener("click", () => { const v = this.h.getTime(); this.formEnd = v; this.endTouched = true; $("#rvAddEnd").value = fmtTime(v, 1); });
     $("#rvAddHead").addEventListener("click", () => this._setFormTime(this.h.getTime()));
     $("#rvAddT").addEventListener("input", () => { this.followPlayhead = false; this._resetAuto(); this._followUi(); });
     $("#rvAddAuto").addEventListener("click", () => this.autofill());

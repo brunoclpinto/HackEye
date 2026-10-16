@@ -97,8 +97,8 @@ A web UI for researching production behaviour on this headless box: pick
 footage from `media/`, analyse a time range with the segmentation model, then
 play it back with the safety mask, walking corridor and collision hazards
 drawn over the video, and hear the warnings (speech in clock notation —
-12 = straight ahead, 9 = left, 3 = right — plus left/right-panned beeps that
-speed up as an obstacle gets closer).
+12 = straight ahead, 9 = left, 3 = right — plus left/right-panned parking-sensor beeps that
+speed up as a collision gets closer).
 
 - **Open:** `https://megabeast.tail97a14.ts.net/` from any tailnet device
   (`tailscale serve` → `127.0.0.1:8765`). Fallback: `ssh -L 8765:localhost:8765 megabeast`
@@ -116,6 +116,12 @@ speed up as an obstacle gets closer).
   4. Change the mount preset or HFOV, then **Re-run collision**. This only
      re-runs the collision logic over the stored grids, with no new inference,
      so tuning takes seconds.
+  5. Review the notifications in the right-hand **Notification review** panel
+     (v26.1.6): each row is a spoken phrase or a 🔔 beeps episode (a collision
+     parking-sensor run). Mark it ✓ / ✗ / ⊘ with a note, or add a missed one
+     (type speech or beeps, with an end time for beeps). "Hear review edits"
+     plays your additions and skips what you marked ⊘ (including a beeps
+     episode's tones). **Export** downloads the reviews as JSON (with `type`).
 - **Code:**
   - `lab/CONTRACTS.md`: the spec — coordinates, JSON shapes, API.
   - `lab/server.py`, `lab/recordings.py`, `lab/analysis.py`: the backend.
