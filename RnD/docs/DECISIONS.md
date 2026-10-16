@@ -196,3 +196,27 @@ One entry per version: what prompted it (usually the user's review in the Lab), 
 **Small open items found:**
 - The HUD doesn't show the gait scale (`ego.scale` / `scaleSource` are in hazards.json).
 - `static/js/autofill.js` still has stale fallback templates with "o'clock". Harmless, since the real templates are fetched from the config.
+
+## v26.1.8 — contours, classes & safety-levels panel, self-contained E2E (plan [`plans/v26.1.8.md`](plans/v26.1.8.md))
+**Requests:**
+- Draw items as **contours that follow the mask edges** instead of bounding boxes.
+- A **checkbox list of model classes**, each with a dropdown of its safety level.
+- A **list of safety levels** with editable colour and opacity.
+- **Two Save buttons**: one for class levels, one for level colours.
+
+**Decisions with the user:**
+- The panel is **Lab view only**. It changes how the mask is painted and never touches the shared safety mapping or collision behaviour.
+- A class checkbox = **show/hide in the mask overlay**.
+- The Save buttons store the view **on the Lab server** (`debug/lab/display/`), shared by laptop and phone. It survives version wipes, like recording settings.
+
+**Implementation:**
+- **Outlines:** each item with a role carries an `outline`. It is traced on the item's own component (pixel corners, so its extent equals the bbox), with Douglas–Peucker simplification to ≤ 32 points; concavities are kept. Role `none` items get none, to keep hazards.json small: +10% on the role-heavy fixtures.
+- **Outlines vs. events:** speech, beeps and roles are byte-identical to v26.1.7 (tested).
+- **Overlay:** a Shapes select (Outlines / Boxes, default Outlines).
+- **Mask colouring moved into the browser:**
+  - The server sends each frame's class-id grid (`classes.png`) and the matching mapping's classes and levels (`segmentation.find_mapping`, pure, no GPU).
+  - The page paints through a lookup table that repaints instantly on any edit.
+  - The pre-rendered `mask.png` stays as a fallback.
+- **Panel controls:** unsaved edits are kept as a local draft with an "unsaved changes" marker and Discard. The Save buttons are enabled only when needed. Reset to defaults is confirmed first.
+
+**Test hygiene fix:** 12 older E2E tests were hard-wired to the user's full-length run `7b9d5ac14e14`, which the v26.1.7 bump wiped. They now create and delete their own run, so version wipes can't break them.

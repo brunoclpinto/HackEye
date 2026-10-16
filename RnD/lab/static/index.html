@@ -104,9 +104,48 @@
         <label class="inline"><input type="checkbox" id="laneChk" checked> Lane</label>
         <label class="inline"><input type="checkbox" id="horizonChk" checked> Horizon</label>
         <label class="inline"><input type="checkbox" id="hazardChk" checked> Items</label>
+        <label class="inline">Shapes
+          <select id="shapeSel" title="Item shapes: outlines follow the mask edges, boxes are the bounding rectangles">
+            <option value="outlines">Outlines</option>
+            <option value="boxes">Boxes</option>
+          </select></label>
         <label class="inline"><input type="checkbox" id="showAllChk"> Show all (labels of ignored items)</label>
       </fieldset>
     </div>
+
+    <details id="secClasses">
+      <summary>Classes &amp; safety levels <span id="clsEdited" class="cls-edited" hidden>edited</span></summary>
+      <p id="clsMsg" class="hint"></p>
+      <div id="clsBody" hidden>
+        <p class="hint">View only: changes how the mask is painted. Edits preview instantly; Save keeps them on the Lab server for every device. Collision behaviour and shared config are untouched.</p>
+        <table class="cls-table" aria-label="Safety levels">
+          <thead><tr><th>Level</th><th>Colour</th><th>Opacity</th></tr></thead>
+          <tbody id="clsLevels"></tbody>
+        </table>
+        <div class="cls-save">
+          <button type="button" id="clsSaveL" disabled>Save level colours</button>
+          <span id="clsStatL" class="cls-stat" aria-live="polite"></span>
+          <button type="button" id="clsDiscL" class="link" hidden>Discard</button>
+        </div>
+        <div class="cls-bar">
+          <input id="clsFilter" type="search" placeholder="Filter classes" aria-label="Filter classes" autocomplete="off">
+          <button type="button" id="clsAll">Show all</button>
+          <button type="button" id="clsNone">Show none</button>
+          <button type="button" id="clsReset">Reset to defaults</button>
+        </div>
+        <div class="cls-scroll">
+          <table class="cls-table" aria-label="Classes">
+            <thead><tr><th></th><th></th><th>Class</th><th>Level</th></tr></thead>
+            <tbody id="clsClasses"></tbody>
+          </table>
+        </div>
+        <div class="cls-save">
+          <button type="button" id="clsSaveC" disabled>Save class levels</button>
+          <span id="clsStatC" class="cls-stat" aria-live="polite"></span>
+          <button type="button" id="clsDiscC" class="link" hidden>Discard</button>
+        </div>
+      </div>
+    </details>
 
     <canvas id="timeline" aria-label="Run timeline"></canvas>
     <div id="roleChips" class="chips" role="group" aria-label="Show roles"></div>

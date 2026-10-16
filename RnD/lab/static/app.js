@@ -6,6 +6,7 @@ import { AudioEngine } from "./js/audio.js";
 import { Timeline } from "./js/timeline.js";
 import { Reviews } from "./js/reviews.js";
 import { HazardWindow } from "./js/hazards.js";
+import { ClassesPanel } from "./js/classes.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 const video = $("#video");
@@ -20,6 +21,7 @@ const overlay = new Overlay(video, $("#overlay"));
 // Windowed hazards (CONTRACTS 12.1): the overlay, HUD and frame stepping use the frames around the playhead.
 const hazards = new HazardWindow((frames, head) => overlay.setFrames(frames, head));
 overlay.hudEl = $("#hud");
+const classesPanel = new ClassesPanel(overlay);
 const audio = new AudioEngine(video);
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
 const reviews = new Reviews({
@@ -351,6 +353,7 @@ function unloadRun() {
   S.run = null; S.events = []; S.speech = []; S.tones = []; S.notes = [];
   hazards.setRun(null);
   overlay.setRun(null);
+  classesPanel.setRun(null);
   audio.setEvents([]);
   timeline.set(null, []);
   reviews.setRun(null, []);
@@ -369,6 +372,7 @@ async function loadRunData(run, links) {
   // Only the window around the playhead is fetched (never the whole hazards.json); it streams in behind the UI.
   hazards.setRun(run);
   overlay.setRun(run);
+  classesPanel.setRun(run);
   hazards.update(playheadForRun(run));
   audio.setEvents(S.events);
   refreshAudioEvents();
@@ -575,6 +579,14 @@ function wire() {
   const layer = (id, key) => $(id).addEventListener("change", (e) => { overlay.layers[key] = e.target.checked; overlay.redraw(); });
   layer("#maskChk", "mask"); layer("#regionChk", "region"); layer("#laneChk", "lane");
   layer("#horizonChk", "horizon"); layer("#hazardChk", "hazards"); layer("#showAllChk", "showAll");
+  const shapeSel = $("#shapeSel");
+  try { const v = localStorage.getItem("hackeye.lab.shapes"); if (v === "outlines" || v === "boxes") shapeSel.value = v; } catch { /* storage blocked */ }
+  overlay.outlines = shapeSel.value === "outlines";
+  shapeSel.addEventListener("change", () => {
+    overlay.outlines = shapeSel.value === "outlines";
+    try { localStorage.setItem("hackeye.lab.shapes", shapeSel.value); } catch { /* storage blocked */ }
+    overlay.redraw();
+  });
   $("#mountSel").addEventListener("change", updateSettingPlaceholders);
   renderRoleChips();
   $("#maskOpacity").addEventListener("input", (e) => { overlay.maskOpacity = Number(e.target.value); overlay.redraw(); });

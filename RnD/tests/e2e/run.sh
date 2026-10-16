@@ -5,8 +5,8 @@
 #   RnD/tests/e2e/run.sh -k audio -x     # extra args go to pytest
 #   LAB_URL=http://127.0.0.1:8765 PW_TAG=v1.63.0-noble RnD/tests/e2e/run.sh
 #
-# Needs the `lab` compose service running (with the recordings' proxies ready:
-# 4928, 4929, and the full run 7b9d5ac14e14 on 4929). The Playwright image is
+# Needs the `lab` compose service running (with the proxies of recordings 4928 and 4929 ready).
+# The session analyses 4929 0-120 s itself and deletes that run's directory afterwards. The Playwright image is
 # ~3.5 GB; pull it once with
 #   docker pull mcr.microsoft.com/playwright/python:v1.63.0-noble
 # and `docker rmi` it when you no longer need it. Google Chrome (not the
@@ -16,7 +16,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="${PW_TAG:-v1.63.0-noble}"
 PWV="${TAG#v}"; PWV="${PWV%%-*}"   # python package version matching the image
-docker run --rm --network host --ipc host \
+LAB_MOUNT=()
+if [ -d "$HERE/../../../debug/lab/runs" ]; then   # lets the session delete the run it created
+  LAB_MOUNT=(-v "$(cd "$HERE/../../../debug/lab" && pwd):/lab" -e LAB_DIR_MOUNT=/lab)
+fi
+docker run --rm --network host --ipc host "${LAB_MOUNT[@]}" \
   -e LAB_URL="${LAB_URL:-http://127.0.0.1:8765}" \
   -e PYTHONDONTWRITEBYTECODE=1 -e PWV="$PWV" \
   -v "$HERE:/e2e:ro" -w /e2e \

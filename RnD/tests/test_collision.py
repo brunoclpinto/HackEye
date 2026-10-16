@@ -1,4 +1,4 @@
-"""Synthetic-grid tests for collision.py v26.1.7 (no model, no GPU).
+"""Synthetic-grid tests for collision.py v26.1.8 (no model, no GPU).
 
 The scenes use real geometry: a camera at height H, horizon row ``HV``, a
 walking surface that is a perspective trapezoid converging to the vanishing
@@ -987,7 +987,7 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "settings", "gridW", "gridH", "egoAvailable", "frames"}
-    assert doc["version"] == "v26.1.7" == ev["version"]
+    assert doc["version"] == "v26.1.8" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM"}
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150
@@ -1004,7 +1004,7 @@ def test_output_documents_are_serializable_and_complete():
             assert set(f["region"]) == {"surface", "label", "rows"}
             assert all(len(r) == 3 for r in f["region"]["rows"])
         for h in f["hazards"]:
-            assert set(h) == hazard_keys
+            assert set(h) == hazard_keys | ({"outline"} if h["role"] != "none" else set())
             assert h["role"] in ("danger", "feature", "context", "none")
             assert h["urgency"] in ("none", "danger", "final")
             seen_hazard = True
@@ -1556,3 +1556,106 @@ def test_steps_are_left_out_only_when_the_distance_is_unknown():
     a, b = _item(1, "danger", 7, "person", group="moving", clock=1), _item(2, "danger", 9, "person", group="moving", clock=2)
     a.steps = b.steps = float("nan")
     assert p._entry("danger", [a, b]) == "person at 1 and 2"
+
+
+# --------------------------------------------------------------------------
+# Outlines (v26.1.8)
+# --------------------------------------------------------------------------
+
+def _l_mask():
+    m = np.zeros((20, 30), bool)
+    m[3:15, 5:9] = True          # vertical bar
+    m[11:15, 5:20] = True        # foot: an L with its inner corner at (9, 11)
+    return m
+
+
+def _cross(a, b, c):
+    return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+
+
+def test_l_shape_outline_keeps_its_inner_corner():
+    poly = col.simplify_polygon(col.trace_outline(_l_mask()))
+    assert len(poly) >= 5 and (9.0, 11.0) in poly
+    signs = [np.sign(_cross(poly[i - 2], poly[i - 1], poly[i])) for i in range(len(poly))]
+    assert -1 in signs and 1 in signs                      # a reflex (concave) vertex exists: not a convex hull
+    assert poly == [(5.0, 3.0), (9.0, 3.0), (9.0, 11.0), (20.0, 11.0), (20.0, 15.0), (5.0, 15.0)]
+
+
+def test_outline_is_capped_at_32_points_and_follows_a_blob():
+    yy, xx = np.mgrid[:60, :60]
+    ang = np.arctan2(yy - 30, xx - 30)
+    blob = np.hypot(yy - 30, xx - 30) < 18 + 6 * np.sin(7 * ang)        # a wavy disc
+    poly = col.simplify_polygon(col.trace_outline(blob))
+    assert 8 <= len(poly) <= 32
+    assert len(col.trace_outline(np.ones((1, 1), bool))) == 4
+
+
+def test_item_outlines_in_a_run_match_bbox_and_roles():
+    doc, _ = run(approach_frames(seconds=15), mot=motion(15))
+    n_out = 0
+    for f in doc["frames"]:
+        for h in f["hazards"]:
+            if h["role"] == "none":
+                assert "outline" not in h
+                continue
+            o = h["outline"]
+            n_out += 1
+            assert 4 <= len(o) <= 32
+            assert all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in o)
+            xs, ys = [p[0] for p in o], [p[1] for p in o]
+            tol_x, tol_y = 1.0 / W + 1e-4, 1.0 / H + 1e-4
+            x0, y0, x1, y1 = h["bbox"]
+            assert abs(min(xs) - x0) <= tol_x and abs(max(xs) - x1) <= tol_x
+            assert abs(min(ys) - y0) <= tol_y and abs(max(ys) - y1) <= tol_y
+    assert n_out > 0
+
+
+def test_role_none_items_have_no_outline():
+    doc, _ = run(approach_frames(seconds=15), mot=motion(15))
+    items = [h for f in doc["frames"] for h in f["hazards"]]
+    quiet = [h for h in items if h["role"] == "none"]
+    assert quiet and any(h["role"] != "none" for h in items)
+    assert all("outline" not in h for h in quiet)
+
+
+def test_outline_change_leaves_hazards_and_events_unchanged_vs_committed_v26_1_7(tmp_path):
+    """Everything but the new field is identical to the committed v26.1.7 module on the review fixtures."""
+    import importlib.util
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    baseline = os.environ.get("HACKEYE_COLLISION_V26_1_7")      # path to `git show 5ff8e98:RnD/src/collision.py`
+    try:
+        if baseline:
+            old_src = Path(baseline).read_text()
+        else:
+            old_src = subprocess.run(["git", "show", "5ff8e98:RnD/src/collision.py"], cwd=root, check=True,
+                                     capture_output=True, text=True).stdout
+    except (OSError, subprocess.CalledProcessError):   # e.g. inside the container: no git, no history
+        pytest.skip("git history for v26.1.7 not available")
+    path = tmp_path / "collision_v26_1_7.py"
+    path.write_text(old_src)
+    spec = importlib.util.spec_from_file_location("collision_v26_1_7", path)
+    old = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = old                                # dataclasses look the module up by name
+    spec.loader.exec_module(old)
+    fx = root / "tests" / "fixtures"
+    for name in ("4929_review1", "4929_review2", "4929_review3"):
+        meta = json.load(open(fx / f"{name}.json"))
+        npz = np.load(fx / f"{name}.npz")
+        s = meta["settings"]
+        cfg_new = col.load_config()
+        cfg_old = json.loads(json.dumps(cfg_new))
+        cfg_old["version"] = "v26.1.7"
+        for i, _w in enumerate(meta["windows"][:2]):
+            motion_ = {"t": npz[f"w{i}_mt"], "dx": npz[f"w{i}_mdx"], "dy": npz[f"w{i}_mdy"]}
+            args = (npz[f"w{i}_grids"], npz[f"w{i}_t"], meta["classNames"])
+            d_new, e_new = col.run_collision(*args, cfg_new, col.resolve_settings(cfg_new, s["mount"], s["hfovDeg"], s["cameraHeightM"], s["stepLengthM"]), motion_)
+            d_old, e_old = old.run_collision(*args, cfg_old, old.resolve_settings(cfg_old, s["mount"], s["hfovDeg"], s["cameraHeightM"], s["stepLengthM"]), motion_)
+            assert e_new["events"] == e_old["events"]
+            for f in d_new["frames"]:
+                for h in f["hazards"]:
+                    h.pop("outline", None)
+            assert d_new["frames"] == d_old["frames"]

@@ -6,7 +6,38 @@ import urllib.request
 
 import pytest
 
-from conftest import BASE, FULL_RUN, LONG_REC, SHORT_REC, annotations, api, audio_log, open_lab, seek
+from conftest import BASE, HOOKS, LONG_REC, SHORT_REC, annotations, api, audio_log, open_lab, seek
+
+
+import os
+import shutil
+import time
+
+# Every test that needs an analysed run uses the one the session analyses itself (version bumps wipe the Lab's runs,
+# so no test may depend on a user's run). FULL_RUN is filled in by the autouse fixture below.
+FULL_RUN = None
+LONG_RANGE = (0, 120)        # seconds of 4929 analysed at 6 fps: long enough for windowing (HALF_S = 90) and every review test
+LAB_DIR_MOUNT = os.environ.get("LAB_DIR_MOUNT", "")   # host debug/lab, mounted by run.sh: lets the session delete its own run
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _session_run():
+    """Analyse 4929 0-120 s (default model, fps 6; ~30 s) once; delete the run directory at the end if this session created it."""
+    global FULL_RUN
+    model = next(m["path"] for m in api("/api/models")["models"] if m["default"])
+    known = {r["id"] for r in api("/api/runs")}
+    run = api("/api/runs", "POST", {"recording": LONG_REC, "start": LONG_RANGE[0], "end": LONG_RANGE[1], "fps": 6, "model": model})
+    created = run["id"] not in known
+    t0 = time.time()
+    while run["status"] not in ("done", "error", "cancelled") and time.time() - t0 < 400:
+        time.sleep(1)
+        run = api(f"/api/runs/{run['id']}")
+    assert run["status"] == "done", run
+    FULL_RUN = run["id"]
+    yield FULL_RUN
+    path = os.path.join(LAB_DIR_MOUNT, "runs", FULL_RUN) if LAB_DIR_MOUNT else ""
+    if created and path and os.path.isdir(path):
+        shutil.rmtree(path)
 
 
 def long_run_events():
@@ -140,7 +171,7 @@ def test_slow_run_load_does_not_move_the_add_form_time(page, created_reviews):
 
 def test_autofill_is_quick_on_a_slow_link(page):
     """Issue 3. Over a slow link the 118 MB hazards.json used to be needed before auto-fill had any frame."""
-    ev = next(e for e in long_run_events() if e["role"] in ("danger", "final") and e["t"] > 20)
+    ev = next(e for e in long_run_events() if e["role"] in ("danger", "final") and e["t"] > 10)
     cdp = page.context.new_cdp_session(page)
     cdp.send("Network.enable")
     cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 20,
@@ -159,7 +190,7 @@ def test_autofill_is_quick_on_a_slow_link(page):
 # ---------------------------------------------------------------- auto-fill
 
 def test_autofill_on_long_run(page):
-    sp = [e for e in long_run_events() if e["role"] in ("danger", "final") and e["t"] > 20][:3]
+    sp = [e for e in long_run_events() if e["role"] in ("danger", "final") and e["t"] > 10][:3]
     assert sp
     open_lab(page, LONG_REC, run=FULL_RUN)
     for ev in sp:
@@ -229,13 +260,15 @@ def test_removed_system_phrase_is_not_spoken(page, created_reviews):
 
 def test_long_run_uses_windowed_hazards_and_gzip(page):
     open_lab(page, LONG_REC, run=FULL_RUN)
-    seek(page, 1500.0)               # outside the first window -> refetch
+    far = LONG_RANGE[1] - 5.0        # more than HALF_S (90 s) from the first window -> refetch
+    seek(page, far)
     page.wait_for_function("() => !document.querySelector('#hud').hidden", timeout=20_000)
     urls = [u for u, _ in page.requests]
     assert not any(re.search(r"/hazards\.json", u) for u in urls), "full hazards.json requested"
     wins = [u for u in urls if "/hazards?" in u]
     assert wins, urls
-    assert any(re.search(r"from=1[34]\d\d", u) for u in wins), wins
+    froms = [float(re.search(r"from=(-?[\d.]+)", u).group(1)) for u in wins]
+    assert any(f >= far - 100 for f in froms), (far, wins)      # a window centred near the far playhead was fetched
     for u in wins:
         assert page.responses[u].get("content-encoding") == "gzip", (u, page.responses[u])
     ev_url = next(u for u in page.responses if u.endswith("/events.json"))
@@ -332,7 +365,7 @@ def test_renamed_labels(page):
 
 
 def test_counts_line_and_old_runs_without_beeps(page):
-    """A run without beeps events (no injection) shows just its speech rows, no beep rows, and a '… · 0 beeps' count."""
+    """Without injection the run shows its own notifications and a '<n> notifications · <m> beeps' count."""
     open_lab(page, LONG_REC, run=FULL_RUN)
     page.wait_for_selector("#rvList .rv-row")
     assert re.fullmatch(r"\d+ notifications · \d+ beeps?s?", page.inner_text("#rvTotal")), page.inner_text("#rvTotal")
@@ -501,3 +534,217 @@ def post_raw(path, body):
         return api(path, "POST", body)
     except AssertionError as e:
         return str(e)
+
+
+# ---------------------------------------------------------------- classes & safety levels (view-only mask styling)
+
+T_CLS = 31.0     # inside the session run (0-120 s)
+
+
+@pytest.fixture
+def cls_run(_session_run):
+    return _session_run
+
+
+@pytest.fixture
+def display_guard(cls_run):
+    """Snapshot the server-saved display prefs of the run's mapping and restore them afterwards."""
+    mapping = api(f"/api/runs/{cls_run}/classes")["mapping"]
+    before = api(f"/api/display/{mapping}")["saved"]
+    yield mapping
+    for section in ("classes", "levels"):
+        if before[section]:
+            api(f"/api/display/{mapping}/{section}", "PUT", {section: before[section]})
+        else:
+            api(f"/api/display/{mapping}/{section}", "DELETE")
+
+
+def class_probe(page, run):
+    """Pick the largest class with level >= 1 in the frame at T_CLS and a grid pixel whose 3x3 neighbourhood is all it.
+    Returns {id, name, level, gx, gy, w, h}."""
+    idx = api(f"/api/runs/{run}/frame?t={T_CLS}")["frame"]["index"]
+    info = api(f"/api/runs/{run}/classes")
+    grid = page.evaluate("""async (url) => {
+        const img = new Image(); img.src = url; await img.decode();
+        const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+        const d = x.getImageData(0, 0, c.width, c.height).data;
+        const g = []; for (let i = 0; i < d.length; i += 4) g.push(d[i]);
+        return {w: c.width, h: c.height, g};
+    }""", f"/api/runs/{run}/frames/{idx}/classes.png")
+    w, h, g = grid["w"], grid["h"], grid["g"]
+    count = {}
+    for v in g:
+        count[v] = count.get(v, 0) + 1
+    lv = {c["id"]: c["level"] for c in info["classes"]}
+    names = {c["id"]: c["name"] for c in info["classes"]}
+    for cid in sorted(count, key=lambda k: -count[k]):
+        if lv[cid] < 1:
+            continue
+        for gy in range(2, h - 2):
+            for gx in range(2, w - 2):
+                if all(g[(gy + dy) * w + gx + dx] == cid for dy in (-1, 0, 1) for dx in (-1, 0, 1)):
+                    return {"id": cid, "name": names[cid], "level": lv[cid], "gx": gx, "gy": gy, "w": w, "h": h}
+    raise AssertionError("no class with level >= 1 and a solid 3x3 patch in the test frame")
+
+
+def prepare_lab(page, run):
+    open_lab(page, LONG_REC, t=T_CLS, run=run)
+    seek(page, T_CLS)
+    for sel in ("#regionChk", "#laneChk", "#horizonChk", "#hazardChk"):   # leave only the mask on the canvas
+        page.uncheck(sel)
+    page.evaluate("""() => { const r = document.querySelector('#maskOpacity'); r.value = 1; r.dispatchEvent(new Event('input')); }""")
+    page.evaluate("document.querySelector('#secClasses').open = true")
+    page.wait_for_function("document.querySelectorAll('#clsClasses tr').length > 0")
+
+
+def px(page, p):
+    """RGBA of the overlay canvas where the probe pixel's grid cell is."""
+    return page.evaluate("""(p) => { const c = document.querySelector('#overlay'); const x = c.getContext('2d');
+        const d = x.getImageData(Math.floor((p.gx + 0.5) * c.width / p.w), Math.floor((p.gy + 0.5) * c.height / p.h), 1, 1).data;
+        return [d[0], d[1], d[2], d[3]]; }""", p)
+
+
+def wait_px(page, p, cond):
+    page.wait_for_function("""([p, cond]) => { const c = document.querySelector('#overlay'); const x = c.getContext('2d');
+        const d = x.getImageData(Math.floor((p.gx + 0.5) * c.width / p.w), Math.floor((p.gy + 0.5) * c.height / p.h), 1, 1).data;
+        return new Function('a', 'return ' + cond)(Array.from(d)); }""", arg=[p, cond])
+
+
+def fresh_page(browser):
+    ctx = browser.new_context(viewport={"width": 1500, "height": 950})
+    ctx.add_init_script(HOOKS)
+    pg = ctx.new_page()
+    pg.set_default_timeout(60_000)
+    pg.on("dialog", lambda d: d.accept())
+    return ctx, pg
+
+
+def test_classes_panel_renders_and_checkbox_hides_pixels(page, cls_run, display_guard):
+    prepare_lab(page, cls_run)
+    assert page.locator("#clsClasses tr").count() == 48
+    assert page.locator("#clsLevels tr").count() == 5
+    p = class_probe(page, cls_run)
+    wait_px(page, p, "a[3] > 0")
+    assert page.is_checked(f'#clsClasses input[type=checkbox][data-cls="{p["id"]}"]')
+    page.uncheck(f'#clsClasses input[type=checkbox][data-cls="{p["id"]}"]')
+    wait_px(page, p, "a[3] === 0")
+    assert not page.is_hidden("#clsEdited")
+    page.check(f'#clsClasses input[type=checkbox][data-cls="{p["id"]}"]')
+    wait_px(page, p, "a[3] > 0")
+    # Show none / Show all / filter
+    page.click("#clsNone")
+    wait_px(page, p, "a[3] === 0")
+    page.click("#clsAll")
+    wait_px(page, p, "a[3] > 0")
+    page.fill("#clsFilter", p["name"])
+    assert page.locator("#clsClasses tr:not([hidden])").count() >= 1
+    assert page.locator("#clsClasses tr:not([hidden])").count() < 48
+    page.fill("#clsFilter", "")
+    assert page.locator("#clsClasses tr:not([hidden])").count() == 48
+
+
+def test_level_colour_opacity_and_class_level(page, cls_run, display_guard):
+    prepare_lab(page, cls_run)
+    p = class_probe(page, cls_run)
+    wait_px(page, p, "a[3] > 0")
+    before = px(page, p)
+    page.fill(f'#clsLevels input[type=color][data-level="{p["level"]}"]', "#12ab34")
+    wait_px(page, p, "a[0] === 18 && a[1] === 171 && a[2] === 52 && a[3] === 255")
+    assert px(page, p)[:3] != before[:3]
+    # level opacity multiplies into the alpha
+    page.evaluate("""(l) => { const r = document.querySelector(`#clsLevels input[type=range][data-level="${l}"]`);
+        r.value = 0.5; r.dispatchEvent(new Event('input', {bubbles: true})); }""", p["level"])
+    wait_px(page, p, "a[3] >= 127 && a[3] <= 129")
+    # moving the class to level 0 ("ignored", opacity 0 by default) hides it; the swatch follows
+    page.select_option(f'#clsClasses select[data-cls="{p["id"]}"]', "0")
+    wait_px(page, p, "a[3] === 0")
+    # reset (asks for confirmation)
+    page.once("dialog", lambda d: d.accept())
+    page.click("#clsReset")
+    wait_px(page, p, "a[3] === 255 && a[0] === %d" % before[0])
+
+
+def test_classes_settings_persist_across_reload(page, cls_run, display_guard):
+    prepare_lab(page, cls_run)
+    p = class_probe(page, cls_run)
+    wait_px(page, p, "a[3] > 0")
+    page.uncheck(f'#clsClasses input[type=checkbox][data-cls="{p["id"]}"]')
+    page.fill(f'#clsLevels input[type=color][data-level="{p["level"]}"]', "#0000ff")
+    wait_px(page, p, "a[3] === 0")
+    page.reload()
+    page.wait_for_function("() => { const v = document.querySelector('#video'); return v && v.readyState >= 2 && v.duration > 0; }")
+    page.evaluate("document.querySelector('#secClasses').open = true")
+    page.wait_for_function("document.querySelectorAll('#clsClasses tr').length > 0")
+    assert not page.is_checked(f'#clsClasses input[type=checkbox][data-cls="{p["id"]}"]')
+    assert page.input_value(f'#clsLevels input[type=color][data-level="{p["level"]}"]') == "#0000ff"
+    assert not page.is_hidden("#clsEdited")
+    assert page.text_content("#clsStatC") == "unsaved changes" and page.is_enabled("#clsSaveC")
+    page.click("#clsDiscC")                              # drop the class draft only
+    assert page.is_checked(f'#clsClasses input[type=checkbox][data-cls="{p["id"]}"]')
+    assert page.is_disabled("#clsSaveC") and page.is_enabled("#clsSaveL")
+    assert api(f"/api/display/{display_guard}")["saved"]["classes"] == {}   # nothing was saved
+
+
+def test_save_buttons_share_view_with_a_fresh_browser(browser, page, cls_run, display_guard):
+    prepare_lab(page, cls_run)
+    p = class_probe(page, cls_run)
+    cid = f'{p["id"]}'
+    assert page.is_disabled("#clsSaveC") and page.is_disabled("#clsSaveL")
+    page.uncheck(f'#clsClasses input[type=checkbox][data-cls="{cid}"]')
+    page.select_option(f'#clsClasses select[data-cls="{cid}"]', "0")
+    page.fill(f'#clsLevels input[type=color][data-level="{p["level"]}"]', "#00ff00")
+    assert page.is_enabled("#clsSaveC") and page.is_enabled("#clsSaveL")
+    # classes only: the level colour stays a local draft
+    page.click("#clsSaveC")
+    page.wait_for_function("document.querySelector('#clsStatC').textContent.includes('Saved')")
+    assert page.is_disabled("#clsSaveC") and page.is_enabled("#clsSaveL")
+    saved = api(f"/api/display/{display_guard}")["saved"]
+    assert saved["classes"] == {cid: {"level": 0, "show": False}} and saved["levels"] == {}
+    ctx, pg = fresh_page(browser)
+    try:
+        prepare_lab(pg, cls_run)
+        assert not pg.is_checked(f'#clsClasses input[type=checkbox][data-cls="{cid}"]')
+        assert pg.input_value(f'#clsClasses select[data-cls="{cid}"]') == "0"
+        assert pg.input_value(f'#clsLevels input[type=color][data-level="{p["level"]}"]') != "#00ff00"
+        assert pg.is_disabled("#clsSaveC") and pg.is_disabled("#clsSaveL")
+        wait_px(pg, p, "a[3] === 0")
+        ctx.close()
+        # level colours
+        page.click("#clsSaveL")
+        page.wait_for_function("document.querySelector('#clsStatL').textContent.includes('Saved')")
+        assert api(f"/api/display/{display_guard}")["saved"]["levels"] == {str(p["level"]): {"color": [0, 255, 0]}}
+        ctx, pg = fresh_page(browser)
+        prepare_lab(pg, cls_run)
+        assert pg.input_value(f'#clsLevels input[type=color][data-level="{p["level"]}"]') == "#00ff00"
+        # un-hide the class + put it back on its level in the fresh browser: the pixel is painted with the saved green
+        pg.check(f'#clsClasses input[type=checkbox][data-cls="{cid}"]')
+        pg.select_option(f'#clsClasses select[data-cls="{cid}"]', str(p["level"]))
+        wait_px(pg, p, "a[0] === 0 && a[1] === 255 && a[2] === 0 && a[3] === 255")
+        # Reset to defaults (confirm accepted) clears the server too
+        pg.click("#clsReset")
+        pg.wait_for_function("document.querySelector('#clsEdited').hidden")
+        assert api(f"/api/display/{display_guard}")["saved"] == {"classes": {}, "levels": {}, "updatedAt": None}
+        ctx.close()
+        ctx, pg = fresh_page(browser)
+        prepare_lab(pg, cls_run)
+        assert pg.is_checked(f'#clsClasses input[type=checkbox][data-cls="{cid}"]')
+        assert pg.input_value(f'#clsClasses select[data-cls="{cid}"]') == str(p["level"])
+        assert pg.is_hidden("#clsEdited")
+    finally:
+        ctx.close()
+
+
+def test_falls_back_to_prerendered_masks(page, cls_run):
+    page.route("**/classes", lambda r: r.fulfill(status=500, body="boom"))
+    open_lab(page, LONG_REC, t=T_CLS, run=cls_run)
+    seek(page, T_CLS)
+    for sel in ("#regionChk", "#laneChk", "#horizonChk", "#hazardChk"):
+        page.uncheck(sel)
+    page.evaluate("document.querySelector('#secClasses').open = true")
+    page.wait_for_function("document.querySelector('#clsMsg').textContent.includes('unavailable')")
+    assert page.locator("#clsClasses tr").count() == 0
+    # mask.png still paints: some pixel of the overlay is non-transparent
+    page.wait_for_function("""() => { const c = document.querySelector('#overlay'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }""")
+    assert not any(u.endswith("classes.png") for u, _ in page.requests)

@@ -20,12 +20,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
 from fastapi import FastAPI, HTTPException, Query  # noqa: E402
 from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from lab import analysis, recordings, reviews, versioning  # noqa: E402
+from lab import analysis, display, recordings, reviews, versioning  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -331,6 +333,93 @@ def get_mask(run_id: str, index: int) -> FileResponse:
     if index < 0 or not path.exists():
         raise HTTPException(404, "No such frame")
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+# --- class grids for client-side mask colouring (view-only) ------------------------------------------
+# grids.npz is ~tens of MB for a long run: decompress it once, keep a small LRU keyed by mtime.
+
+_GRID_CACHE_RUNS = 2
+_grid_cache: "OrderedDict[str, tuple]" = OrderedDict()   # run_id -> (mtime_ns, grids uint8 (N,H,W), index int32 (N,))
+_grid_lock = threading.Lock()
+
+
+def _run_grids(run_id: str):
+    run = _run(run_id)
+    if run["status"] != "done":
+        raise HTTPException(409, f"Run is {run['status']}, not done")
+    path = analysis.run_dir(run_id) / "grids.npz"
+    try:
+        mtime = path.stat().st_mtime_ns
+    except FileNotFoundError:
+        raise HTTPException(404, "grids.npz not available") from None
+    with _grid_lock:
+        ent = _grid_cache.get(run_id)
+        if ent is None or ent[0] != mtime:
+            with np.load(path) as z:
+                grids = z["grids"]
+                index = z["index"] if "index" in z.files else np.arange(len(grids), dtype=np.int32)
+            ent = (mtime, grids, index)
+            _grid_cache[run_id] = ent
+        _grid_cache.move_to_end(run_id)
+        while len(_grid_cache) > _GRID_CACHE_RUNS:
+            _grid_cache.popitem(last=False)
+        return ent
+
+
+@app.get("/api/runs/{run_id}/frames/{index}/classes.png")
+def get_classes_png(run_id: str, index: int) -> Response:
+    _, grids, _index = _run_grids(run_id)
+    if index < 0 or index >= len(grids):
+        raise HTTPException(404, "No such frame")
+    ok, buf = cv2.imencode(".png", np.ascontiguousarray(grids[index], dtype=np.uint8))
+    if not ok:
+        raise HTTPException(500, "PNG encode failed")
+    return Response(buf.tobytes(), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+@app.get("/api/runs/{run_id}/classes")
+def get_run_classes(run_id: str) -> dict:
+    run = _run(run_id)
+    names = run.get("classNames")
+    if not names:
+        raise HTTPException(404, "Run has no class names")
+    try:
+        import segmentation  # pure mapping lookup; no model / GPU is loaded
+        path, classes, levels = segmentation.find_mapping(names)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return {"mapping": path.name,
+            "classes": [{"id": i, "name": classes[i]["name"], "level": int(classes[i]["safetyLevel"])} for i in sorted(classes)],
+            "levels": [{"level": k, "label": v["label"], "color": list(v["color"]), "opacity": display.default_opacity(k)}
+                       for k, v in sorted(levels.items())]}
+
+
+# --- saved mask display (view-only; shared across browsers) ---------------------------------------------
+
+def _display_call(fn, *args):
+    try:
+        return fn(*args)
+    except display.DisplayError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
+@app.get("/api/display/{mapping}")
+def get_display(mapping: str) -> dict:
+    return _display_call(display.get, mapping)
+
+
+@app.put("/api/display/{mapping}/{section}")
+def put_display(mapping: str, section: str, body: dict) -> dict:
+    if section not in ("classes", "levels"):
+        raise HTTPException(404, "Not found")
+    return _display_call(display.put, mapping, section, body)
+
+
+@app.delete("/api/display/{mapping}/{section}")
+def delete_display(mapping: str, section: str) -> dict:
+    if section not in ("classes", "levels"):
+        raise HTTPException(404, "Not found")
+    return _display_call(display.reset, mapping, section)
 
 
 # --- notification (speech + beeps) reviews (§10, §14) ----------------------------------------------------

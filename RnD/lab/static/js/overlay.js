@@ -1,4 +1,4 @@
-// Canvas overlay: mask PNG, walking region, danger lane, horizon, role-coloured item boxes, ego HUD. Frame-synchronised to the <video>.
+// Canvas overlay: mask PNG, walking region, danger lane, horizon, role-coloured item outlines / boxes, ego HUD. Frame-synchronised to the <video>.
 import { ROLE_COLOR, lastAtOrBefore } from "./util.js";
 
 const PRELOAD = 20;          // frames each side of the playhead
@@ -12,11 +12,15 @@ export class Overlay {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.layers = { mask: true, region: true, lane: true, horizon: true, hazards: true, showAll: false };
+    this.outlines = true;     // item shapes: true = mask-edge outlines (when present), false = bounding boxes
     this.hudEl = null;        // set by app: element receiving the HUD lines
     this.maskOpacity = 0.45;
     this.run = null;
     this.frames = [];
-    this.cache = new Map();   // key -> {img, ready}; Map order = LRU order
+    this.cache = new Map();   // key -> {img, ready}; Map order = LRU order. Pre-rendered masks/<i>.png (fallback path)
+    this.ccache = new Map();  // key -> {img, ready, failed, grid, w, h, canvas, ver}: class grids (classes.png), coloured client-side
+    this.style = null;        // MaskStyle (js/classes.js) once the run's class list is known
+    this.styleState = "pending"; // "pending" (class list loading: draw no mask yet) | "classes" | "png" (fallback)
     this.mt = null;           // last mediaTime reported by requestVideoFrameCallback
     this.lastK = -2;
     this.cw = 0; this.ch = 0;
@@ -49,7 +53,18 @@ export class Overlay {
     this.frames = [];
     this.fixedStep = null;
     this.cache.clear();
+    this.ccache.clear();
+    this.style = null;
+    this.styleState = run ? "pending" : "png";
     this.lastK = -2;
+    this.redraw();
+  }
+
+  /** The class list arrived: paint masks from classes.png through `style`'s LUT; null = use the pre-rendered mask.png files. */
+  setMaskStyle(style) {
+    this.style = style;
+    this.styleState = style ? "classes" : "png";
+    this.lastK = -2;   // re-run the preload for the new source
     this.redraw();
   }
 
@@ -152,20 +167,59 @@ export class Overlay {
   key(k) { return `${this.run.id}:${this.frames[k].index}`; }
 
   ensure(k) {
-    if (k < 0 || k >= this.frames.length) return;
-    const key = this.key(k);
-    const hit = this.cache.get(key);
-    if (hit) { this.cache.delete(key); this.cache.set(key, hit); return; } // refresh LRU
-    const entry = { img: new Image(), ready: false };
+    if (k < 0 || k >= this.frames.length || this.styleState === "pending") return;
+    if (this.styleState === "classes") this.ensureClasses(k); else this.ensurePng(k);
+  }
+
+  /** Refresh an LRU entry or create it with `make`. */
+  lru(cache, key, make) {
+    const hit = cache.get(key);
+    if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
+    const entry = make();
+    cache.set(key, entry);
+    while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+    return entry;
+  }
+
+  loadImage(entry, k, url, onOk) {
     const runId = this.run.id;
+    entry.img = new Image();
     entry.img.onload = () => {
+      onOk?.();
       entry.ready = true;
       // Redraw if this mask is (near) the one currently needed.
       if (this.run && this.run.id === runId && Math.abs(k - this.lastK) <= 12) this.redraw();
     };
-    entry.img.src = `/api/runs/${runId}/frames/${this.frames[k].index}/mask.png`;
-    this.cache.set(key, entry);
-    while (this.cache.size > CACHE_MAX) this.cache.delete(this.cache.keys().next().value);
+    entry.img.src = url;
+  }
+
+  ensurePng(k) {
+    const key = this.key(k);
+    const fresh = !this.cache.has(key);
+    const entry = this.lru(this.cache, key, () => ({ img: null, ready: false }));
+    if (fresh) this.loadImage(entry, k, `/api/runs/${this.run.id}/frames/${this.frames[k].index}/mask.png`);
+  }
+
+  ensureClasses(k) {
+    const key = this.key(k);
+    const fresh = !this.ccache.has(key);
+    const entry = this.lru(this.ccache, key, () => ({ img: null, ready: false, failed: false, grid: null, w: 0, h: 0, canvas: null, ver: -1 }));
+    if (!fresh) return;
+    this.loadImage(entry, k, `/api/runs/${this.run.id}/frames/${this.frames[k].index}/classes.png`, () => {
+      // 8-bit single-channel PNG: the class id is the red channel of the decoded pixels.
+      const w = entry.img.naturalWidth, h = entry.img.naturalHeight;
+      const c = document.createElement("canvas"); c.width = w; c.height = h;
+      const cx = c.getContext("2d", { willReadFrequently: true });
+      cx.drawImage(entry.img, 0, 0);
+      const px = cx.getImageData(0, 0, w, h).data;
+      const grid = new Uint8Array(w * h);
+      for (let i = 0; i < grid.length; i++) grid[i] = px[i * 4];
+      entry.grid = grid; entry.w = w; entry.h = h; entry.canvas = c; entry.ctx = cx; entry.ver = -1;
+    });
+    entry.img.onerror = () => { // class grid unavailable for this frame: use its pre-rendered mask instead
+      entry.failed = true;
+      this.ensurePng(k);
+    };
   }
 
   preload(k) {
@@ -174,16 +228,32 @@ export class Overlay {
     for (let d = 1; d <= PRELOAD; d++) { this.ensure(k + d); this.ensure(k - d); }
   }
 
+  /** The class grid of frame j coloured by the current style (re-coloured lazily when the style changed). */
+  classCanvas(e) {
+    if (e.ver !== this.style.version) {
+      const img = e.ctx.createImageData(e.w, e.h);
+      this.style.paint(e.grid, img);
+      e.ctx.putImageData(img, 0, 0);
+      e.ver = this.style.version;
+    }
+    return e.canvas;
+  }
+
   drawMask(k, t) {
+    if (this.styleState === "pending") return;
     // Exact frame if loaded; otherwise the nearest earlier loaded one if < 0.5 s old; else nothing.
     for (let j = k; j >= 0 && t - this.frames[j].t <= STALE_MASK_S; j--) {
-      const e = this.cache.get(this.key(j));
-      if (e && e.ready) {
+      const key = this.key(j);
+      let src = null;
+      const ce = this.styleState === "classes" ? this.ccache.get(key) : null;
+      if (ce && ce.ready && ce.grid) src = this.classCanvas(ce);
+      else if (!ce || ce.failed) { const e = this.cache.get(key); if (e && e.ready) src = e.img; }
+      if (src) {
         const { ctx } = this;
         ctx.save();
         ctx.globalAlpha = this.maskOpacity;
         ctx.imageSmoothingEnabled = false; // show the 240-px grid honestly
-        ctx.drawImage(e.img, 0, 0, this.cw, this.ch);
+        ctx.drawImage(src, 0, 0, this.cw, this.ch);
         ctx.restore();
         return;
       }
@@ -245,11 +315,27 @@ export class Overlay {
       : role === "danger" && h.urgency === "final" ? ROLE_COLOR.final : ROLE_COLOR[role] ?? ROLE_COLOR.none;
     const dim = role === "none";
     const [x0, y0, x1, y1] = h.bbox;
-    const X = x0 * cw, Y = y0 * ch, W = (x1 - x0) * cw, H = (y1 - y0) * ch;
+    const poly = this.outlines && h.outline?.length >= 3 ? h.outline : null; // v26.1.8: contour of the item's own mask
+    let X = x0 * cw, Y = y0 * ch;
     ctx.save();
     ctx.lineWidth = dim ? 1 : 3;
     ctx.strokeStyle = col;
-    ctx.strokeRect(X, Y, W, H);
+    if (poly) {
+      ctx.beginPath();
+      poly.forEach(([x, y], i) => (i ? ctx.lineTo(x * cw, y * ch) : ctx.moveTo(x * cw, y * ch)));
+      ctx.closePath();
+      ctx.globalAlpha = 0.15;
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineJoin = "round";
+      ctx.stroke();
+      // label at the polygon's bounding top-left
+      X = Math.min(...poly.map((p) => p[0])) * cw;
+      Y = Math.min(...poly.map((p) => p[1])) * ch;
+    } else {
+      ctx.strokeRect(X, Y, (x1 - x0) * cw, (y1 - y0) * ch);
+    }
 
     if (!dim || this.layers.showAll) {
       let text = `${h.label} · ${h.clock}`;

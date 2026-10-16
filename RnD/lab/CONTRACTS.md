@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1.7, current rules)
+# HackEye Lab — contracts (v26.1.8, current rules)
 
 History, user feedback and the reasons behind each rule: see `../docs/DECISIONS.md`.
 
@@ -42,6 +42,7 @@ LAB_DIR/
   runs/<runId>/hazards.json      collision output (§7.15)
   runs/<runId>/events.json       collision output (§7.15)
   reviews/<recId>.json           notification reviews / ground truth (§10)
+  display/<mapping file>.json    saved Lab view: class→level/show and level colour/opacity overrides (§9.3); survives version wipes
   .ultralytics/                  YOLO_CONFIG_DIR
 ```
 
@@ -159,7 +160,7 @@ crossing chapter boundaries; the stored `t` is the exact time of the source fram
 
 **GPU:** one worker thread, FIFO queue, `gpu_guard.assert_torch_cuda()` at job start. One model is cached by path and released after `HACKEYE_LAB_IDLE_SECONDS` (default 300) without work, so the service holds no VRAM while idle.
 
-## 6. Collision config  (`common/config/collision.json`, version `v26.1.7`)
+## 6. Collision config  (`common/config/collision.json`, version `v26.1.8`)
 
 Class names are the 48-class HackEye mapping's (`safety_mapping_hackeye48.json`). Names missing from a model's `class_names` are skipped (logged once). All distances are metres, times seconds, "steps" are walking steps (§7.7).
 
@@ -478,11 +479,13 @@ A **turn**: the heading differs from a slow reference (time constant `referenceT
      {"trackId": 3, "className": "pole", "group": "static", "label": "pole", "role": "danger", "moving": false,
       "bbox": [0.48, 0.52, 0.55, 0.81], "contactY": 0.81, "bearingDeg": 4.1, "clock": 12, "pan": 0.07,
       "distanceM": 5.6, "lateralM": 0.21, "stepsTo": 8.0, "closingMps": 1.3, "urgency": "danger",
-      "areaFrac": 0.012, "collision": true}
+      "areaFrac": 0.012, "collision": true,
+      "outline": [[0.48, 0.52], [0.55, 0.52], [0.55, 0.81], [0.48, 0.81]]}
    ]}]}
 ```
 - `region` is null when there is no surface. `moving` is `true/false/null` for moving-group items (null = unknown), `false` otherwise. `closingMps` is null when unknown. `urgency` ∈ `none | danger | final`.
 - `ego` fields are null when unknown. `estimated.stepLength` is always false.
+- `outline` (items with `role != "none"` only): the outer contour of the item's own connected component, traced on the grid in pixel-corner coordinates (so its extent equals `bbox`), simplified with Douglas–Peucker (epsilon 0.75 grid px, growing ×1.25 until ≤ 32 points), concavities kept, normalised and rounded to 4 decimals. Pure numpy/scipy. Role `none` items carry no outline to keep `hazards.json` small.
 
 **`events.json`** — sorted by `t` (speech before beeps before tones at equal `t`):
 ```jsonc
@@ -520,7 +523,12 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 | `GET /api/runs/{runId}/hazards.json` · `events.json` | | the files (`Cache-Control: no-cache`). The UI uses only `events.json`. |
 | `GET /api/runs/{runId}/hazards?from=<s>&to=<s>` | both required | `{version, settings, gridW, gridH, egoAvailable, from, to, frames}`, the frames with `from ≤ t ≤ to`. 422 if `to < from` or the window is over 600 s |
 | `GET /api/runs/{runId}/frame?t=<s>` | | `{"frame": ...}`, the analysed frame with the largest `t ≤ s`; 404 before the first frame or more than 1 s after the last |
-| `GET /api/runs/{runId}/frames/{i}/mask.png` | | the mask PNG (`Cache-Control: max-age=86400`) |
+| `GET /api/runs/{runId}/frames/{i}/mask.png` | | the mask PNG (`Cache-Control: max-age=86400`); fallback only |
+| `GET /api/runs/{runId}/frames/{i}/classes.png` | | 8-bit grayscale PNG of `grids[i]` (positional, frame-aligned class ids), `Cache-Control: max-age=86400`; 404 unknown frame, 409 run not done. `grids.npz` cached for 2 runs, keyed by mtime |
+| `GET /api/runs/{runId}/classes` | | `{mapping, classes: [{id, name, level}], levels: [{level, label, color, opacity}]}` from the safety mapping matching the run's `classNames` (`segmentation.find_mapping`, no GPU); default opacity 0 for level 0, else 1; 404 if no `classNames` or no mapping matches |
+| `GET /api/display/{mapping}` | | `{mapping, classes, levels, saved}`: defaults merged with saved overrides, plus the raw saved file |
+| `PUT /api/display/{mapping}/classes` · `/levels` | `{"classes": {...}}` or `{"levels": {...}}` | replaces that section's overrides (values equal to defaults are dropped; the file is deleted when both sections are empty); 404 bad mapping, 422 bad values |
+| `DELETE /api/display/{mapping}/classes` · `/levels` | | resets that section to defaults |
 | `GET /api/recordings/{id}/reviews` | | `{"recording", "annotations"}` sorted by `t` (§10) |
 | `POST /api/recordings/{id}/reviews` | annotation | the stored annotation, 201 |
 | `PUT /api/recordings/{id}/reviews/{annId}` | fields | the updated annotation |
@@ -548,11 +556,11 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 **Windowed hazards:** the page never loads the whole `hazards.json`. It holds the frames within ±90 s of the playhead, prefetches the next stretch when the playhead is within 30 s of the window's end, and refetches on a seek outside the window (failed fetches back off 3 s). Overlay, HUD and frame stepping use the window; the timeline and review panel use `events.json` (small).
 
 **Overlay** (canvas over the video content; frame-synchronised via `requestVideoFrameCallback`; drawn only inside the run's range). Each layer is a checkbox:
-- **Mask:** `masks/<i>.png` (opacity slider, default 0.45), nearest-neighbour; ±20 frames are preloaded; an earlier mask is reused only if < 0.5 s old.
+- **Mask:** coloured **in the browser** from `classes.png` through a lookup table class → (shown? → level → colour × level opacity), multiplied by the opacity slider (default 0.45), drawn nearest-neighbour. Edits in the Classes & safety levels panel (§9.3) repaint instantly without refetching. ±20 frames are preloaded; an earlier mask is reused only if < 0.5 s old. If `/classes` or a frame's `classes.png` fails, that frame falls back to the pre-rendered `masks/<i>.png`.
 - **Region:** outline polygon from `frame.region.rows` (left edge bottom→top, then right edge top→bottom), thin white line, `region.label` near its top.
 - **Lane:** the `frame.lane` polygon, semi-transparent red.
 - **Horizon:** line at `horizonY`, solid yellow if `horizonEstimated`, dashed if the preset fallback.
-- **Items:** a box per hazard item, coloured by role — danger orange `#ff8c1a` (final urgency red `#ff2d2d`), feature cyan `#22d3ee`, context light grey `#c9ced6`, none dim grey `#6b7280` drawn thin. Label `"<label> · <clock> · <n>st"` (steps rounded; context shows only `"<label> · <clock>"`). `none` labels show only when "Show all" is on. A dot marks the contact point of non-`none` items. Dim items are drawn first so dangers end up on top.
+- **Items:** drawn as **outlines** (the item's `outline` polygon, 15% alpha fill) or **boxes** (`bbox`), chosen with the **Shapes** select (default Outlines, remembered in localStorage `hackeye.lab.shapes`); items without an outline always use their box. Each item is coloured by role — danger orange `#ff8c1a` (final urgency red `#ff2d2d`), feature cyan `#22d3ee`, context light grey `#c9ced6`, none dim grey `#6b7280` drawn thin. Label `"<label> · <clock> · <n>st"` (steps rounded; context shows only `"<label> · <clock>"`). `none` labels show only when "Show all" is on. A dot marks the contact point of non-`none` items. Dim items are drawn first so dangers end up on top.
 - **HUD** (top-left of the player): `speed` (m/s and km/h, `(est)` when estimated), `cadence` (steps/min = `cadenceHz × 60`), `step` (m; `(default)` for the prior, `(set)` for a per-recording value), `heading` (degrees, signed). `—` for unknown values; "no ego data (re-analyse)" when a frame has no `ego`. The gait scale is in `hazards.json` but not shown.
 
 **Transport:** play/pause (Space), previous/next **analysed** frame (← / →; falls back to one video frame without a run), speed 0.25–2× (`[` / `]`), seek bar, `m` mutes all. Keyboard shortcuts are ignored while typing in an input, select or textarea.
@@ -583,6 +591,15 @@ One row per **notification** of the loaded run (a spoken phrase, or a beeps epis
   - **Candidates:** all of that frame's hazard items ordered by role (`final` → `danger` → `feature` → `context` → `none`), then `stepsTo` ascending (nulls last).
   - **Fill:** the text from the `speech.templates` of `GET /api/config/collision` using `{label}`, `{clock}`, `{steps}` = round(`stepsTo`): final/feature/context items use their own template, everything else (danger, none) uses `danger`, and a mover with `moving === true` and positive `closingMps` uses `approach`. The role select takes the item's role; `none` becomes `danger` (a missed item is usually a missed warning). For type beeps the text is `beeps · <label> at <clock>`.
   - **Cycling:** clicking again moves to the next candidate; an indicator shows `n/N · <className> · <role>`. Changing the form time resets the cycle. The text stays editable; auto-fill only overwrites text and role, never the note. With no candidates a toast says "nothing detected at this time".
+
+### 9.3 Classes & safety levels panel  (`js/classes.js`; view-only)
+Collapsible panel under the Overlay panel. It changes **only how the mask is painted**. The shared safety mapping and the collision behaviour are untouched.
+- **Levels table:** each safety level (0 ignored, 1 safe, 2 safe-ish, 3 danger, 4 death) with a colour picker and an opacity slider (0–1).
+- **Classes table:** every class of the run's model (48), each with a show checkbox, its current level's colour swatch, and a level dropdown. Above it: a text filter, "Show all", "Show none" and "Reset to defaults" (with confirm; it calls the DELETE endpoints).
+- **Saving:** edits preview instantly and are kept as an unsaved draft in localStorage (`hackeye.lab.classes.<mapping>`; only sections differing from the server).
+  - **"Save class levels"** and **"Save level colours"** PUT their section to the Lab server (`display/<mapping file>.json`), so every device shows the same view.
+  - Each button is enabled only with unsaved changes in its section. An "unsaved changes" marker and a Discard link show until it is saved.
+  - On load, the server-saved view wins over defaults, and a differing local draft wins over the server (marked unsaved).
 
 ## 10. Reviews: storage, matching, export  (`lab/reviews.py`)
 
@@ -671,7 +688,7 @@ The rule: **each new version cleans up the previous version's Lab content, so it
 
 **Browser E2E harness** (`tests/e2e/`, `RnD/tests/e2e/run.sh`)
 - Playwright (Python) in `mcr.microsoft.com/playwright/python:v1.63.0-noble` (`PW_TAG`), with the **Google Chrome channel** (`playwright install chrome`; plays H.264), against the live Lab (`--network host`, `LAB_URL`, default `http://127.0.0.1:8765`). Extra arguments go to pytest (`run.sh -k audio -x`).
-- Needs the `lab` compose service running with ready proxies for 4928, 4929 and the full run `7b9d5ac14e14` on 4929 (read-only for the tests).
+- Needs the `lab` compose service running with ready proxies for 4928 and 4929. **No user run is needed:** an autouse session fixture analyses 4929 0–120 s at 6 fps once (about 30 s), shares it across tests, and deletes it at session end if the session created it (`run.sh` mounts `debug/lab` as `LAB_DIR_MOUNT`; needs bash ≥ 4.4).
 - Launch flag `--autoplay-policy=no-user-gesture-required`; page hooks `window.__spoken` (every `speechSynthesis.speak`), `window.__acs` (every AudioContext) and the Lab's `window.__labAudioLog`.
-- Covers: default full-length range, audio armed by the first gesture, add form time following (two adds at two paused times, with a long run loaded and a slow run load), auto-fill (also on a long run and a slow link), added phrases spoken after a rewind, ⊘ phrases not spoken, windowed hazards + gzip and the windowed endpoints, renamed labels and counts line, beeps rows (verdict save, ⊘ silences the episode's tones), adding a beeps entry and hearing it in the preview, timeline beep bars, beeps annotation validation.
+- Covers: default full-length range, audio armed by the first gesture, add form time following (two adds at two paused times, with a long run loaded and a slow run load), auto-fill (also on a long run and a slow link), added phrases spoken after a rewind, ⊘ phrases not spoken, windowed hazards + gzip and the windowed endpoints, renamed labels and counts line, beeps rows (verdict save, ⊘ silences the episode's tones), adding a beeps entry and hearing it in the preview, timeline beep bars, beeps annotation validation, the Classes & safety levels panel (48 rows, unchecking a class removes its pixels, level colour/opacity repaint, persistence across reload, `mask.png` fallback, server save → fresh browser shows it → reset restores defaults).
 - Tests create their own short runs/reviews (on 4928 or a short 4929 range) and delete them afterwards. They must **never trigger a version change**.

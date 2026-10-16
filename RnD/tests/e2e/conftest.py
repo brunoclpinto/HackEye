@@ -15,7 +15,6 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 BASE = os.environ.get("LAB_URL", "http://127.0.0.1:8765")
-FULL_RUN = "7b9d5ac14e14"   # the user's full-length run on 4929 (read-only here)
 LONG_REC = "4929"
 SHORT_REC = "4928"
 
