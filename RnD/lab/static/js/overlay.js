@@ -3,6 +3,7 @@ import { ROLE_COLOR, lastAtOrBefore } from "./util.js";
 
 const PRELOAD = 20;          // frames each side of the playhead
 const CACHE_MAX = 160;       // LRU size (> 2*PRELOAD+1)
+const STALE_FRAME_S = 1.5;   // past the last loaded frame by more than this = window not loaded yet
 const STALE_MASK_S = 0.5;    // reuse an earlier loaded mask only within this age
 
 export class Overlay {
@@ -43,11 +44,19 @@ export class Overlay {
     new ResizeObserver(() => { this.layout(); this.redraw(); }).observe(video);
   }
 
-  setRun(run, hazards) {
+  setRun(run) {
     this.run = run;
-    this.frames = hazards?.frames ?? [];
-    this.fixedStep = hazards?.settings?.stepLengthM ?? null; // user-set step length, if any
+    this.frames = [];
+    this.fixedStep = null;
     this.cache.clear();
+    this.lastK = -2;
+    this.redraw();
+  }
+
+  /** The loaded hazards window (CONTRACTS 12.1): sorted frames around the playhead + the response header. */
+  setFrames(frames, head) {
+    this.frames = frames ?? [];
+    this.fixedStep = head?.settings?.stepLengthM ?? null; // user-set step length, if any
     this.lastK = -2;
     this.redraw();
   }
@@ -90,7 +99,8 @@ export class Overlay {
     // Only inside the analysed range, and only once the first analysed frame is reached.
     if (t < run.request.start || t > run.request.end) { this.updateHud(null); return; }
     const k = lastAtOrBefore(this.frames, t);
-    if (k < 0) { this.updateHud(null); return; }
+    // A window that doesn't cover t yet (just after a seek) must not show a far-away frame.
+    if (k < 0 || (t - this.frames[k].t > STALE_FRAME_S && k === this.frames.length - 1)) { this.updateHud(null); return; }
     if (k !== this.lastK) { this.lastK = k; this.preload(k); }
     const f = this.frames[k];
 

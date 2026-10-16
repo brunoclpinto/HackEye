@@ -111,7 +111,8 @@ speed up as an obstacle gets closer).
      chapters back to back).
   2. Choose a range, model and fps, then click **Analyse**. Segmentation-only
      runs take ~20 ms/frame, so 1 min at 6 fps finishes in seconds.
-  3. Play the result. Tap **Enable audio** first; iOS requires a tap.
+  3. Play the result. Audio is armed by default and unlocks on your first tap or
+     key press anywhere on the page (iOS needs that tap); the button toggles it.
   4. Change the mount preset or HFOV, then **Re-run collision**. This only
      re-runs the collision logic over the stored grids, with no new inference,
      so tuning takes seconds.
@@ -125,3 +126,17 @@ speed up as an obstacle gets closer).
 - **Output:** everything goes under `../debug/lab/` (gitignored): proxies,
   runs (grids, masks, hazards/events), and per-recording settings.
 - **Tests:** `docker compose run --rm --entrypoint python rnd -m pytest tests -q`
+- **Browser E2E tests** (`tests/e2e/`, CONTRACTS section 13): Playwright (Python)
+  in Docker, driving real Google Chrome (the bundled Chromium can't play the
+  H.264 proxies) against the live Lab on `127.0.0.1:8765`.
+  `tests/e2e/run.sh` (extra args go to pytest, e.g. `-k audio -x`).
+  - Needs the `lab` service up, the proxies for recordings 4928 and 4929, and the
+    full 4929 run `7b9d5ac14e14` (read-only; the tests never re-run or edit it).
+  - Tests that create review annotations delete exactly those ids afterwards.
+  - The image is ~3.5 GB and not kept around. Pull it before the first run and
+    remove it when done:
+    `docker pull mcr.microsoft.com/playwright/python:v1.63.0-noble`
+    `docker rmi mcr.microsoft.com/playwright/python:v1.63.0-noble`
+    (`PW_TAG=...` selects another tag; Chrome is installed into the throwaway
+    container on every run, about 20 s.)
+  - Unit tests exclude it: `... pytest tests -q --ignore=tests/e2e`.

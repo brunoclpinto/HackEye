@@ -282,14 +282,14 @@ def test_wall_alongside_is_context_spoken_once():
     assert any(h["role"] == "context" for _, h in walls)
     assert not any(h["role"] == "danger" for _, h in walls)
     ctx = speech(ev, "context")
-    assert [e["text"] for e in ctx] == ["wall at 1 o'clock"]
+    assert [e["text"] for e in ctx] == ["obstacle at 1"]
     assert speech(ev, "surface") == []                      # a sidewalk is not announced
     assert speech(ev, "danger") == [] and speech(ev, "final") == [] and tones(ev) == []
 
 
 def test_context_spoken_again_after_a_turn():
     doc, ev = run(_wall_frames(24), mot=motion(24, turn=(8.0, 11.0, 40.0)))
-    walls = [e for e in speech(ev, "context") if e["text"].startswith("wall")]
+    walls = [e for e in speech(ev, "context") if e["text"].startswith("obstacle")]
     assert len(walls) == 2
     turn_frames = [f for f in doc["frames"] if f["pathChange"]]
     assert len(turn_frames) == 1
@@ -302,13 +302,13 @@ def test_context_spoken_again_after_a_turn():
 def test_small_heading_change_is_not_a_path_change():
     doc, ev = run(_wall_frames(24), mot=motion(24, turn=(8.0, 11.0, 15.0)))
     assert not any(f["pathChange"] for f in doc["frames"])
-    assert len([e for e in speech(ev, "context") if e["text"].startswith("wall")]) == 1
+    assert len([e for e in speech(ev, "context") if e["text"].startswith("obstacle")]) == 1
 
 
 def test_context_spoken_again_after_30_seconds_unseen():
     fps = 5.0
     doc, ev = run(_wall_frames(52, fps=fps, present=lambda t: t < 8 or t >= 46, fragment=False), fps=fps)
-    ctx = [e for e in speech(ev, "context") if e["text"].startswith("wall")]
+    ctx = [e for e in speech(ev, "context") if e["text"].startswith("obstacle")]
     assert len(ctx) == 2
     assert ctx[0]["t"] < 8 and ctx[1]["t"] >= 46
 
@@ -316,7 +316,7 @@ def test_context_spoken_again_after_30_seconds_unseen():
 def test_context_not_repeated_when_gap_shorter_than_30_seconds():
     fps = 5.0
     doc, ev = run(_wall_frames(40, fps=fps, present=lambda t: t < 8 or t >= 25, fragment=False), fps=fps)
-    assert len([e for e in speech(ev, "context") if e["text"].startswith("wall")]) == 1
+    assert len([e for e in speech(ev, "context") if e["text"].startswith("obstacle")]) == 1
 
 
 # --------------------------------------------------------------------------
@@ -332,8 +332,8 @@ def test_pole_in_lane_danger_final_and_accelerating_tones():
     final = next(e for e in sp if e["role"] == "final")
     n = int(danger["text"].split(", ")[2].split()[0])
     assert danger["text"].startswith("pole, 12 o'clock, ") and 8 <= n <= 10
-    m = int(final["text"].split(", ")[1].split()[0])
-    assert final["text"].startswith("pole, ") and 1 <= m <= 3 and final["text"].endswith("steps")
+    m = int(final["text"].split(", ")[2].split()[0])
+    assert final["text"].startswith("pole, 12 o'clock, ") and 1 <= m <= 3 and final["text"].endswith("steps")
     assert final["t"] > danger["t"]
     assert final["urgency"] == "final" and danger["urgency"] == "danger"
     # tones only while it is a danger, interval shrinking as steps fall
@@ -348,6 +348,35 @@ def test_pole_in_lane_danger_final_and_accelerating_tones():
     assert freqs[-1] > freqs[0]
     assert all(abs(e["pan"]) <= 1 for e in tn)
     assert [e["role"] for e in sp if e["role"] != "danger" and e["role"] != "final"] == []   # nothing else spoken
+
+
+def test_vehicle_beside_path_with_pixels_intruding_into_lane_is_not_danger():
+    """v26.1.5: a non-moving item is danger only if its contact point (lowest pixel) is in the lane."""
+    def extra(g, t):
+        d = 14.0 - SPEED * t
+        place(g, "vehicle", d, 2.0, 1.0, 1.5)                 # stands beside the path, lowest row at lat 1.5..2.5
+        place(g, "vehicle", d, 0.65, 1.9, 0.8, hc=HC - 0.5)   # an overhang higher up, joined to it, reaching into the lane
+    frames = approach_frames(cls="pole", d0=500, seconds=9, half_w=3.0, extra=extra)
+    doc, ev = run(frames, mot=motion(9))
+    cars = hz(doc, "vehicle")
+    assert any(h["stepsTo"] <= 10 and h["areaFrac"] > 0.003 for _, h in cars)      # it does get close
+    assert all(h["role"] != "danger" for _, h in cars)
+    assert speech(ev, "danger") == [] and speech(ev, "final") == [] and tones(ev) == []
+
+
+def test_one_frame_role_flicker_is_never_spoken_two_frames_are():
+    """An established pole beside the lane jumps into it for n frames (segmentation noise)."""
+    def scene(n):
+        frames = approach_frames(cls="pole", d0=6.0, speed=0.0, seconds=6, lat=0.9)
+        for i in range(35, 35 + n):
+            frames[i] = base_grid()
+            place(frames[i], "pole", 6.0, 0.45, 0.4, 2.5)
+        return frames
+    doc, ev = run(scene(1))
+    assert any(h["role"] == "danger" for _, h in hz(doc, "pole"))                  # the role itself did flicker on
+    assert speech(ev, "danger") == [] and speech(ev, "final") == [] and tones(ev) != []   # (beeps are not speech)
+    doc, ev = run(scene(3))
+    assert [e["text"][:4] for e in speech(ev, "danger")] == ["pole"]
 
 
 def test_pole_beside_the_lane_is_not_danger():
@@ -385,8 +414,9 @@ def test_parked_vehicle_at_region_edge_is_context_with_parked_label():
     assert all(h["label"] == "parked car" for h in parked)
     assert all(h["role"] in ("context", "none") for h in parked)
     ctx = [e["text"] for e in speech(ev, "context")]
-    assert any(t.startswith("parked car at") for t in ctx)
-    assert len([t for t in ctx if "car" in t]) == 1
+    # one phrase names the car (as "vehicle" while its motion is unknown, "parked car" once judged stationary);
+    # the label family is remembered, so the relabel does not repeat it
+    assert len([t for t in ctx if "vehicle at" in t or "parked car at" in t]) == 1
     assert speech(ev, "danger") == [] and tones(ev) == []
 
 
@@ -535,7 +565,7 @@ def test_bike_lane_flip_does_not_retrigger_wall():
         add_wall(g)
         frames.append(g)
     doc, ev = run(frames)
-    assert [e["text"] for e in speech(ev)] == ["wall at 1 o'clock"]
+    assert [e["text"] for e in speech(ev)] == ["obstacle at 1"]
     assert not any(f["pathChange"] for f in doc["frames"])
 
 
@@ -548,10 +578,18 @@ def _item(track_id, role, steps, label="thing", group="static", clock=12, dist=N
                    distance_m=steps * 0.7 if dist is None else dist, lateral_m=0.0, bearing=0.0, clock=clock, pan=0.0,
                    area_frac=0.01, clipped=False, touches=True, lane_hit=True, along_path=False, lane_cover=1.0)
     it.track_id, it.role, it.steps, it.label, it.settled = track_id, role, steps, label, True
+    it.role_run = 2                                   # confirmed (roles.confirmFrames)
     it.moving = False
     it.approaching = approaching
     it.urgency = urgency or ("final" if role == "danger" and steps <= 3 else "danger" if role == "danger" else "none")
     return it
+
+
+def _policy():
+    """A policy past its start summary (which has its own hold and gates; see the start-summary test)."""
+    p = col.SpeechPolicy(CONFIG)
+    p.summary = False
+    return p
 
 
 def _tracks(*ids):
@@ -560,10 +598,10 @@ def _tracks(*ids):
 
 
 def test_global_gap_priority_and_context_hold():
-    p = col.SpeechPolicy(CONFIG)
+    p = _policy()
     tr = _tracks(1, 2, 3, 4)
     danger, feat, ctx = _item(1, "danger", 8, "pole"), _item(2, "feature", 6, "curb", group="feature"), \
-        _item(3, "context", 20, "wall", clock=2)
+        _item(3, "context", 20, "obstacle", clock=2)
     # all three candidates in the same second: only the danger is spoken
     e = p.step(10.0, [danger, feat, ctx], tr)
     assert e["role"] == "danger" and e["text"] == "pole, 12 o'clock, 8 steps"
@@ -572,25 +610,25 @@ def test_global_gap_priority_and_context_hold():
     # a final call ignores the gap
     danger.steps, danger.urgency = 2.4, "final"
     e = p.step(12.0, [danger, feat, ctx], tr)
-    assert e["role"] == "final" and e["text"] == "pole, 2 steps"
+    assert e["role"] == "final" and e["text"] == "pole, 12 o'clock, 2 steps"
     # next: the feature (gap passed), the context is held while a danger is active
     e = p.step(14.6, [danger, feat, ctx], tr)
     assert e["role"] == "feature" and e["text"] == "curb in 2 steps" or e["text"] == "curb in 6 steps"
     assert p.step(18.0, [danger, feat, ctx], tr) is None
-    assert p.step(18.1, [feat, ctx], tr)["text"] == "wall at 2 o'clock"
+    assert p.step(18.1, [feat, ctx], tr)["text"] == "obstacle at 2"
     # once heard, never again while remembered
     assert p.step(25.0, [feat, ctx], tr) is None
 
 
 def test_surface_waits_for_gap_and_beats_context():
-    p = col.SpeechPolicy(CONFIG)
+    p = _policy()
     tr = _tracks(1)
-    ctx = _item(1, "context", 10, "wall", clock=2)
+    ctx = _item(1, "context", 10, "obstacle", clock=2)
     p.surface_adopted(None, "road", CONFIG["surfaces"])
     assert p.step(0.0, [ctx], tr)["text"] == "road"
     assert p.step(1.0, [ctx], tr) is None                         # gap
-    assert p.step(2.6, [ctx], tr)["text"] == "wall at 2 o'clock"
-    p2 = col.SpeechPolicy(CONFIG)
+    assert p.step(2.6, [ctx], tr)["text"] == "obstacle at 2"
+    p2 = _policy()
     p2.surface_adopted(None, "pedestrian", CONFIG["surfaces"])    # not announced
     assert p2.surface_pending is None
     p2.surface_adopted("pedestrian", "bikeLane", CONFIG["surfaces"])
@@ -602,19 +640,20 @@ def test_surface_waits_for_gap_and_beats_context():
 
 
 def test_only_listed_context_labels_are_spoken():
-    p = col.SpeechPolicy(CONFIG)
+    p = _policy()
     tr = _tracks(1, 2, 3)
     quiet = [_item(1, "context", 10, "vegetation", clock=1), _item(2, "context", 10, "manhole", clock=2)]
     assert p.step(0.0, quiet, tr) is None
-    assert p.step(5.0, quiet + [_item(3, "context", 10, "parked car", clock=10)], tr)["text"] == "parked car at 10 o'clock"
+    assert p.step(5.0, quiet + [_item(3, "context", 10, "parked car", clock=10)], tr)["text"] == "parked car at 10"
 
 
 def test_stale_context_is_dropped_and_approach_template_used():
-    p = col.SpeechPolicy(CONFIG)
+    p = _policy()
     tr = _tracks(1, 2, 3)
-    a, b = _item(1, "context", 10, "wall", clock=10), _item(2, "context", 12, "fence", clock=2)
-    assert p.step(0.0, [a, b], tr)["text"] == "wall at 10 o'clock"
-    # fence waits for the gap but is older than contextMaxDelaySeconds by then
+    p.max_items = 1                                      # one label per phrase: the other must wait for the gap
+    a, b = _item(1, "context", 10, "obstacle", clock=10), _item(2, "context", 12, "building", clock=2)
+    assert p.step(0.0, [a, b], tr)["text"] == "obstacle at 10"
+    # building waits for the gap but is older than contextMaxDelaySeconds by then
     assert p.step(2.0, [b], tr) is None
     assert p.step(3.6, [b], tr) is None
     assert p.step(6.0, [b], tr) is None                  # dropped (and remembered as known)
@@ -622,15 +661,86 @@ def test_stale_context_is_dropped_and_approach_template_used():
     assert p.step(7.0, [mover], tr)["text"] == "cyclist approaching, 12 o'clock"
 
 
-def test_adjacent_sides_of_the_same_label_are_one_context():
-    p = col.SpeechPolicy(CONFIG)
+def test_context_memory_is_by_label_not_side_or_clock():
+    p = _policy()
     tr = _tracks(1, 2, 3)
-    assert p.step(0.0, [_item(1, "context", 10, "wall", clock=1)], tr)["text"] == "wall at 1 o'clock"
-    assert p.step(5.0, [_item(2, "context", 10, "wall", clock=2)], tr) is None
-    assert p.step(10.0, [_item(3, "context", 10, "wall", clock=10)], tr) is None
+    assert p.step(0.0, [_item(1, "context", 10, "obstacle", clock=1)], tr)["text"] == "obstacle at 1"
+    for t, clock in ((5.0, 2), (10.0, 10), (15.0, 12)):         # any side, any clock position: already referenced
+        assert p.step(t, [_item(2, "context", 10, "obstacle", clock=clock)], tr) is None
+    # still remembered while seen, even 40 s on; forgotten after 30 s unseen
+    for t in range(16, 41):
+        p.observe_context(float(t), {"obstacle"})
+    assert p.step(40.0, [_item(2, "context", 10, "obstacle", clock=10)], tr) is None
+    p.observe_context(75.0, set())
+    assert p.step(75.0, [_item(2, "context", 10, "obstacle", clock=10)], tr)["text"] == "obstacle at 10"
+    # a turn clears the memory
+    p.clear_context(80.0)
+    assert p.step(86.0, [_item(2, "context", 10, "obstacle", clock=11)], tr)["text"] == "obstacle at 11"
+
+
+def test_vehicle_and_parked_car_are_one_context_label():
+    p = _policy()
+    tr = _tracks(1, 2)
+    v = _item(1, "context", 10, "vehicle", clock=10)
+    v.family = "vehicle"
+    assert p.step(0.0, [v], tr)["text"] == "vehicle at 10"
+    parked = _item(2, "context", 10, "parked car", clock=12)
+    parked.family = "vehicle"
+    assert p.step(5.0, [parked], tr) is None
+
+
+def test_new_context_labels_are_one_grouped_phrase_nearest_first_max_three():
+    p = _policy()
+    tr = _tracks(1, 2, 3, 4, 5)
+    its = [_item(1, "context", 10, "building", clock=2, dist=6.0), _item(2, "context", 10, "obstacle", clock=12, dist=3.0),
+           _item(3, "context", 10, "vehicle", clock=11, dist=9.0), _item(4, "context", 10, "parked car", clock=1, dist=12.0),
+           _item(5, "context", 10, "obstacle", clock=10, dist=20.0)]
+    its[3].family = its[2].family = "vehicle"
+    e = p.step(30.0, its, tr)
+    assert e["role"] == "context" and e["text"] == "obstacle at 12, building at 2, vehicle at 11"
+    assert e["trackId"] == 2
+    # the rest (one per label: the 4th label would be a second "vehicle") is already known
+    assert p.step(40.0, its, tr) is None
+
+
+def test_start_summary_needs_only_confirmation_not_age_or_surface():
+    """v26.1.5: the first context phrase may precede the 0.5 s track age and the adopted surface."""
+    it = _item(1, "context", 10, "building", clock=2)
+    it.settled = False
+    p = col.SpeechPolicy(CONFIG)
+    assert p.step(0.2, [it], _tracks(1), surface_known=False) is None            # held 0.5 s to gather the view
+    e = p.step(0.7, [it], _tracks(1), surface_known=False)
+    assert e is not None and e["text"] == "building at 2"
+    it.role_run = 1                                                              # not yet confirmed
     p2 = col.SpeechPolicy(CONFIG)
-    assert p2.step(0.0, [_item(1, "context", 10, "wall", clock=2)], tr)
-    assert p2.step(5.0, [_item(2, "context", 10, "wall", clock=10)], tr)["text"] == "wall at 10 o'clock"
+    assert p2.step(0.2, [it], _tracks(1), surface_known=False) is None
+    assert p2.step(0.9, [it], _tracks(1), surface_known=False) is None
+    # outside the summary the old gates apply again
+    it.role_run = 2
+    p3 = col.SpeechPolicy(CONFIG)
+    p3.summary = False
+    assert p3.step(5.0, [it], _tracks(1), surface_known=True) is None             # not settled
+    it.settled = True
+    assert p3.step(5.1, [it], _tracks(1), surface_known=False) is None            # surface unknown
+    assert p3.step(5.2, [it], _tracks(1), surface_known=True)["text"] == "building at 2"
+
+
+def test_danger_final_and_feature_need_two_consecutive_frames():
+    p = col.SpeechPolicy(CONFIG)
+    tr = _tracks(1, 2)
+    d = _item(1, "danger", 8, "pole")
+    d.role_run = 1
+    f = _item(2, "feature", 6, "curb", group="feature")
+    f.role_run = 1
+    assert p.step(10.0, [d, f], tr) is None
+    d.role_run = f.role_run = 2
+    assert p.step(10.2, [d, f], tr)["text"] == "pole, 12 o'clock, 8 steps"
+    q = col.SpeechPolicy(CONFIG)
+    fin = _item(1, "danger", 2, "person")
+    fin.role_run = 1
+    assert q.step(0.0, [fin], _tracks(1)) is None               # the false "person, 3 steps" of the review
+    fin.role_run = 2
+    assert q.step(0.2, [fin], _tracks(1))["text"] == "person, 12 o'clock, 2 steps"
 
 
 def test_danger_first_announced_inside_final_range_speaks_only_final():
@@ -695,7 +805,7 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "settings", "gridW", "gridH", "egoAvailable", "frames"}
-    assert doc["version"] == "v26.1.1" == ev["version"]
+    assert doc["version"] == "v26.1.5" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM"}
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150

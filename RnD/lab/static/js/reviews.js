@@ -10,7 +10,7 @@
 // its caret.
 import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole } from "./util.js";
 import { api } from "./api.js";
-import { frameAt, orderCandidates, fillFor } from "./autofill.js";
+import { orderCandidates, fillFor } from "./autofill.js";
 
 const VERDICTS = [["correct", "✓", "Correct (c)"], ["incorrect", "✗", "Incorrect (x)"], ["remove", "⊘", "Should not be said (r)"]];
 const ADD_ROLES = [...ROLES, "other"];
@@ -26,7 +26,7 @@ function el(tag, cls, text) {
 }
 
 export class Reviews {
-  /** hooks: {seek(t), getTime(), pause(), isPaused(), getFrames(), getTemplates(), transport(id)} supplied by app.js */
+  /** hooks: {seek(t), getTime(), pause(), isPaused(), getFrame(t) -> Promise<frame|null>, getTemplates(), transport(id), changed()} supplied by app.js */
   constructor(hooks) {
     this.h = hooks;
     this.rec = null; this.run = null;
@@ -35,7 +35,8 @@ export class Reviews {
     this.items = []; this.curIdx = -2; this.lastT = 0;
     this.expanded = new Set(); this.drafts = new Map(); this.timers = new Map();
     this.queue = Promise.resolve(); this.loadToken = 0;
-    this.followPlayhead = false; this.cand = null; // add-form state (§10a)
+    this.followPlayhead = false; this.cand = null; this.addToken = 0; // add-form state (§10a)
+    this.formT = null;   // exact (unrounded) time behind the add form's time field while it still shows fmtTime(formT, 1)
     this.list = $("#rvList"); this.empty = $("#rvEmpty");
     this._wire();
     this.render();
@@ -71,6 +72,16 @@ export class Reviews {
   _reindex() {
     this.vmap = new Map();
     for (const a of this.anns) if (a.kind === "verdict" && a.runId) this.vmap.set(this._annKey(a), a);
+    this.h.changed?.();
+  }
+
+  // ------------------------------------------------------------ playback preview (§12.2)
+  /** True when the loaded run's speech event carries a ⊘ "should not be said" verdict. */
+  isRemoved(ev) { return !!this.run && this.vmap.get(this._evKey(ev))?.verdict === "remove"; }
+  /** Added phrases as speech events for the audio engine. */
+  addedEvents() {
+    return this.anns.filter((a) => a.kind === "added")
+      .map((a) => ({ t: a.t, type: "speech", role: a.role, text: a.text, source: "added" }));
   }
   _matchedIds() {
     const ids = new Set();
@@ -289,6 +300,7 @@ export class Reviews {
     if (cur) {
       cur.verdict = verdict;
       this._refreshRow(rk);
+      this.h.changed?.();
       this._send(async () => {
         if (cur.dead) return;
         try { await api(`${this._base()}/${cur.id}`, { method: "PUT", body: { verdict } }); }
@@ -337,39 +349,67 @@ export class Reviews {
   _editAdded(a, fields, rerender, indicator) {
     const rk = this._rkOf(a);
     Object.assign(a, fields);
+    this.h.changed?.();
     if (rerender) this.render(); else this._refreshRow(rk);
     this._saveFields(a, fields, indicator);
   }
 
   // ------------------------------------------------------------ add form
+  // §12.2: opening always takes the current playhead; while paused the time follows every seek
+  // and frame step ("↻ following playhead"); submit/cancel fully reset the form. Typing in the
+  // time field stops the tracking until the next seek, pause or a click on "⟲ playhead".
+  _fmtT() { return fmtTime(this.formT, 1); }
+  _setFormTime(t) {
+    this.formT = t; this.followPlayhead = true;
+    $("#rvAddT").value = this._fmtT();
+    this._resetAuto(); this._followUi();
+  }
+  /** The form's time: the exact playhead while the field is untouched, else what was typed. */
+  _formTime() {
+    const typed = parseTime($("#rvAddT").value);
+    return this.formT !== null && $("#rvAddT").value === this._fmtT() ? this.formT : typed;
+  }
+  _followUi() {
+    $("#rvAddFollow").hidden = $("#rvAddForm").hidden || !(this.followPlayhead && this.h.isPaused());
+  }
+
   openAdd() {
     if (!this.rec) return;
     $("#rvAddForm").hidden = false;
-    this.followPlayhead = true; this._resetAuto();
-    $("#rvAddT").value = fmtTime(this.h.getTime(), 1);
+    this._setFormTime(this.h.getTime());
     $("#rvAddText").focus();
   }
   closeAdd() {
-    $("#rvAddForm").hidden = true; $("#rvAddText").value = ""; $("#rvAddNote").value = "";
-    this.followPlayhead = false; this._resetAuto();
+    $("#rvAddForm").hidden = true;
+    $("#rvAddT").value = ""; $("#rvAddText").value = ""; $("#rvAddNote").value = "";
+    $("#rvAddRole").value = "danger";
+    this.formT = null; this.followPlayhead = false; this.addToken++;
+    this._resetAuto(); this._followUi();
   }
 
-  /** app.js calls this on pause / seeked / frame step: a paused playhead drives the add form's time (§10a). */
+  /** app.js calls this on play / pause / seeked / frame step: a paused playhead drives the add form's time. */
   playheadChanged() {
-    if ($("#rvAddForm").hidden || !this.h.isPaused()) return;
-    this.followPlayhead = true; // a pause, seek or step re-enables tracking after a manual edit
-    const v = fmtTime(this.h.getTime(), 1), inp = $("#rvAddT");
-    if (inp.value !== v) { inp.value = v; this._resetAuto(); }
+    if ($("#rvAddForm").hidden) return;
+    if (!this.h.isPaused()) { this._followUi(); return; }
+    const t = this.h.getTime();
+    if (this.formT === null || t !== this.formT || !this.followPlayhead) this._setFormTime(t);
+    else this._followUi();
   }
   _resetAuto() { this.cand = null; const i = $("#rvAddAutoInfo"); i.hidden = true; i.textContent = ""; }
 
-  /** Fill text + role from the analysed frame at the form time; repeated clicks cycle candidates. */
-  autofill() {
-    const t = parseTime($("#rvAddT").value);
+  /** Fill text + role from the analysed frame at the form time (fetched from /frame?t=); repeated clicks cycle candidates. */
+  async autofill() {
+    const t = this._formTime();
     if (!(t >= 0)) { toast("Enter a valid time first."); return; }
     if (!this.cand || this.cand.t !== t) {
-      const frame = frameAt(this.h.getFrames(), t);
-      if (!frame) { toast(this.run ? "No analysed frame at this time (outside the run range)." : "Load a run to auto-fill."); return; }
+      if (!this.run) { toast("Load a run to auto-fill."); return; }
+      const btn = $("#rvAddAuto"), token = ++this.addToken;
+      btn.disabled = true; btn.classList.add("busy"); const label = btn.textContent; btn.textContent = "…";
+      let frame;
+      try { frame = await this.h.getFrame(t); }
+      finally { btn.disabled = false; btn.classList.remove("busy"); btn.textContent = label; }
+      if (token !== this.addToken || $("#rvAddForm").hidden) return; // form was reset or the time changed meanwhile
+      if (!frame) { toast("No analysed frame at this time (outside the run range)."); return; }
       this.cand = { t, list: orderCandidates(frame), i: -1 };
     }
     const c = this.cand;
@@ -385,7 +425,7 @@ export class Reviews {
 
   async submitAdd() {
     if (!this.rec) return;
-    const t = parseTime($("#rvAddT").value), text = $("#rvAddText").value.trim();
+    const t = this._formTime(), text = $("#rvAddText").value.trim();
     if (!(t >= 0) || t > this.rec.duration) { toast("Time must be within the recording."); return; }
     if (!text) { toast("Enter the phrase that should have been spoken."); $("#rvAddText").focus(); return; }
     const body = { kind: "added", t, text, role: $("#rvAddRole").value, note: $("#rvAddNote").value };
@@ -393,7 +433,7 @@ export class Reviews {
     const btn = $("#rvAddSubmit"); btn.disabled = true;
     try {
       const a = await api(this._base(), { method: "POST", body });
-      this.anns.push(a); this.anns.sort((x, y) => x.t - y.t);
+      this.anns.push(a); this.anns.sort((x, y) => x.t - y.t); this._reindex();
       this.closeAdd(); this.render();
       this.lastT = a.t; this.curIdx = -2; this.highlight(a.t);
     } catch { /* toasted; keep the form */ }
@@ -426,8 +466,8 @@ export class Reviews {
     for (const r of ADD_ROLES) sel.add(new Option(r, r));
     sel.value = "danger";
     $("#rvAddBtn").addEventListener("click", () => ($("#rvAddForm").hidden ? this.openAdd() : this.closeAdd()));
-    $("#rvAddHead").addEventListener("click", () => { this.followPlayhead = true; $("#rvAddT").value = fmtTime(this.h.getTime(), 1); this._resetAuto(); });
-    $("#rvAddT").addEventListener("input", () => { this.followPlayhead = false; this._resetAuto(); });
+    $("#rvAddHead").addEventListener("click", () => this._setFormTime(this.h.getTime()));
+    $("#rvAddT").addEventListener("input", () => { this.followPlayhead = false; this._resetAuto(); this._followUi(); });
     $("#rvAddAuto").addEventListener("click", () => this.autofill());
     $("#rvAddCancel").addEventListener("click", () => this.closeAdd());
     $("#rvAddSubmit").addEventListener("click", () => this.submitAdd());

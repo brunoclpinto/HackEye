@@ -1,4 +1,4 @@
-"""Collision context, hazards and audio warning events from class grids (v26.1.1).
+"""Collision context, hazards and audio warning events from class grids (v26.1.5).
 
 Why this was rewritten
 ----------------------
@@ -60,6 +60,23 @@ v26.1.1 revisions (CONTRACTS.md section 7a) and further robustness
 * Things that run along the path (a wall's or median's base spans a long stretch of
   floor) are boundary, never danger or feature; a feature must cross the lane.
 * Only ``contextSpeak`` labels are spoken; surface only for road/rail changes.
+
+v26.1.5 (CONTRACTS.md section 12.3, from the user's review of real footage)
+---------------------------------------------------------------------------
+* Danger, final and feature speech need the track to hold that role for ``roles.confirmFrames``
+  consecutive analysed frames (a one-frame false detection is never spoken).
+* The final call includes the clock: "person, 12 o'clock, 2 steps".
+* A static/parked/unknown-motion item is danger only if its contact point (its lowest pixel)
+  is in the danger lane inside the walking region; pixels intruding from a car beside the path
+  do not count.
+* Context memory is keyed by label family ("vehicle"/"parked car" are one), not by side; it is
+  kept while seen within ``forgetAfterSeconds`` and cleared by a turn.
+* Newly announceable context labels are one grouped phrase ("obstacle at 12, building at 2"),
+  nearest first, at most ``speech.contextMaxItems``. Barrier-type classes and sidewalk-obstacle
+  are spoken as "obstacle"; "building" and "obstacle" are in ``contextSpeak``.
+* Start summary: the first context phrase of a run and after a turn needs only the confirmation
+  (no track age, no adopted surface) and is held ``speech.summaryHoldSeconds`` so one phrase
+  covers the whole first view.
 
 Beyond the contract (small constants at the top / config): a track must live
 ``MIN_TRACK_AGE_S`` before it may speak or beep; no danger/feature role during the
@@ -537,6 +554,8 @@ class _Item:
     role: str = "none"
     urgency: str = "none"
     settled: bool = False                     # track old enough to speak or beep
+    family: str = ""                          # label family used as context-memory key ("" = use label)
+    role_run: int = 0                         # consecutive frames the track has held ``role`` (incl. this one)
 
 
 def _bottom_point(rows: np.ndarray, cols: np.ndarray, sel: np.ndarray, gw: int) -> tuple[int, int]:
@@ -579,12 +598,12 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                 if group == "feature":
                     sel = in_lane if in_lane.any() else everything
                     lane_hit = bool(in_lane.any())
-                elif group == "static":
-                    sel = in_lane_region if in_lane_region.any() else everything
-                    lane_hit = bool(in_lane_region.any())
                 else:
+                    # v26.1.5: the contact point is the item's true lowest pixel (where it stands). It
+                    # counts as "in the lane" only if that lowest row itself touches the lane inside the
+                    # walking region; a car beside the path whose roof or bumper pixels intrude does not.
                     sel = everything
-                    lane_hit = bool(in_lane_region.any())
+                    lane_hit = bool(in_lane_region[rr == rr.max()].any())
                 row, col = _bottom_point(rr, cc, sel, gw)
                 contact_y = (row + 1) / gh
                 dist = ground_distance_m(contact_y, geo.horizon, geo.camera_height_m, gh, geo.f)
@@ -640,6 +659,9 @@ class _Track:
     danger_done: bool = False
     final_done: bool = False
     feature_done: bool = False
+    # confirmation: consecutive analysed frames holding the same role (v26.1.5)
+    role: str = "none"
+    role_run: int = 0
 
 
 def _closing_mps(history: list[tuple[float, float]], horizon: float, camera_height_m: float, gh: int, f: float,
@@ -865,38 +887,40 @@ class SpeechPolicy:
         self.cfg = config["speech"]
         self.forget_s = config["contextMemory"]["forgetAfterSeconds"]
         self.final_steps = config["roles"]["finalSteps"]
+        self.confirm = int(config["roles"].get("confirmFrames", 1))
+        self.max_items = int(self.cfg.get("contextMaxItems", 1))
         self.last_t: float | None = None
-        self.memory: dict[tuple[str, str], float] = {}         # (label, side) -> last seen
-        self.pending_since: dict[tuple[str, str], float] = {}  # context waiting for the gap
+        self.memory: dict[str, float] = {}                      # context label (family) -> last seen
+        self.pending_since: dict[str, float] = {}               # context waiting for the gap
         self.feature_label_t: dict[str, float] = {}
         self.danger_label_t: dict[str, float] = {}
         self.surface_pending: tuple[str, str] | None = None   # (group, label) waiting to be spoken
         self.context_speak = set(config.get("contextSpeak", []))
+        # start summary: the first context phrase of a run (and after a path change) needs only
+        # ``confirmFrames`` frames, no track age and no adopted surface, so it comes within ~1 s
+        self.summary = True
+        self.summary_since: float | None = None
 
     # -- memory ----------------------------------------------------------
-    def clear_context(self) -> None:
+    def clear_context(self, t: float | None = None) -> None:
+        """Forget what was said (a turn): the next context phrase is a fresh summary of the new view."""
         self.memory.clear()
         self.pending_since.clear()
+        self.summary, self.summary_since = True, t
 
     @staticmethod
-    def _related(key: tuple[str, str]) -> list[tuple[str, str]]:
-        """Memory keys that count as the same thing: a long wall along the path is seen
-        "ahead" at its far end and "right" near us, so ahead matches left and right
-        (left and right stay separate)."""
-        label, side = key
-        if side == "ahead":
-            return [(label, "ahead"), (label, "left"), (label, "right")]
-        return [(label, side), (label, "ahead")]
+    def _key(it: _Item) -> str:
+        """Memory key: the item's label family ("vehicle" and "parked car" are one thing), not its side."""
+        return it.family or it.label
 
-    def _known(self, key: tuple[str, str]) -> bool:
-        return any(k in self.memory for k in self._related(key))
+    def _known(self, key: str) -> bool:
+        return key in self.memory
 
-    def observe_context(self, t: float, keys: set[tuple[str, str]]) -> None:
-        """Refresh memory for keys seen now; forget keys unseen for forgetAfterSeconds."""
+    def observe_context(self, t: float, keys: set[str]) -> None:
+        """Refresh memory for labels seen now; forget labels unseen for forgetAfterSeconds."""
         for k in keys:
-            for m in self._related(k):
-                if m in self.memory:
-                    self.memory[m] = t
+            if k in self.memory:
+                self.memory[k] = t
         for k in [k for k, seen in self.memory.items() if t - seen > self.forget_s]:
             del self.memory[k]
 
@@ -931,13 +955,20 @@ class SpeechPolicy:
     def step(self, t: float, items: list[_Item], tracks: dict[int, _Track],
              surface_known: bool = True) -> dict | None:
         """``surface_known``: a surface has been adopted (context waits for it)."""
+        if self.summary_since is None:
+            self.summary_since = t
+        if self.summary and t - self.summary_since > WARMUP_S + 1e-9 and surface_known:
+            self.summary = False                # the scene had its chance to be summarised; back to normal
+        everything = items
         items = [i for i in items if i.settled]
-        danger = sorted((i for i in items if i.role == "danger"), key=lambda i: i.steps)
+        ok = lambda i: i.role_run >= self.confirm          # noqa: E731  (confirmed over consecutive frames)
+        danger = sorted((i for i in items if i.role == "danger" and ok(i)), key=lambda i: i.steps)
         # 1. final: once per track, ignores the global gap
         for it in danger:
             tr = tracks[it.track_id]
             if it.urgency == "final" and not tr.final_done:
                 tr.final_done = tr.danger_done = True
+                self.memory_if_spoken(t, it)
                 return self._event(t, "final", self._text("final", it), it, "final")
         # 2. danger
         pending = [i for i in danger if not tracks[i.track_id].danger_done
@@ -948,11 +979,12 @@ class SpeechPolicy:
             it = pending[0]
             tracks[it.track_id].danger_done = True
             self.danger_label_t[it.label] = t
+            self.memory_if_spoken(t, it)
             if it.approaching:
                 return self._event(t, "danger", self._text("approach", it), it, "danger")
             return self._event(t, "danger", self._text("danger", it), it, "danger")
         # 3. feature
-        feats = sorted((i for i in items if i.role == "feature" and not tracks[i.track_id].feature_done
+        feats = sorted((i for i in items if i.role == "feature" and ok(i) and not tracks[i.track_id].feature_done
                         and t - self.feature_label_t.get(i.label, -math.inf) >= self.LABEL_COOLDOWN_S),
                        key=lambda i: i.steps)
         if feats:
@@ -972,13 +1004,18 @@ class SpeechPolicy:
             label = self.surface_pending[1]
             self.surface_pending = None
             return self._event(t, "surface", self._text("surface", label=label), None)
-        # 5. context (after the first surface: the user hears where they walk before what is around)
-        if not surface_known:
+        # 5. context (after the first surface: the user hears where they walk before what is around;
+        #    the start summary does not wait for it and needs no track age, only the confirmation)
+        if self.summary:
+            pool = [i for i in everything if i.role_run >= self.confirm]
+        elif surface_known:
+            pool = items
+        else:
             return None
-        cands: dict[tuple[str, str], _Item] = {}
-        for it in items:
+        cands: dict[str, _Item] = {}                 # one per label, the nearest
+        for it in pool:
             if it.role == "context" and it.label in self.context_speak:
-                key = (it.label, _side_of_clock(it.clock))
+                key = self._key(it)
                 if not self._known(key) and (key not in cands or it.distance_m < cands[key].distance_m):
                     cands[key] = it
         for key in list(self.pending_since):
@@ -992,11 +1029,23 @@ class SpeechPolicy:
             del self.pending_since[key]
         if not cands or not self._gap_ok(t):
             return None
-        key = min(cands, key=lambda k: cands[k].distance_m)
-        it = cands[key]
-        self.memory[key] = t
-        del self.pending_since[key]
-        return self._event(t, "context", self._text("context", it), it)
+        if self.summary and t - min(self.pending_since[k] for k in cands) < self.cfg.get("summaryHoldSeconds", 0.0) - 1e-9:
+            return None                         # let the rest of the first view get confirmed: one phrase, not three
+        # one grouped phrase: all newly announceable labels, nearest first, at most contextMaxItems
+        chosen = sorted(cands, key=lambda k: cands[k].distance_m)[:self.max_items]
+        for key in chosen:
+            self.memory[key] = t
+            self.pending_since.pop(key, None)
+        self.summary = False
+        first = cands[chosen[0]]
+        items_txt = ", ".join(self._text("context", cands[k]) for k in chosen)
+        text = self.cfg["templates"].get("contextGroup", "{items}").format(items=items_txt)
+        return self._event(t, "context", text, first)
+
+    def memory_if_spoken(self, t: float, it: _Item) -> None:
+        """A danger/final call that names a context label counts as having referenced it."""
+        if it.label in self.context_speak:
+            self.memory[self._key(it)] = t
 
 
 # --------------------------------------------------------------------------
@@ -1221,6 +1270,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
             tr.moving = it.moving
             it.steps = steps_to(it.distance_m, ego.speed, cadence, step_len)
             base = labels.get(it.class_name, it.class_name.replace("-", " "))
+            it.family = base
             it.label = parked_labels.get(it.class_name, base) if (it.group == "moving" and it.moving is False) else base
             if _not_approaching(it, ego.speed) and it.group != "moving":
                 it.along_path = True
@@ -1228,13 +1278,25 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
             if not warm and it.role in ("danger", "feature"):
                 it.role, it.urgency = "none", "none"   # distances are meaningless on a guessed horizon
 
+        # confirmation: how many consecutive analysed frames each track has held its role
+        seen_tracks = set()
+        for it in items:
+            tr = tracks[it.track_id]
+            tr.role_run = tr.role_run + 1 if tr.role == it.role else 1
+            tr.role = it.role
+            it.role_run = tr.role_run
+            seen_tracks.add(it.track_id)
+        for tid, tr in tracks.items():
+            if tid not in seen_tracks:
+                tr.role, tr.role_run = "none", 0
+
         # 9. path change
         path_change = turned or (config["pathChange"]["onSurfaceChange"] and adopted is not None
                                  and adopted[0] is not None)
         if path_change:
-            policy.clear_context()
+            policy.clear_context(t)
             _log(f"t={t:.1f}s path change ({'turn' if turned else 'surface'}); context memory cleared")
-        policy.observe_context(t, {(it.label, _side_of_clock(it.clock)) for it in items
+        policy.observe_context(t, {it.family or it.label for it in items
                                    if it.role in ("context", "danger") and _is_static_like(it)})
 
         # speech

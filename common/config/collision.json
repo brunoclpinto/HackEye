@@ -1,5 +1,5 @@
 {
-  "version": "v26.1.1",
+  "version": "v26.1.5",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -42,11 +42,11 @@
     "traffic-light pedestrians": "pedestrian light",
     "traffic-sign": "traffic sign",
     "sidewalk-obstacle": "obstacle",
-    "barrier": "barrier",
-    "barrier fence": "fence",
-    "barrier guard-rail": "guard rail",
+    "barrier": "obstacle",
+    "barrier fence": "obstacle",
+    "barrier guard-rail": "obstacle",
     "divider": "divider",
-    "barrier wall": "wall",
+    "barrier wall": "obstacle",
     "nature vegetation": "vegetation",
     "building": "building",
     "person": "person",
@@ -58,7 +58,7 @@
     "object pothole": "pothole",
     "utility-cover": "manhole"
   },
-  "contextSpeak": ["wall", "fence", "guard rail", "barrier", "parked car"],
+  "contextSpeak": ["obstacle", "building", "vehicle", "parked car"],
   "parkedLabels": {"vehicle": "parked car"},
   "minComponentFraction": 0.0004,
   "roles": {
@@ -71,7 +71,8 @@
     "minObstacleAreaM2": 0.08,
     "boundaryMarginPx": 2,
     "stationaryMps": 0.5,
-    "approachingMps": 0.5
+    "approachingMps": 0.5,
+    "confirmFrames": 2
   },
   "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
                "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2,
@@ -84,14 +85,15 @@
   "contextMemory": {"forgetAfterSeconds": 30.0},
   "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
   "speech": {
-    "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0,
+    "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0, "contextMaxItems": 3, "summaryHoldSeconds": 0.5,
     "templates": {
-      "context":  "{label} at {clock} o'clock",
+      "context":  "{label} at {clock}",
       "surface":  "{label}",
       "feature":  "{label} in {steps} steps",
       "danger":   "{label}, {clock} o'clock, {steps} steps",
       "approach": "{label} approaching, {clock} o'clock",
-      "final":    "{label}, {steps} steps"
+      "final":    "{label}, {clock} o'clock, {steps} steps",
+      "contextGroup": "{items}"
     }
   },
   "tones": {

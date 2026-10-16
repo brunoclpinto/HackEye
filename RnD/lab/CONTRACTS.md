@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1.2)
+# HackEye Lab — contracts (v26.1.5)
 
 The single source of truth that `lab/server.py`, `src/collision.py` and
 `lab/static/` are built against. Change this file first, then the code.
@@ -558,3 +558,59 @@ The user's rule: **each new version cleans up the previous version's Lab content
     4. runs the wipe (§11).
   - **If the worker doesn't go idle within 30 s:** log an error and skip the wipe, then retry on the next check.
   - **Before any wipe** (startup or live), run docs left `queued`/`running` from a previous process are irrelevant, because they get deleted.
+
+## 12. v26.1.5 changes
+
+### 12.1 Large runs: windowed hazards (Lab)
+- A full-length run's `hazards.json` is about 118 MB (18,558 frames), too big for the browser to load whole.
+- **New endpoints:**
+  - `GET /api/runs/{id}/hazards?from=<s>&to=<s>` → `{version, settings, gridW, gridH, egoAvailable, from, to, frames: [...]}`, the frames with `from ≤ t ≤ to`. A window is at most 600 s (422 otherwise).
+  - `GET /api/runs/{id}/frame?t=<s>` → `{frame}`, the analysed frame with the largest `t ≤ s`, or 404 when outside the run.
+- **Server cache:** it parses `hazards.json` once per run, keeps an LRU of 2 runs, and invalidates on the file's mtime (a collision re-run rewrites it).
+- **Gzip:** `GZipMiddleware(minimum_size=1024)` for all JSON.
+- **Frontend:** holds a window of ±90 s around the playhead, prefetches the next window when the playhead is within 30 s of the window's end, and refetches on seek outside the window.
+  - Overlay and HUD use the window.
+  - The timeline and review panel use `events.json`, which stays small.
+  - The old full `hazards.json` route stays for compatibility, but the UI no longer uses it.
+
+### 12.2 UI defaults and fixes (Lab)
+- **Analysis range:** defaults to `0 → recording duration` on recording select; the "from playhead" buttons stay.
+- **Audio:**
+  - Armed by default. The `AudioContext`/speech unlock happens on the **first** `pointerdown`, `keydown` or `touchend` anywhere in the page (once).
+  - The audio button becomes a toggle: "🔊 Audio on" / "🔇 Audio off". Speech and tones stay checked by default.
+  - For E2E tests, expose `window.__labAudioLog`, an array of `{at, mediaT, type, text|freq, source}` pushed whenever speech is spoken or a tone is scheduled (`source` = `system` | `added`).
+- **Auto-fill** fetches `GET /api/runs/{id}/frame?t=<form time>` (spinner on the button meanwhile), then uses the existing `orderCandidates`/`fillFor`.
+- **Add form:**
+  - Opening it always takes the current playhead.
+  - While paused, the time follows every seek and frame step.
+  - Submit fully resets the form, so the next open re-reads the playhead.
+  - The time field shows a "↻ following playhead" indicator while it is tracking.
+  - **Bug to reproduce and fix:** the user's second added phrase got the first one's time (both saved with `t=0.2`).
+- **Review preview** ("Hear review edits" checkbox in the Audio panel, on by default):
+  - Playback merges added annotations as speech events at their `t` (`source: "added"`).
+  - System speech events with a ⊘ `remove` verdict are skipped.
+  - Re-merged whenever reviews change. Toggle off = only the system's speech.
+
+### 12.3 Collision v26.1.5 (`collision.json` `"version": "v26.1.5"`), from the user's review (`RnD/tests/fixtures/4929_review1.json`)
+1. **Confirmation:** danger, final and feature speech need the track to hold that role in **≥ `roles.confirmFrames` (2) consecutive analysed frames**.
+2. **Final template** becomes `"{label}, {clock} o'clock, {steps} steps"`, so the location is always included.
+3. **Danger for non-moving items:**
+   - An item with `moving !== true` (static, parked, or unknown) is danger **only if its contact point is inside the danger lane**: `|lateralM| ≤ laneHalfWidthM` at the contact row, inside the region.
+   - Pixel intrusion alone no longer counts. A vehicle beside the path is context, never danger.
+4. **Context memory by label:**
+   - Once a spoken context label (e.g. "parked car") has been announced, it isn't repeated while seen within `forgetAfterSeconds` (30), on any side or clock position.
+   - It is cleared on a path change (turn).
+5. **Grouped context phrase:**
+   - In a frame where at least one context label is newly announceable, all newly announceable context items (nearest first, at most `speech.contextMaxItems` = 3, one per label) are joined into **one phrase**: `"{label} at {clock}"` items joined by `", "`.
+   - Examples: `"obstacle at 12, building at 2"`, `"vehicle at 11, building at 1"`.
+   - The template key is `speech.templates.contextGroup` = `"{items}"`, with item template `"{label} at {clock}"`.
+6. **contextSpeak** adds `"building"` and `"obstacle"`. `spokenLabels` maps barrier-type and `sidewalk-obstacle` classes to "obstacle".
+7. **Start summary:** the first context phrase of a run, and after a path change, may come before the 1.5 s warm-up. It needs only `confirmFrames` frames, so the user hears the scene within about the first second.
+8. **Regression tests** (`tests/test_collision_regression.py`) run `run_collision` on the fixture windows and assert the expectations recorded in the fixture's annotations.
+
+## 13. Browser E2E harness (`RnD/tests/e2e/`)
+- Playwright (Python) in `mcr.microsoft.com/playwright/python` with the **Google Chrome channel** (`playwright install chrome`, which plays H.264), against the live Lab (`--network host`, `http://127.0.0.1:8765`).
+- Launch flags: `--autoplay-policy=no-user-gesture-required`; the audio checks use `window.__labAudioLog`.
+- Run with `RnD/tests/e2e/run.sh`.
+- Tests create their own short runs/reviews (on 4928, or a short 4929 range) and delete them afterwards.
+- Never trigger a version change.

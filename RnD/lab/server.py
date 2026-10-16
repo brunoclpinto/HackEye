@@ -8,14 +8,20 @@ none of them block for long except the collision re-run, which is pure numpy.
 
 from __future__ import annotations
 
+import bisect
+import json
+import math
 import sys
+import threading
 import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Query  # noqa: E402
+from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
@@ -48,6 +54,25 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="HackEye Lab", lifespan=_lifespan)
+
+
+class _SelectiveGZip:
+    """GZipMiddleware (CONTRACTS 12.1) for everything except media: the proxy mp4 is served with
+    Range requests and PNG masks are already compressed, so those bypass it untouched."""
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024)
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        if path.startswith("/media/") or path.endswith(".png"):
+            await self.app(scope, receive, send)
+        else:
+            await self.gzip(scope, receive, send)
+
+
+app.add_middleware(_SelectiveGZip)
 
 
 def _collision():
@@ -220,6 +245,72 @@ def rerun_collision(run_id: str) -> dict:
     result = analysis.collision_pass(run_id)
     return {"version": result["version"], "elapsedSeconds": result["elapsedSeconds"],
             "hazards": f"/api/runs/{run_id}/hazards.json", "events": f"/api/runs/{run_id}/events.json"}
+
+
+# --- windowed hazards (CONTRACTS 12.1) ----------------------------------------
+# A full-length run's hazards.json is ~120 MB: parse it once per run, keep an LRU of 2 runs,
+# and serve slices. The cache key includes the file's mtime/size, so a collision re-run
+# (which rewrites the file) is picked up on the next request.
+
+MAX_WINDOW_S = 600.0
+FRAME_GAP_S = 1.0       # /frame: still "inside the run" up to this long after the last analysed frame
+_HZ_CACHE_RUNS = 2
+_hz_cache: "OrderedDict[str, dict]" = OrderedDict()
+_hz_lock = threading.Lock()
+
+
+def _hazards_doc(run_id: str) -> dict:
+    run = _run(run_id)
+    if run["status"] != "done":
+        raise HTTPException(409, f"Run is {run['status']}, not done")
+    path = analysis.run_dir(run_id) / "hazards.json"
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        raise HTTPException(404, "hazards.json not available (collision pass has not run)") from None
+    sig = (st.st_mtime_ns, st.st_size)
+    with _hz_lock:  # one parse at a time: concurrent first requests share the work
+        ent = _hz_cache.get(run_id)
+        if ent is None or ent["sig"] != sig:
+            doc = json.loads(path.read_text())
+            frames = doc.pop("frames", [])
+            ent = {"sig": sig, "head": doc, "frames": frames, "times": [f["t"] for f in frames]}
+            _hz_cache[run_id] = ent
+        _hz_cache.move_to_end(run_id)
+        while len(_hz_cache) > _HZ_CACHE_RUNS:
+            _hz_cache.popitem(last=False)
+        return ent
+
+
+def _json(obj: dict) -> Response:
+    return Response(json.dumps(obj, separators=(",", ":")), media_type="application/json",
+                    headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/runs/{run_id}/hazards")
+def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: float = Query(alias="to")) -> Response:
+    if not (math.isfinite(t_from) and math.isfinite(t_to)) or t_to < t_from:
+        raise HTTPException(422, "from and to must be finite numbers with to >= from")
+    if t_to - t_from > MAX_WINDOW_S:
+        raise HTTPException(422, f"window is at most {MAX_WINDOW_S:g} s")
+    ent = _hazards_doc(run_id)
+    times = ent["times"]
+    lo, hi = bisect.bisect_left(times, t_from), bisect.bisect_right(times, t_to)
+    head = ent["head"]
+    return _json({"version": head.get("version"), "settings": head.get("settings"),
+                  "gridW": head.get("gridW"), "gridH": head.get("gridH"),
+                  "egoAvailable": head.get("egoAvailable"),
+                  "from": t_from, "to": t_to, "frames": ent["frames"][lo:hi]})
+
+
+@app.get("/api/runs/{run_id}/frame")
+def get_hazards_frame(run_id: str, t: float = Query()) -> Response:
+    ent = _hazards_doc(run_id)
+    times = ent["times"]
+    i = bisect.bisect_right(times, t) - 1 if math.isfinite(t) else -1
+    if i < 0 or (i == len(times) - 1 and t > times[i] + FRAME_GAP_S):
+        raise HTTPException(404, "No analysed frame at this time (outside the run)")
+    return _json({"frame": ent["frames"][i]})
 
 
 @app.get("/api/runs/{run_id}/{name}.json")

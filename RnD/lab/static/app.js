@@ -5,17 +5,20 @@ import { Overlay } from "./js/overlay.js";
 import { AudioEngine } from "./js/audio.js";
 import { Timeline } from "./js/timeline.js";
 import { Reviews } from "./js/reviews.js";
+import { HazardWindow } from "./js/hazards.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 const video = $("#video");
 
 const S = {
   recs: [], rec: null, settings: null, config: null, models: null,
-  runs: [], run: null, hazards: null, events: [], speech: [], roles: new Set(ROLES),
-  pendingSeek: null, rangeTouched: false, runPoll: null, recPoll: null, loadedVideoRec: null,
+  runs: [], run: null, events: [], speech: [], roles: new Set(ROLES),
+  pendingSeek: null, seekGen: 0, rangeTouched: false, runPoll: null, recPoll: null, loadedVideoRec: null,
 };
 
 const overlay = new Overlay(video, $("#overlay"));
+// Windowed hazards (CONTRACTS 12.1): the overlay, HUD and frame stepping use the frames around the playhead.
+const hazards = new HazardWindow((frames, head) => overlay.setFrames(frames, head));
 overlay.hudEl = $("#hud");
 const audio = new AudioEngine(video);
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
@@ -24,7 +27,8 @@ const reviews = new Reviews({
   pause: () => video.pause(),
   getTime: () => video.currentTime || 0,
   isPaused: () => video.paused,
-  getFrames: () => S.hazards?.frames ?? [],
+  getFrame: (t) => hazards.frameAt(t),
+  changed: () => refreshAudioEvents(),
   getTemplates: () => S.config?.speech?.templates ?? null,
   transport: (id) => $(`#${id}`).click(),
 });
@@ -36,6 +40,7 @@ const isNarrow = () => window.matchMedia("(max-width: 899px)").matches;
 
 function seekTo(t) {
   t = clamp(t, 0, durOf() || t);
+  S.seekGen++;
   if (video.readyState >= 1) video.currentTime = t;
   else S.pendingSeek = t; // applied on loadedmetadata
 }
@@ -293,8 +298,8 @@ async function startAnalysis() {
   const dur = S.rec.duration;
   let start = parseTime($("#rangeStart").value);
   let end = parseTime($("#rangeEnd").value);
-  if (Number.isNaN(start)) start = video.currentTime || 0;
-  if (Number.isNaN(end)) end = start + 60;
+  if (Number.isNaN(start)) start = 0;
+  if (Number.isNaN(end)) end = dur;
   start = clamp(start, 0, dur); end = Math.min(end, dur);
   if (!(end > start)) { toast("Range end must be after range start (and within the recording)."); return; }
   const fps = Number($("#fpsInput").value) || 6;
@@ -343,8 +348,9 @@ function watchRun(runId) {
 }
 
 function unloadRun() {
-  S.run = null; S.hazards = null; S.events = []; S.speech = [];
-  overlay.setRun(null, null);
+  S.run = null; S.events = []; S.speech = [];
+  hazards.setRun(null);
+  overlay.setRun(null);
   audio.setEvents([]);
   timeline.set(null, []);
   reviews.setRun(null, []);
@@ -353,16 +359,32 @@ function unloadRun() {
 }
 
 async function loadRunData(run, links) {
-  const hz = links?.hazards ?? `/api/runs/${run.id}/hazards.json`;
   const ev = links?.events ?? `/api/runs/${run.id}/events.json`;
-  const [hazards, events] = await Promise.all([api(hz), api(ev)]);
-  S.hazards = hazards;
+  const events = await api(ev);
   S.events = events.events ?? [];
   S.speech = S.events.filter((e) => e.type === "speech");
-  overlay.setRun(run, hazards);
+  // Only the window around the playhead is fetched (never the whole hazards.json); it streams in behind the UI.
+  hazards.setRun(run);
+  overlay.setRun(run);
+  hazards.update(playheadForRun(run));
   audio.setEvents(S.events);
+  refreshAudioEvents();
   timeline.set(run, S.events);
   reviews.setRun(run, S.speech);
+}
+
+/** Where the playhead will be once this run is shown (a pending seek wins, then the current time, clamped into the run). */
+function playheadForRun(run) {
+  const t = S.pendingSeek ?? (video.currentTime || 0);
+  return clamp(t, run.request.start, run.request.end);
+}
+
+/** System events + (with "Hear review edits") the user's added phrases, minus the ⊘ removed ones. */
+function refreshAudioEvents() {
+  const preview = $("#reviewPreviewChk").checked;
+  let speech = S.speech;
+  if (preview) speech = [...speech.filter((e) => !reviews.isRemoved(e)), ...reviews.addedEvents()];
+  audio.setSpeechEvents(speech);
 }
 
 function applyRunMeta() {
@@ -379,6 +401,7 @@ async function loadRun(runId, { seek = true, t } = {}) {
     if (!recById(run.request.recording)) await refreshRecordings();
     await selectRecording(run.request.recording, { keepRun: true });
   }
+  const gen = S.seekGen; // the user may scrub while the run loads; don't yank them back afterwards
   try { await loadRunData(run); } catch { return; }
   S.run = run;
   applyRunMeta();
@@ -387,16 +410,16 @@ async function loadRun(runId, { seek = true, t } = {}) {
   $("#rangeStart").value = fmtTime(run.request.start);
   $("#rangeEnd").value = fmtTime(run.request.end);
   renderRuns();
-  if (seek) seekTo(t ?? run.request.start);
+  if (seek && gen === S.seekGen) seekTo(t ?? run.request.start);
+  else hazards.update(video.currentTime || 0);
   writeHash();
 }
 
 // ---------------------------------------------------------------- range inputs
 function syncDefaultRange() {
   if (S.rangeTouched || !S.rec) return;
-  const start = Math.min(video.currentTime || 0, S.rec.duration);
-  $("#rangeStart").value = fmtTime(start);
-  $("#rangeEnd").value = fmtTime(Math.min(start + 60, S.rec.duration));
+  $("#rangeStart").value = fmtTime(0);
+  $("#rangeEnd").value = fmtTime(S.rec.duration);
 }
 function setFromHead(which) {
   S.rangeTouched = true;
@@ -430,13 +453,14 @@ function updateTime(t) {
   if (!draggingSeek) { bar.max = dur || 1; bar.value = t; }
   timeline.setPlayhead(t);
   reviews.highlight(t);
+  hazards.update(t);
 }
 let draggingSeek = false;
 
 function step(dir) {
   video.pause();
   const cur = video.currentTime;
-  const f = S.hazards?.frames;
+  const f = hazards.frames;
   let target;
   if (f?.length) {
     // Previous/next *analysed* frame relative to the playhead.
@@ -484,7 +508,7 @@ function wire() {
   video.addEventListener("error", () => {
     if (video.currentSrc) toast(`Video failed to load (${video.error?.message || "unsupported or missing proxy"})`);
   });
-  video.addEventListener("play", () => { $("#playBtn").innerHTML = "&#10074;&#10074;"; });
+  video.addEventListener("play", () => { S.seekGen++; $("#playBtn").innerHTML = "&#10074;&#10074;"; reviews.playheadChanged(); });
   video.addEventListener("pause", () => { $("#playBtn").innerHTML = "&#9654;"; writeHash(); reviews.playheadChanged(); });
   video.addEventListener("ended", () => { $("#playBtn").innerHTML = "&#9654;"; });
   video.addEventListener("timeupdate", () => { if (!("requestVideoFrameCallback" in video)) updateTime(video.currentTime); });
@@ -505,12 +529,21 @@ function wire() {
   bar.addEventListener("change", () => { draggingSeek = false; });
   bar.addEventListener("pointerup", () => { draggingSeek = false; });
 
-  // audio
+  // audio: armed by default; the first pointerdown/keydown/touchend anywhere unlocks AudioContext + speech (12.2)
   const ab = $("#audioBtn");
+  const paintAudioBtn = () => {
+    ab.innerHTML = audio.on ? "&#128266; Audio on" : "&#128263; Audio off";
+    ab.classList.toggle("on", audio.on);
+    ab.setAttribute("aria-pressed", String(audio.on));
+  };
+  audio.armOnFirstGesture((err) => { if (err) toast(`Audio: ${err.message}`); });
   ab.addEventListener("click", async () => {
-    try { await audio.enable(); ab.textContent = "Audio enabled"; ab.classList.remove("primary"); ab.classList.add("on"); }
-    catch (e) { toast(`Audio: ${e.message}`); }
+    audio.setOn(!audio.on);
+    paintAudioBtn();
+    if (audio.on && !audio.ctx) { try { await audio.enable(); } catch (e) { toast(`Audio: ${e.message}`); } }
   });
+  paintAudioBtn();
+  $("#reviewPreviewChk").addEventListener("change", refreshAudioEvents);
   $("#speechChk").addEventListener("change", (e) => audio.setSpeech(e.target.checked));
   $("#tonesChk").addEventListener("change", (e) => audio.setTones(e.target.checked));
   $("#muteChk").addEventListener("change", (e) => toggleMute(e.target.checked));
@@ -583,8 +616,8 @@ async function init() {
     await selectRecording(h.rec);
     if (!Number.isNaN(t)) seekTo(t);
   }
+  // The hash time was already applied above; loadRun must not re-apply it after a slow load.
   if (h.run) await loadRun(h.run, { seek: Number.isNaN(t), t: Number.isNaN(t) ? undefined : t });
-  if (h.run && !Number.isNaN(t)) seekTo(t);
 }
 
 init();

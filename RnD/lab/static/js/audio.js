@@ -6,12 +6,22 @@ const LOOKAHEAD_S = 0.25;   // real seconds of audio scheduled ahead of the play
 const PEAK_GAIN = 0.5;
 const EDGE_S = 0.005;       // attack/release ramp
 const LATE_TOLERANCE_S = 0.03;
+const LOG_MAX = 2000;
+
+// E2E hook (CONTRACTS 12.2): one entry per speech phrase spoken / tone scheduled.
+// {at (performance.now, ms), mediaT, type: "speech"|"tone", text|freq, source: "system"|"added"}
+export const audioLog = (window.__labAudioLog = window.__labAudioLog || []);
+function logAudio(entry) {
+  audioLog.push({ at: performance.now(), ...entry });
+  if (audioLog.length > LOG_MAX) audioLog.splice(0, audioLog.length - LOG_MAX);
+}
 
 export class AudioEngine {
   constructor(video) {
     this.video = video;
     this.ctx = null;
     this.master = null;
+    this.on = true;            // armed by default (the toggle button); the context itself is unlocked by the first gesture
     this.speechOn = true;
     this.tonesOn = true;
     this.muted = false;
@@ -30,7 +40,26 @@ export class AudioEngine {
     setInterval(() => this.tick(), TICK_MS);
   }
 
-  get enabled() { return !!this.ctx; }
+  get enabled() { return this.on && !!this.ctx; }
+
+  /** The "Audio on/off" toggle. Off silences everything and stops scheduling. */
+  setOn(on) {
+    this.on = on;
+    if (!on) this.reset();
+  }
+
+  /**
+   * Arm audio for the whole page: the first pointerdown / keydown / touchend anywhere creates and
+   * unlocks the AudioContext and speech (browsers only allow that inside a user gesture). Once.
+   */
+  armOnFirstGesture(onUnlocked) {
+    const evs = ["pointerdown", "keydown", "touchend"];
+    const fire = () => {
+      for (const e of evs) window.removeEventListener(e, fire, true);
+      this.enable().then(() => onUnlocked?.(), () => onUnlocked?.(new Error("audio unlock failed")));
+    };
+    for (const e of evs) window.addEventListener(e, fire, { capture: true });
+  }
 
   /** Must be called from a user gesture (iOS requires this to create/unlock audio). */
   async enable() {
@@ -62,6 +91,11 @@ export class AudioEngine {
     this.reset();
   }
 
+  /** Replace only the speech list (review edits merged / removed) without cutting off tones or the phrase being spoken. */
+  setSpeechEvents(speech) {
+    this.speech = [...speech].sort((a, b) => a.t - b.t);
+  }
+
   applyVolume() {
     if (this.master) this.master.gain.value = this.muted ? 0 : this.volume;
   }
@@ -90,7 +124,7 @@ export class AudioEngine {
 
   tick() {
     const v = this.video;
-    if (!this.ctx || v.paused || v.seeking || v.ended || v.readyState < 3) { this.lastT = null; return; }
+    if (!this.on || !this.ctx || v.paused || v.seeking || v.ended || v.readyState < 3) { this.lastT = null; return; }
     const cur = v.currentTime;
     const rate = v.playbackRate || 1;
     // Event times are shifted by the user offset: an event at t is *heard* at t + offset.
@@ -143,6 +177,7 @@ export class AudioEngine {
     };
     osc.start(when);
     osc.stop(when + dur + 0.01);
+    logAudio({ mediaT: e.t, type: "tone", freq: osc.frequency.value, source: e.source ?? "system" });
   }
 
   /** Speak when the playhead *crosses* an event time during normal playback (not on seeks). */
@@ -160,11 +195,12 @@ export class AudioEngine {
       // A final call wins the window; otherwise keep the latest phrase.
       if (!hit || e.role === "final" || hit.role !== "final") hit = e;
     }
-    if (hit) this.speak(hit.text, rate, hit.role === "final");
+    if (hit) this.speak(hit.text, rate, hit.role === "final", hit);
   }
 
   /** Final calls pre-empt whatever is being spoken; other phrases queue behind it. */
-  speak(text, rate, final = false) {
+  speak(text, rate, final = false, ev = null) {
+    logAudio({ mediaT: ev?.t ?? this.video.currentTime, type: "speech", text, source: ev?.source ?? "system" });
     if (!("speechSynthesis" in window)) return;
     if (final) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);

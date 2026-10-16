@@ -32,7 +32,7 @@
           <span class="row"><input id="rangeEnd" inputmode="decimal" placeholder="mm:ss" autocomplete="off">
           <button type="button" id="endFromHead" title="Use current player position">&#9906;</button></span>
         </label>
-        <p class="hint">Accepts seconds, mm:ss or hh:mm:ss. Default: playhead to +60 s.</p>
+        <p class="hint">Accepts seconds, mm:ss or hh:mm:ss. Default: the whole recording (0 to its end).</p>
         <label>Model <select id="modelSel"></select></label>
         <div class="two">
           <label>Profile <select id="profileSel"></select></label>
@@ -87,9 +87,10 @@
     <div class="panels">
       <fieldset>
         <legend>Audio</legend>
-        <button type="button" id="audioBtn" class="primary">Enable audio</button>
+        <button type="button" id="audioBtn" class="on" aria-pressed="true">&#128266; Audio on</button>
         <label class="inline"><input type="checkbox" id="speechChk" checked> Speech</label>
         <label class="inline"><input type="checkbox" id="tonesChk" checked> Tones</label>
+        <label class="inline" title="Playback speaks your added phrases and skips the ones you marked as should-not-be-said"><input type="checkbox" id="reviewPreviewChk" checked> Hear review edits</label>
         <label class="inline"><input type="checkbox" id="muteChk"> Mute all (m)</label>
         <label class="inline"><input type="checkbox" id="videoSoundChk"> Video sound</label>
         <label class="inline">Volume <input id="volRange" type="range" min="0" max="1" step="0.01" value="0.8"></label>
@@ -137,6 +138,7 @@
         <div class="row">
           <input id="rvAddT" class="mono" inputmode="decimal" aria-label="Time" autocomplete="off">
           <button type="button" id="rvAddHead" title="Set to playhead">&#10226; playhead</button>
+          <span id="rvAddFollow" class="rv-follow" hidden title="While paused, the time follows every seek and frame step. Typing a time stops this.">&#8635; following playhead</span>
           <select id="rvAddRole" aria-label="Role"></select>
         </div>
         <div class="row rv-textline">
