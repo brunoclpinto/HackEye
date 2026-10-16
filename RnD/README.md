@@ -146,3 +146,9 @@ speed up as a collision gets closer).
     (`PW_TAG=...` selects another tag; Chrome is installed into the throwaway
     container on every run, about 20 s.)
   - Unit tests exclude it: `... pytest tests -q --ignore=tests/e2e`.
+
+## Documentation
+- [`lab/CONTRACTS.md`](lab/CONTRACTS.md): the current rules for the Lab and the collision logic.
+- [`docs/DECISIONS.md`](docs/DECISIONS.md): the per-version decision log, covering user feedback, decisions, deviations, limitations and results.
+- [`docs/plans/`](docs/plans/): the approved plan for each version.
+- [`tests/fixtures/`](tests/fixtures/): the user's Lab reviews, kept as regression ground truth.
