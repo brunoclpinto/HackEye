@@ -10,6 +10,7 @@
 <body>
 <header class="top">
   <h1>HackEye Lab</h1>
+  <span id="verBadge" class="muted ver"></span>
   <span id="runBadge" class="muted"></span>
 </header>
 
@@ -38,6 +39,7 @@
           <label>FPS <input id="fpsInput" type="number" min="0.5" max="30" step="0.5" value="6"></label>
         </div>
         <button type="button" id="analyseBtn" class="primary" disabled>Analyse</button>
+        <button type="button" id="cancelBtn" hidden>Cancel analysis</button>
         <div id="runProgress" class="progress" hidden><div></div><span></span></div>
       </div>
     </details>

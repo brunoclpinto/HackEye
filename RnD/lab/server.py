@@ -9,6 +9,8 @@ none of them block for long except the collision re-run, which is pure numpy.
 from __future__ import annotations
 
 import sys
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -17,12 +19,35 @@ from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.responses import FileResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from lab import analysis, recordings, reviews  # noqa: E402
+from lab import analysis, recordings, reviews, versioning  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 
-app = FastAPI(title="HackEye Lab")
+VERSION_FILE = Path(__file__).resolve().parents[1] / "VERSION"
+_last_wipe: dict = {}
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # CONTRACTS section 11: version policy runs before serving (and before the
+    # lazily-started GPU worker can touch runs/).
+    global _last_wipe
+    _last_wipe = versioning.apply_version_policy(recordings.LAB_DIR, VERSION_FILE)
+
+    def _remember(result: dict) -> None:
+        global _last_wipe
+        _last_wipe = result
+
+    watcher = versioning.VersionWatcher(recordings.LAB_DIR, VERSION_FILE, analysis, on_result=_remember)
+    watcher.start()
+    try:
+        yield
+    finally:
+        watcher.stop()
+
+
+app = FastAPI(title="HackEye Lab", lifespan=_lifespan)
 
 
 def _collision():
@@ -46,6 +71,19 @@ def _run(run_id: str) -> dict:
     if run is None:
         raise HTTPException(404, f"Unknown run: {run_id}")
     return run
+
+
+@app.get("/api/version")
+def api_version() -> dict:
+    try:
+        marker = versioning.read_marker(recordings.LAB_DIR)
+    except ValueError:
+        marker = None
+    return {
+        "version": versioning.read_version(VERSION_FILE),
+        "since": marker.get("since") if marker else None,
+        "lastWipe": _last_wipe,
+    }
 
 
 # --- recordings + proxy ---------------------------------------------------
@@ -138,8 +176,29 @@ def get_models() -> dict:
 def post_run(body: dict) -> dict:
     try:
         return analysis.submit_run(body)
+    except analysis.RunConflict as exc:
+        raise HTTPException(409, str(exc)) from None
     except analysis.RunError as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str) -> dict:
+    if not analysis.RUN_ID_RE.match(run_id):
+        raise HTTPException(404, f"Unknown run: {run_id}")
+    try:
+        doc = analysis.cancel_run(run_id)
+    except analysis.RunConflict as exc:
+        raise HTTPException(409, str(exc)) from None
+    if doc is None:
+        raise HTTPException(404, f"Unknown run: {run_id}")
+    # A running job stops between frames; give it a moment so the reply shows the end state.
+    for _ in range(30):
+        if doc["status"] not in analysis.ACTIVE_STATUSES:
+            break
+        time.sleep(0.1)
+        doc = analysis.get_run(run_id) or doc
+    return doc
 
 
 @app.get("/api/runs")

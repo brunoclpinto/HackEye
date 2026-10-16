@@ -134,6 +134,9 @@ async function selectRecording(id, { keepRun = false } = {}) {
   const changed = S.rec?.id !== id;
   S.rec = rec;
   if (changed) {
+    clearTimeout(S.runPoll);
+    $("#runProgress").hidden = true;
+    setBusy(null);
     video.pause();
     S.pendingSeek = null;
     if (!keepRun) unloadRun();
@@ -145,9 +148,10 @@ async function selectRecording(id, { keepRun = false } = {}) {
   }
   renderLibrary();
   if (rec.proxy?.status === "ready") { if (changed) attachVideo(); } else updateStageMsg();
-  $("#analyseBtn").disabled = false;
+  $("#analyseBtn").disabled = !!$("#cancelBtn").dataset.run;
   if (changed) {
     await Promise.all([loadSettings(), loadRuns(), reviews.setRecording(rec)]);
+    watchActiveRun();
     if (isNarrow()) { $("#secLib").open = false; $("#stage").scrollIntoView({ behavior: "smooth", block: "start" }); }
   }
   syncDefaultRange();
@@ -251,8 +255,35 @@ function renderRuns() {
   }
 }
 
+const isActive = (r) => r.status === "queued" || r.status === "running";
+
+/** Analyse is disabled (with the reason) and Cancel shown while `run` is in flight for this recording. */
+function setBusy(run) {
+  const a = $("#analyseBtn"), c = $("#cancelBtn");
+  c.hidden = !run;
+  c.dataset.run = run?.id ?? "";
+  a.disabled = !S.rec || !!run;
+  a.title = run ? `An analysis is already ${run.status} for this recording (run ${run.id}, ${Math.round((run.progress || 0) * 100)}%)` : "";
+}
+
+/** If this recording has a queued/running run (even one started elsewhere), follow it. */
+function watchActiveRun() {
+  const act = S.runs.find(isActive);
+  if (act) watchRun(act.id);
+}
+
+async function cancelAnalysis() {
+  const id = $("#cancelBtn").dataset.run;
+  if (!id) return;
+  $("#cancelBtn").disabled = true;
+  try { await api(`/api/runs/${id}/cancel`, { method: "POST" }); } catch { /* toasted */ }
+  $("#cancelBtn").disabled = false;
+  watchRun(id);
+}
+
 function openRun(r) {
   if (r.status === "done") loadRun(r.id);
+  else if (r.status === "cancelled") toast("This run was cancelled");
   else if (r.status === "error") toast(`Run failed: ${r.error ?? "unknown"}`);
   else watchRun(r.id);
 }
@@ -274,7 +305,12 @@ async function startAnalysis() {
     const run = await api("/api/runs", { method: "POST", body });
     await loadRuns();
     if (run.status === "done") loadRun(run.id); else watchRun(run.id);
-  } catch { $("#analyseBtn").disabled = false; }
+  } catch {
+    // e.g. 409: another analysis of this recording is already in flight; follow it.
+    await loadRuns();
+    $("#analyseBtn").disabled = false;
+    watchActiveRun();
+  }
 }
 
 /** Poll a run once a second, driving the progress bar; load it when done. */
@@ -284,17 +320,23 @@ function watchRun(runId) {
   const poll = async () => {
     let r;
     try { r = await api(`/api/runs/${runId}`, { quiet: true }); }
-    catch (e) { toast(`Run poll: ${e.message}`); $("#analyseBtn").disabled = false; return; }
+    catch (e) { toast(`Run poll: ${e.message}`); pr.hidden = true; setBusy(null); return; }
+    if (S.rec && r.request.recording !== S.rec.id) return; // user moved on to another recording
     if (r.status === "done") {
-      pr.hidden = true; $("#analyseBtn").disabled = !S.rec;
+      pr.hidden = true; setBusy(null);
       await loadRuns(); loadRun(runId); return;
     }
     if (r.status === "error") {
-      pr.hidden = true; $("#analyseBtn").disabled = !S.rec;
+      pr.hidden = true; setBusy(null);
       toast(`Analysis failed: ${r.error ?? "unknown error"}`); loadRuns(); return;
     }
+    if (r.status === "cancelled") {
+      pr.hidden = true; setBusy(null);
+      toast("Analysis cancelled"); loadRuns(); return;
+    }
+    pr.hidden = false;
     setProgress(pr, r.progress || 0, `${r.status} ${Math.round((r.progress || 0) * 100)}%`);
-    $("#analyseBtn").disabled = true;
+    setBusy(r);
     S.runPoll = setTimeout(poll, 1000);
   };
   poll();
@@ -490,6 +532,7 @@ function wire() {
 
   // run panel
   $("#analyseBtn").addEventListener("click", startAnalysis);
+  $("#cancelBtn").addEventListener("click", cancelAnalysis);
   $("#rerunBtn").addEventListener("click", rerunCollision);
   $("#startFromHead").addEventListener("click", () => setFromHead("start"));
   $("#endFromHead").addEventListener("click", () => setFromHead("end"));
@@ -516,6 +559,9 @@ async function init() {
   wire();
   if (isNarrow()) { $("#secSettings").open = false; $("#secRuns").open = false; }
   updateTime(0);
+  api("/api/version", { quiet: true }).then((v) => {
+    if (v && v.version) $("#verBadge").textContent = `\u00b7 ${v.version}`;
+  }).catch(() => {});
   const [config, models] = await Promise.all([
     api("/api/config/collision").catch(() => null),
     api("/api/models").catch(() => null),

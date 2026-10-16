@@ -52,6 +52,14 @@ class RunError(ValueError):
     """Bad request (maps to HTTP 4xx)."""
 
 
+class RunConflict(RunError):
+    """Request conflicts with current state (maps to HTTP 409)."""
+
+
+class _Cancelled(Exception):
+    """Raised inside the worker when a run's cancel flag is seen."""
+
+
 def _log(msg: str) -> None:
     print(f"[lab] {msg}", file=sys.stderr, flush=True)
 
@@ -173,6 +181,24 @@ def _run_id(request: dict) -> str:
 
 _jobs: "queue.Queue[str]" = queue.Queue()
 _worker: threading.Thread | None = None
+_cache: "_ModelCache | None" = None  # the worker's model cache (set when the worker starts)
+_cancel_flags: dict[str, threading.Event] = {}  # run_id -> set when cancellation requested
+_busy: str | None = None  # run id the worker is executing right now
+_maintenance = False  # True while a version wipe is in progress: submissions are refused
+ACTIVE_STATUSES = ("queued", "running")
+
+
+def find_active_for_recording(active: dict[str, dict], rec_id: str) -> dict | None:
+    """The queued/running run doc of `rec_id` among `active`, if any (CONTRACTS 11a)."""
+    for doc in active.values():
+        if doc["request"]["recording"] == rec_id and doc["status"] in ACTIVE_STATUSES:
+            return doc
+    return None
+
+
+def _conflict_message(doc: dict) -> str:
+    return (f"Analysis already running for {doc['request']['recording']} "
+            f"(run {doc['id']}, {round((doc.get('progress') or 0) * 100)}%)")
 
 
 def submit_run(req: dict) -> dict:
@@ -187,6 +213,12 @@ def submit_run(req: dict) -> dict:
             live = run_id in _active
         if existing["status"] == "done" or live:
             return existing
+    with _state_lock:
+        if _maintenance:
+            raise RunConflict("Lab is cleaning up for a new version; try again in a minute")
+        busy = find_active_for_recording(_active, request["recording"])
+        if busy is not None:
+            raise RunConflict(_conflict_message(busy))
 
     doc = {
         "id": run_id, "request": request, "analysisVersion": ANALYSIS_VERSION, "status": "queued", "progress": 0.0, "error": None,
@@ -197,11 +229,114 @@ def submit_run(req: dict) -> dict:
     }
     run_dir(run_id).mkdir(parents=True, exist_ok=True)
     with _state_lock:
+        # Re-check under the same lock that registers the run, so two racing
+        # POSTs for one recording can't both pass the guard above.
+        busy = find_active_for_recording(_active, request["recording"])
+        if busy is not None:
+            raise RunConflict(_conflict_message(busy))
         _active[run_id] = doc
+        _cancel_flags[run_id] = threading.Event()
     _write_json(run_dir(run_id) / "run.json", doc)
     _ensure_worker()
     _jobs.put(run_id)
     return dict(doc)
+
+
+_PARTIAL_OUTPUTS = ("grids.npz", "motion.npz", "hazards.json", "events.json")
+
+
+def _remove_partial_outputs(run_id: str) -> None:
+    import shutil
+
+    out = run_dir(run_id)
+    shutil.rmtree(out / "masks", ignore_errors=True)
+    for name in _PARTIAL_OUTPUTS:
+        try:
+            (out / name).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _finish_cancelled(run_id: str) -> None:
+    _remove_partial_outputs(run_id)
+    _finish(run_id, status="cancelled", error=None)
+    with _state_lock:
+        _cancel_flags.pop(run_id, None)
+    _log(f"run {run_id}: cancelled")
+
+
+def cancel_run(run_id: str) -> dict | None:
+    """Cancel a queued/running run (CONTRACTS 11a).
+
+    Returns the run doc (a queued run is already `cancelled`; a running one
+    flips as soon as the worker sees the flag between frames). None if the
+    run is unknown; raises RunConflict if it is not queued/running."""
+    doc = get_run(run_id)
+    if doc is None:
+        return None
+    with _state_lock:
+        live = run_id in _active
+        flag = _cancel_flags.get(run_id)
+    if not live or doc["status"] not in ACTIVE_STATUSES:
+        raise RunConflict(f"Run {run_id} is {doc['status']}; nothing to cancel")
+    if flag is not None:
+        flag.set()
+    with _jobs.mutex:  # not started yet: pull it out of the queue
+        try:
+            _jobs.queue.remove(run_id)
+            dequeued = True
+        except ValueError:
+            dequeued = False
+    if dequeued:
+        _jobs.task_done()
+        _finish_cancelled(run_id)
+    return get_run(run_id)
+
+
+def cancel_all() -> list[str]:
+    """Cancel every queued and running run; returns their ids."""
+    with _state_lock:
+        ids = [i for i, d in _active.items() if d["status"] in ACTIVE_STATUSES]
+    for i in ids:
+        try:
+            cancel_run(i)
+        except RunConflict:
+            pass
+    return ids
+
+
+def is_idle() -> bool:
+    with _state_lock:
+        return _busy is None and not _active and _jobs.empty()
+
+
+def wait_idle(timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        if is_idle():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+
+
+def release_model() -> None:
+    if _cache is not None:
+        _cache.release()
+
+
+def begin_maintenance() -> None:
+    """Refuse new submissions and cancel everything in flight (version wipe)."""
+    global _maintenance
+    with _state_lock:
+        _maintenance = True
+    cancel_all()
+
+
+def end_maintenance() -> None:
+    global _maintenance
+    with _state_lock:
+        _maintenance = False
 
 
 # --------------------------------------------------------------------------
@@ -247,15 +382,18 @@ class _ModelCache:
 
 
 def _ensure_worker() -> None:
-    global _worker
+    global _worker, _cache
     with _state_lock:
+        if _cache is None:
+            _cache = _ModelCache()
         if _worker is None or not _worker.is_alive():
             _worker = threading.Thread(target=_worker_loop, name="gpu-worker", daemon=True)
             _worker.start()
 
 
 def _worker_loop() -> None:
-    cache = _ModelCache()
+    global _busy
+    cache = _cache
     while True:
         try:
             run_id = _jobs.get(timeout=1.0)
@@ -263,13 +401,27 @@ def _worker_loop() -> None:
             if cache.model is not None and time.monotonic() - cache.last_used > IDLE_SECONDS:
                 cache.release()
             continue
+        with _state_lock:
+            _busy = run_id
         try:
             _run_job(run_id, cache)
+        except _Cancelled:
+            _finish_cancelled(run_id)
         except BaseException as exc:  # noqa: BLE001 - incl. SystemExit from gpu_guard
             _log(f"run {run_id} FAILED: {exc!r}")
             _finish(run_id, status="error", error=str(exc) or repr(exc))
             if isinstance(exc, MemoryError) or "CUDA" in str(exc):
                 cache.release()
+        finally:
+            with _state_lock:
+                _busy = None
+                _cancel_flags.pop(run_id, None)
+
+
+def _check_cancel(run_id: str) -> None:
+    flag = _cancel_flags.get(run_id)
+    if flag is not None and flag.is_set():
+        raise _Cancelled()
 
 
 def _finish(run_id: str, **fields) -> None:
@@ -427,6 +579,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     rec = recordings.get_recording(req["recording"])
     if rec is None:
         raise RuntimeError("Recording disappeared")
+    _check_cancel(run_id)
     _update_run(run_id, status="running", progress=0.0)
 
     model = cache.get(req["model"])
@@ -460,6 +613,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     t_start = time.perf_counter()
     try:
         for k in range(n_target):
+            _check_cancel(run_id)
             got = reader.read(start + k / fps)
             if got is None:
                 break
@@ -485,6 +639,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
             if i == 0:
                 _log(f"run {run_id}: first frame ready, seek {reader.seek_seconds:.2f}s")
             _update_run(run_id, persist=False, progress=(k + 1) / n_target)
+        _check_cancel(run_id)
         reader.finish_motion()
     finally:
         reader.close()
@@ -503,6 +658,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                 seekSeconds=round(reader.seek_seconds, 3), progress=1.0)
     _log(f"run {run_id}: {len(grids)} frames in {elapsed:.1f}s")
 
+    _check_cancel(run_id)
     try:
         collision_pass(run_id)
     except Exception as exc:  # noqa: BLE001 - inference results are still usable

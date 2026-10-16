@@ -521,3 +521,40 @@ Same as v26.1.0, with these differences:
     Use `{label}`, `{clock}` and `{steps}` = round(`stepsTo`). The role select is set to the item's role; `none` maps to `danger`, since a missed item is usually a missed warning, and the user can change it.
   - **Cycling:** clicking Auto-fill again cycles to the next candidate. An indicator shows `n/N · <className> · <role>`. Changing the form time resets the cycle.
   - **Behaviour:** the text stays editable after auto-fill; auto-fill only overwrites text and role, never the note. With no candidates, show a toast "nothing detected at this time".
+
+## 11. Version-scoped Lab content  (v26.1.3: `RnD/VERSION`, `lab/versioning.py`)
+
+The user's rule: **each new version cleans up the previous version's Lab content, so it starts fresh.**
+- **Version source:** `RnD/VERSION` holds one line, the current HackEye version (e.g. `v26.1.3`). Claude bumps it in every version commit.
+- **Marker:** `LAB_DIR/.lab-version` = `{"version": "v26.1.3", "since": "<UTC ISO>"}`.
+- **At Lab startup** (FastAPI lifespan/startup, before serving), `apply_version_policy(lab_dir, version_file)` runs:
+  - **`VERSION` missing, unreadable or empty:** log an error and do **nothing**. Never wipe on doubt.
+  - **Marker missing:** write the marker with the current version and wipe nothing. That's the first adoption.
+  - **Marker version == current:** nothing.
+  - **Marker version != current:** **wipe** the contents of `LAB_DIR/runs/` and `LAB_DIR/reviews/`. Delete only paths that resolve inside those two directories; never follow symlinks out. Then rewrite the marker and log `[lab] version v26.1.3 -> v26.1.4: removed N runs, M review files`.
+- **Kept:** `proxies/` (version-independent, slow to rebuild), `recordings/` (per-recording settings), `.ultralytics/`.
+- **Result:** returns a dict `{"previous", "current", "wiped": bool, "runsRemoved", "reviewFilesRemoved"}`, which is also logged.
+- **`GET /api/version`** → `{"version", "since", "lastWipe": <result of the startup check>}`.
+- **The UI** shows the version in the page header (small, muted), e.g. `HackEye Lab · v26.1.3`.
+
+### 11a. One analysis per recording, visible progress, cancellation (v26.1.3)
+- **One active run per recording.** `POST /api/runs` returns **409** `{"detail": "Analysis already running for <rec> (run <id>, <pct>%)"}` while any run of the **same recording** is `queued` or `running`. An identical request still returns that in-flight run as today; a done identical request still returns the cached run. Other recordings can queue as before (FIFO, one GPU job at a time).
+- **Cancellation:**
+  - The GPU worker checks a per-run cancel flag between frames.
+  - `POST /api/runs/{id}/cancel` sets the flag, or removes the run from the queue if it hasn't started yet. The run ends as `status: "cancelled"` with partial outputs removed.
+  - Returns the run doc; 409 if the run is already done, error or cancelled.
+  - Cancelled runs are listed but can't be played (like error runs). Re-POSTing the same request starts it fresh.
+- **Progress when selecting a recording:** whenever a recording is selected (or on page load via the URL hash), the UI checks `GET /api/runs?recording=` for a queued or running run. If there is one it:
+  - shows the existing progress bar, polling every 1 s;
+  - disables **Analyse**, with the reason as a tooltip;
+  - shows a **Cancel** button.
+  
+  This must work for runs started in another tab or on another device. On completion it behaves as for a run started on this page (enable Analyse, list the run, offer to load it).
+- **Version cleanup kills analyses:**
+  - **At startup:** besides the startup check, a background thread re-reads `RnD/VERSION` every 30 s. If it differs from the marker it:
+    1. cancels every queued and running job (clears the queue, sets the cancel flags);
+    2. waits up to 30 s for the worker to go idle;
+    3. releases the GPU model;
+    4. runs the wipe (§11).
+  - **If the worker doesn't go idle within 30 s:** log an error and skip the wipe, then retry on the next check.
+  - **Before any wipe** (startup or live), run docs left `queued`/`running` from a previous process are irrelevant, because they get deleted.
