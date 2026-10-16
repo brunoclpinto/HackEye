@@ -1,4 +1,4 @@
-"""Synthetic-grid tests for collision.py v26.1.1 (no model, no GPU).
+"""Synthetic-grid tests for collision.py v26.1.7 (no model, no GPU).
 
 The scenes use real geometry: a camera at height H, horizon row ``HV``, a
 walking surface that is a perspective trapezoid converging to the vanishing
@@ -319,13 +319,18 @@ def test_wall_alongside_is_context_spoken_once():
     assert any(h["role"] == "context" for _, h in walls)
     assert not any(h["role"] == "danger" for _, h in walls)
     ctx = speech(ev, "context")
-    assert [e["text"] for e in ctx] == ["obstacle at 1"]
+    assert len(ctx) == 1 and re.fullmatch(r"obstacle at 1 in \d+", ctx[0]["text"]), ctx      # v26.1.7: position and distance
     assert speech(ev, "surface") == []                      # a sidewalk is not announced
     assert speech(ev, "danger") == [] and speech(ev, "final") == [] and tones(ev) == []
 
 
-def test_context_spoken_again_after_a_turn():
-    doc, ev = run(_wall_frames(24), mot=motion(24, turn=(8.0, 11.0, 40.0)))
+def test_context_spoken_again_after_a_turn_when_it_is_a_different_wall():
+    """v26.1.5 re-announced the wall after a turn. v26.1.7 remembers announced objects in the world: the wall of this
+    scene is drawn at the same place in the image whatever the heading (so after the 40 degree turn it is, in the
+    world, a wall some metres further along) and it is gone from view during the turn, so it is a NEW object and is
+    announced again. (The same object seen again after a turn is not: see section 15.)"""
+    present = lambda t: t < 8.0 or t >= 13.0
+    doc, ev = run(_wall_frames(24, present=present, fragment=False), mot=motion(24, turn=(8.0, 11.0, 40.0)))
     walls = [e for e in speech(ev, "context") if e["text"].startswith("obstacle")]
     assert len(walls) == 2
     turn_frames = [f for f in doc["frames"] if f["pathChange"]]
@@ -360,23 +365,20 @@ def test_context_not_repeated_when_gap_shorter_than_30_seconds():
 # 6 / 7. Danger lane
 # --------------------------------------------------------------------------
 
-def test_pole_in_lane_danger_final_and_parking_sensor_beeps():
+def test_pole_in_lane_is_named_once_and_the_beeps_carry_the_proximity():
+    """v26.1.6 said "beware poles" at 15 steps, "pole at 12 in 9" and a final "pole at 12 in 2". v26.1.7 names the pole
+    once, with position and distance, at the first notice; the later danger and final phrases would be repeats of an
+    object that was named (CONTRACTS.md 15), so the parking-sensor beeps (unchanged) are all that follows."""
     doc, ev = run(approach_frames(seconds=15), mot=motion(15))
     sp = speech(ev)
-    roles = [e["role"] for e in sp]
-    assert roles.count("danger") == 1 and roles.count("final") == 1
-    danger = next(e for e in sp if e["role"] == "danger")
-    final = next(e for e in sp if e["role"] == "final")
-    assert re.fullmatch(r"pole at 12 in (\d+)", danger["text"]) and "o'clock" not in danger["text"]
-    n = int(danger["text"].split()[-1])
-    assert 8 <= n <= 10
-    m = int(final["text"].split()[-1])
-    assert re.fullmatch(r"pole at 12 in \d+", final["text"]) and 1 <= m <= 3
-    assert final["t"] > danger["t"]
-    assert final["urgency"] == "final" and danger["urgency"] == "danger"
+    assert [e["role"] for e in sp] == ["feature"]
+    m = re.fullmatch(r"pole at 12 in (\d+)", sp[0]["text"])
+    assert m and 11 <= int(m.group(1)) <= 15, sp[0]["text"]
+    assert "o'clock" not in sp[0]["text"]
     # beeps only while it is a collision course; constant pitch, interval shrinking as steps fall
     pole = hz(doc, "pole")
     t_danger = min(t for t, h in pole if h["role"] == "danger")
+    assert sp[0]["t"] < t_danger
     tn = tones(ev)
     assert len(tn) >= 8 and all(e["role"] == "danger" for e in tn)
     assert min(e["t"] for e in tn) >= t_danger - 1e-6
@@ -385,9 +387,7 @@ def test_pole_in_lane_danger_final_and_parking_sensor_beeps():
     assert {e["frequencyHz"] for e in tn} == {float(CONFIG["tones"]["frequencyHz"])}
     assert all(abs(e["pan"]) <= 1 for e in tn)
     assert all(h["collision"] for _, h in pole if h["role"] == "danger")
-    # "beware poles" came first (noticed at 15 steps), nothing else was said
-    assert [e["text"] for e in sp if e["role"] not in ("danger", "final")] == ["beware poles"]
-    assert sp[0]["text"] == "beware poles" and sp[0]["t"] < danger["t"]
+    assert any(h["urgency"] == "final" for _, h in pole)          # the final range is reached, it is just not spoken again
 
 
 def test_beep_episodes_one_track_each_and_every_tone_inside_exactly_one_episode():
@@ -534,7 +534,7 @@ def test_approaching_cyclist_in_region_is_danger_with_approach_template():
     doc, ev = run(frames, mot=motion(6))
     dsp = speech(ev, "danger")
     assert len(dsp) == 1
-    assert dsp[0]["text"] == "cyclist approaching at 12"
+    assert re.fullmatch(r"cyclist approaching at 12 in \d+", dsp[0]["text"]), dsp[0]["text"]
     rider = [h for _, h in hz(doc, "rider") if h["role"] == "danger"]
     assert rider and any(h["moving"] is True for h in rider)
     assert tones(ev)
@@ -649,20 +649,53 @@ def _curb_band(grid, rows=(H - 5, H - 4, H - 3)):
     return g
 
 
-def test_surface_change_needs_persistence_and_a_curb_crossing():
+def test_surface_change_needs_a_curb_passing_under_and_a_majority():
     side, road = base_grid("flat sidewalk"), base_grid("flat road")
-    persist = CONFIG["surfaces"]["minPersistSeconds"]
-    # no curb crossed: sidewalk -> road for 14 s is a model relabel and stays silent (review item 120.83 s)
-    doc, ev = run(_surface_frames([(10, side), (25, road)]))
+    window = CONFIG["surfaces"]["windowSeconds"]
+    # no curb crossed: sidewalk -> road for 25 s is a model relabel and stays silent (review items 120.83 s and 199.16 s)
+    doc, ev = run(_surface_frames([(10, side), (35, road)]))
     assert speech(ev, "surface") == []
     assert not any(f["pathChange"] for f in doc["frames"])        # surface change does not reset context
-    # with a curb crossed at the change: announced, but not before the new surface has persisted
-    spans = [(6, side), (6.6, _curb_band(side)), (20, road), (26.6, _curb_band(road)), (45, side)]
-    doc, ev = run(_surface_frames(spans, flicker=[(30, road), (200, side)]))
+    # with a curb that passed under the user at the change: announced once the new surface holds 70 percent of 10 s
+    spans = [(10, side), (10.6, _curb_band(side)), (25, road), (25.6, _curb_band(road)), (50, side)]
+    doc, ev = run(_surface_frames(spans, flicker=[(160, side), (300, road)]))
     sf = speech(ev, "surface")
     assert [e["text"] for e in sf] == ["road", "sidewalk"]       # into road, then out of it
     assert sf[0]["trackId"] is None and sf[0]["clock"] is None and sf[0]["role"] == "surface"
-    assert sf[0]["t"] >= 6.6 + persist - 0.3 and sf[1]["t"] >= 26.6 + persist - 0.3
+    assert sf[0]["t"] >= 10.6 + CONFIG["surfaces"]["majority"] * window - 0.3
+    assert sf[1]["t"] >= 25.6 + CONFIG["surfaces"]["majority"] * window - 0.3
+    assert CONFIG["surfaces"]["minPersistSeconds"] >= 8.0 and CONFIG["surfaces"]["passUnderRows"] == 6
+
+
+def _curb_sliver(grid, cols=5, col0=None):
+    """A thin curb fragment in the lane just below our feet (5 px = 0.02 of the image wide, like the pieces at 189-198 s)."""
+    g = grid.copy()
+    for r in (H - 6, H - 5, H - 4, H - 3):
+        c = W // 2 if col0 is None else col0
+        g[r, c:c + cols] = ID["curb"]
+    return g
+
+
+def test_surface_is_kept_silently_for_curb_fragments_and_curbs_beside_the_lane():
+    """Review 199.16 s: the model says road for a long time while the user walks on the sidewalk; curb pieces flicker in
+    the lane just ahead (5-12 px wide, 1-2 s) but no curb went under the user. The old surface is kept and nothing is said."""
+    side, road = base_grid("flat sidewalk"), base_grid("flat road")
+    spans = [(12, side), (50, road)]
+    fragments = {i: _curb_sliver(road) for i in range(130, 400, 17)}            # 5 px wide, in the lane, bottom rows
+    doc, ev = run(_surface_frames(spans, flicker=fragments))
+    assert hz(doc, "curb"), "the fragments must be detected, or this test proves nothing"
+    assert speech(ev, "surface") == []
+    # a full-width curb whose contact is NOT in the bottom 6 rows (it stays 2 m or more ahead) is no evidence either
+    ahead = road.copy()
+    for r in (H - 14, H - 13, H - 12):
+        ahead[r][ahead[r] == ID["flat road"]] = ID["curb"]
+    flick = {i: ahead for i in range(130, 400, 3)}
+    doc, ev = run(_surface_frames(spans, flicker=flick))
+    assert speech(ev, "surface") == []
+    # ... while the same band within the bottom rows that then goes away IS evidence
+    band = _curb_band(road)
+    doc, ev = run(_surface_frames([(12, side), (13, band), (50, road)]))
+    assert [e["text"] for e in speech(ev, "surface")] == ["road"]
 
 
 def test_surface_flicker_never_reaches_persistence():
@@ -676,8 +709,14 @@ def test_surface_flicker_never_reaches_persistence():
     assert speech(ev, "surface") == []
 
 
-def test_start_on_road_is_announced_and_bike_lane_sidewalk_flip_is_silent():
-    doc, ev = run([base_grid("flat road")] * 100)
+def test_first_surface_is_adopted_silently_unless_configured_and_bike_lane_sidewalk_flip_is_silent():
+    """v26.1.7: with nothing to compare with, a start on "road" cannot be told from a sidewalk read as road (192-200 s of the
+    review, cold start), so the first surface is silent; ``surfaces.announceFirstSurface`` brings back the v26.1.6 behaviour."""
+    doc, ev = run([base_grid("flat road")] * 150)
+    assert speech(ev, "surface") == []
+    cfg = copy.deepcopy(CONFIG)
+    cfg["surfaces"]["announceFirstSurface"] = True
+    doc, ev = run([base_grid("flat road")] * 150, config=cfg)
     assert [e["text"] for e in speech(ev, "surface")] == ["road"]
     assert speech(ev, "surface")[0]["t"] >= CONFIG["surfaces"]["minPersistSeconds"] - 0.3
     side, bike = base_grid("flat sidewalk"), base_grid("flat bike-lane")
@@ -694,7 +733,7 @@ def test_bike_lane_flip_does_not_retrigger_wall():
         add_wall(g)
         frames.append(g)
     doc, ev = run(frames)
-    assert [e["text"] for e in speech(ev)] == ["obstacle at 1"]
+    assert len(speech(ev)) == 1 and re.fullmatch(r"obstacle at 1 in \d+", speech(ev)[0]["text"])
     assert not any(f["pathChange"] for f in doc["frames"])
 
 
@@ -745,7 +784,7 @@ def test_global_gap_priority_and_context_hold():
     # the context is held while a danger is active
     assert p.step(14.6, [danger, feat, ctx], tr) is None
     assert p.step(18.0, [danger, feat, ctx], tr) is None
-    assert p.step(18.1, [feat, ctx], tr)["text"] == "obstacle at 2"
+    assert p.step(18.1, [feat, ctx], tr)["text"] == "obstacle at 2 in 20"
     # once heard, never again while remembered
     assert p.step(25.0, [feat, ctx], tr) is None
 
@@ -757,7 +796,7 @@ def test_surface_waits_for_gap_and_beats_context():
     p.surface_adopted(None, "road", CONFIG["surfaces"])
     assert p.step(0.0, [ctx], tr)["text"] == "road"
     assert p.step(1.0, [ctx], tr) is None                         # gap
-    assert p.step(2.6, [ctx], tr)["text"] == "obstacle at 2"
+    assert p.step(2.6, [ctx], tr)["text"] == "obstacle at 2 in 10"
     p2 = _policy()
     p2.surface_adopted(None, "pedestrian", CONFIG["surfaces"])    # not announced
     assert p2.surface_pending is None
@@ -774,7 +813,7 @@ def test_only_listed_context_labels_are_spoken():
     tr = _tracks(1, 2, 3)
     quiet = [_item(1, "context", 10, "vegetation", clock=1), _item(2, "context", 10, "manhole", clock=2)]
     assert p.step(0.0, quiet, tr) is None
-    assert p.step(5.0, quiet + [_item(3, "context", 10, "parked car", clock=10)], tr)["text"] == "parked car at 10"
+    assert p.step(5.0, quiet + [_item(3, "context", 10, "parked car", clock=10)], tr)["text"] == "parked car at 10 in 10"
 
 
 def test_stale_context_is_dropped_and_approach_template_used():
@@ -782,19 +821,19 @@ def test_stale_context_is_dropped_and_approach_template_used():
     tr = _tracks(1, 2, 3)
     p.max_items = 1                                      # one label per phrase: the other must wait for the gap
     a, b = _item(1, "context", 10, "obstacle", clock=10), _item(2, "context", 12, "building", clock=2)
-    assert p.step(0.0, [a, b], tr)["text"] == "obstacle at 10"
+    assert p.step(0.0, [a, b], tr)["text"] == "obstacle at 10 in 10"
     # building waits for the gap but is older than contextMaxDelaySeconds by then
     assert p.step(2.0, [b], tr) is None
     assert p.step(3.6, [b], tr) is None
     assert p.step(6.0, [b], tr) is None                  # dropped (and remembered as known)
     mover = _item(3, "danger", 9, "cyclist", group="moving", approaching=True)
-    assert p.step(7.0, [mover], tr)["text"] == "cyclist approaching at 12"
+    assert p.step(7.0, [mover], tr)["text"] == "cyclist approaching at 12 in 9"
 
 
 def test_context_memory_is_by_label_not_side_or_clock():
     p = _policy()
     tr = _tracks(1, 2, 3)
-    assert p.step(0.0, [_item(1, "context", 10, "obstacle", clock=1)], tr)["text"] == "obstacle at 1"
+    assert p.step(0.0, [_item(1, "context", 10, "obstacle", clock=1)], tr)["text"] == "obstacle at 1 in 10"
     for t, clock in ((5.0, 2), (10.0, 10), (15.0, 12)):         # any side, any clock position: already referenced
         assert p.step(t, [_item(2, "context", 10, "obstacle", clock=clock)], tr) is None
     # still remembered while seen, even 40 s on; forgotten after 30 s unseen
@@ -802,10 +841,10 @@ def test_context_memory_is_by_label_not_side_or_clock():
         p.observe_context(float(t), {"obstacle"})
     assert p.step(40.0, [_item(2, "context", 10, "obstacle", clock=10)], tr) is None
     p.observe_context(75.0, set())
-    assert p.step(75.0, [_item(2, "context", 10, "obstacle", clock=10)], tr)["text"] == "obstacle at 10"
+    assert p.step(75.0, [_item(2, "context", 10, "obstacle", clock=10)], tr)["text"] == "obstacle at 10 in 10"
     # a turn clears the memory
     p.clear_context(80.0)
-    assert p.step(86.0, [_item(2, "context", 10, "obstacle", clock=11)], tr)["text"] == "obstacle at 11"
+    assert p.step(86.0, [_item(2, "context", 10, "obstacle", clock=11)], tr)["text"] == "obstacle at 11 in 10"
 
 
 def test_vehicle_and_parked_car_are_one_context_label():
@@ -813,7 +852,7 @@ def test_vehicle_and_parked_car_are_one_context_label():
     tr = _tracks(1, 2)
     v = _item(1, "context", 10, "vehicle", clock=10)
     v.family = "vehicle"
-    assert p.step(0.0, [v], tr)["text"] == "vehicle at 10"
+    assert p.step(0.0, [v], tr)["text"] == "vehicle at 10 in 10"
     parked = _item(2, "context", 10, "parked car", clock=12)
     parked.family = "vehicle"
     assert p.step(5.0, [parked], tr) is None
@@ -827,7 +866,7 @@ def test_new_context_labels_are_one_grouped_phrase_nearest_first_max_three():
            _item(5, "context", 10, "obstacle", clock=10, dist=20.0)]
     its[3].family = its[2].family = "vehicle"
     e = p.step(30.0, its, tr)
-    assert e["role"] == "context" and e["text"] == "obstacle at 12, building at 2, vehicle at 11"
+    assert e["role"] == "context" and e["text"] == "obstacle at 12 in 10, building at 2 in 10, vehicle at 11 in 10"
     assert e["trackId"] == 2
     # the rest (one per label: the 4th label would be a second "vehicle") is already known
     assert p.step(40.0, its, tr) is None
@@ -840,7 +879,7 @@ def test_start_summary_needs_only_confirmation_not_age_or_surface():
     p = col.SpeechPolicy(CONFIG)
     assert p.step(0.2, [it], _tracks(1), surface_known=False) is None            # held 0.5 s to gather the view
     e = p.step(0.7, [it], _tracks(1), surface_known=False)
-    assert e is not None and e["text"] == "building at 2"
+    assert e is not None and e["text"] == "building at 2 in 10"
     it.role_run = 1                                                              # not yet confirmed
     p2 = col.SpeechPolicy(CONFIG)
     assert p2.step(0.2, [it], _tracks(1), surface_known=False) is None
@@ -852,7 +891,7 @@ def test_start_summary_needs_only_confirmation_not_age_or_surface():
     assert p3.step(5.0, [it], _tracks(1), surface_known=True) is None             # not settled
     it.settled = True
     assert p3.step(5.1, [it], _tracks(1), surface_known=False) is None            # surface unknown
-    assert p3.step(5.2, [it], _tracks(1), surface_known=True)["text"] == "building at 2"
+    assert p3.step(5.2, [it], _tracks(1), surface_known=True)["text"] == "building at 2 in 10"
 
 
 def test_danger_final_and_feature_need_two_consecutive_frames():
@@ -948,7 +987,7 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "settings", "gridW", "gridH", "egoAvailable", "frames"}
-    assert doc["version"] == "v26.1.6" == ev["version"]
+    assert doc["version"] == "v26.1.7" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM"}
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150
@@ -1074,7 +1113,7 @@ def test_same_label_items_are_grouped_and_danger_leads():
     crosswalk = _item(4, "feature", 10, "crosswalk", group="feature", clock=12)
     e = p.step(10.0, [obstacle, p1, p2, crosswalk], tr)
     assert e["role"] == "danger"
-    assert e["text"] == "obstacle at 12 in 6, person at 1 and 2, crosswalk at 12 in 10"
+    assert e["text"] == "obstacle at 12 in 6, person at 1 and 2 in 7, crosswalk at 12 in 10"
     assert "o'clock" not in e["text"]
     # at most three entries
     q = col.SpeechPolicy(CONFIG)
@@ -1086,7 +1125,7 @@ def test_same_label_items_are_grouped_and_danger_leads():
     m1, m2 = _item(1, "danger", 9, "person", group="moving", clock=12, approaching=True), \
         _item(2, "danger", 9, "person", group="moving", clock=2, approaching=True)
     m1.people = m2.people = True
-    assert a.step(0.0, [m1, m2], _tracks(1, 2))["text"] == "person approaching at 12 and 2"
+    assert a.step(0.0, [m1, m2], _tracks(1, 2))["text"] == "person approaching at 12 and 2 in 9"
 
 
 def _pole(i, steps=10, lat=1.0):
@@ -1095,18 +1134,18 @@ def _pole(i, steps=10, lat=1.0):
     return it
 
 
-def test_thin_objects_beware_poles_once_per_cluster_and_rearm_after_8_s():
+def test_thin_objects_are_announced_once_per_cluster_with_position_and_distance_and_rearm_after_8_s():
     p = col.SpeechPolicy(CONFIG)
     tr = _tracks(*range(1, 40))
     said = []
-    # a cluster of poles in view for 15 s (new poles appear as old ones pass): exactly one "beware poles"
+    # a cluster of poles in view for 15 s (new poles appear as old ones pass): exactly one notice, "poles at 12 in 12"
     for k in range(31):
         t = k * 0.5
         poles = [_pole(1 + k // 4, 12), _pole(2 + k // 4, 14)]
         e = p.step(t, poles, tr)
         if e:
             said.append((t, e["text"]))
-    assert said == [(0.0, "beware poles")], said
+    assert said == [(0.0, "poles at 12 in 12")], said
     # no thin object noticed for 8 s -> re-armed; the next cluster is announced once
     far = _pole(30, steps=CONFIG["roles"]["thinNoticeSteps"] + 5)          # out of range: not "noticed"
     for k in range(17):
@@ -1115,15 +1154,25 @@ def test_thin_objects_beware_poles_once_per_cluster_and_rearm_after_8_s():
         e = p.step(24.0 + k * 0.5, [_pole(31 + k // 5, 9)], tr)
         if e:
             said.append((24.0 + k * 0.5, e["text"]))
-    assert [x[1] for x in said] == ["beware poles", "beware poles"] and said[1][0] >= 23.0
+    assert [x[1] for x in said] == ["poles at 12 in 12", "pole at 12 in 9"] and said[1][0] >= 23.0
     # a gap shorter than the re-arm time does not re-arm; a turn does
     q = col.SpeechPolicy(CONFIG)
     tr = _tracks(*range(1, 40))
-    assert q.step(0.0, [_pole(1)], tr)["text"] == "beware poles"
+    assert q.step(0.0, [_pole(1)], tr)["text"] == "pole at 12 in 10"
     assert q.step(5.0, [], tr) is None and q.step(6.0, [_pole(2)], tr) is None
     q.clear_context(7.0)
-    assert q.step(12.0, [_pole(3)], tr)["text"] == "beware poles"
-    # a pole that is a danger is spoken as a danger, with no extra "beware poles"
+    assert q.step(12.0, [_pole(3)], tr)["text"] == "pole at 12 in 10"
+    # several poles at different clocks: "poles at 11 and 1 in 8", the steps are those of the nearest
+    m = col.SpeechPolicy(CONFIG)
+    a, b = _pole(1, 8), _pole(2, 11)
+    a.clock, b.clock = 11, 1
+    assert m.step(0.0, [a, b], _tracks(1, 2))["text"] == "poles at 11 and 1 in 8"
+    # a different thin label is its own entry: "pole at 12 in 8, traffic light at 1 in 10"
+    n = col.SpeechPolicy(CONFIG)
+    pl, tl = _pole(1, 8), _pole(2, 10)
+    tl.label, tl.clock = "traffic light", 1
+    assert n.step(0.0, [pl, tl], _tracks(1, 2))["text"] == "pole at 12 in 8, traffic light at 1 in 10"
+    # a pole that is a danger is spoken as a danger, with no extra thin notice
     tr = _tracks(*range(1, 40))
     r = col.SpeechPolicy(CONFIG)
     d = _item(1, "danger", 8, "pole")
@@ -1167,3 +1216,343 @@ def test_no_oclock_in_any_phrase_of_the_synthetic_scenes():
     for frames in scenes:
         _, ev = run(frames, mot=motion(len(frames) / FPS))
         assert all("o'clock" not in e.get("text", "") for e in ev["events"])
+
+
+# --------------------------------------------------------------------------
+# 15. v26.1.7: world memory (dead reckoning), final only if never named, phrase completeness, surface pass-under
+# --------------------------------------------------------------------------
+
+WALK_CADENCE = 1.8
+WALK_SPEED = WALK_CADENCE * 0.70             # the dead-reckoned speed: cadence x prior step length (m/s)
+
+
+def walk(objects, seconds, fps=FPS, turns=(), hidden=lambda name, t: False, speed=WALK_SPEED):
+    """A scripted walk through a world of standing objects, rendered from the walker's pose.
+
+    ``objects``: dicts {name, cls, x, y[, w, h]} in metres (x right/east, y ahead/north of the start). The user walks at
+    ``speed`` along the heading, which follows ``turns`` = [(t0, t1, degrees right)]. Returns (frames, motion): the motion
+    track carries the camera bob (cadence ``WALK_CADENCE``) and the heading change as horizontal image motion, exactly what
+    the on-device motion estimate would report.
+    """
+    mfps = 24.0
+    tm = np.arange(0, seconds, 1 / mfps)
+    heading = np.zeros(len(tm))
+    for t0, t1, deg in turns:
+        heading += np.clip((tm - t0) / (t1 - t0), 0.0, 1.0) * deg
+    rng = np.random.RandomState(0)
+    mot = {"t": tm, "dy": 0.01 * np.sin(2 * math.pi * WALK_CADENCE * tm) + 0.003 * rng.randn(len(tm)),
+           "dx": -np.diff(heading, prepend=heading[0]) / HFOV}
+    base = base_grid(half_w_m=2.0)
+    frames, ux, uy, prev_t = [], 0.0, 0.0, 0.0
+    for i in range(int(seconds * fps)):
+        t = i / fps
+        th = math.radians(float(np.interp(t, tm, heading)))
+        ux += speed * (t - prev_t) * math.sin(th)
+        uy += speed * (t - prev_t) * math.cos(th)
+        prev_t = t
+        g = base.copy()
+        for o in objects:
+            if hidden(o["name"], t):
+                continue
+            dx, dy = o["x"] - ux, o["y"] - uy
+            fwd, right = dx * math.sin(th) + dy * math.cos(th), dx * math.cos(th) - dy * math.sin(th)
+            if 1.3 <= fwd <= 28.0 and abs(right) <= 1.6 * fwd:
+                place(g, o["cls"], fwd, right, o.get("w", 0.35), o.get("h", 3.0))
+        frames.append(g)
+    return frames, mot
+
+
+def _no_memory():
+    cfg = copy.deepcopy(CONFIG)
+    cfg["memory"]["enabled"] = False
+    return cfg
+
+
+def _summary(ev):
+    return [(e["role"], e["text"]) for e in speech(ev)]
+
+
+POLE = {"name": "p", "cls": "pole", "x": 0.0, "y": 14.0}
+
+
+def test_walk_scene_is_dead_reckoned_at_cadence_times_step_length():
+    frames, mot = walk([POLE], 8)
+    doc, _ = run(frames, mot=mot)
+    ego = [f["ego"] for f in doc["frames"] if f["t"] >= 5.0]
+    assert all(e["cadenceHz"] == pytest.approx(WALK_CADENCE, abs=0.15) for e in ego)
+    assert all(e["speedMps"] == pytest.approx(WALK_SPEED, abs=0.2) for e in ego)
+
+
+def test_fragmented_object_is_not_announced_again_and_there_is_no_repeated_final():
+    """The 41.17 s pattern of the third review: the pole in the lane is named at the first notice; its detection breaks for
+    1.4 s (a new track after the gap) and v26.1.6 called "pole at 12 in 9" and a final "pole at 12 in 3" for the SAME pole."""
+    frames, mot = walk([POLE], 12, hidden=lambda n, t: 5.5 <= t < 6.9)
+    doc, ev = run(frames, mot=mot)
+    assert len(speech(ev)) == 1 and re.fullmatch(r"pole at 12 in 1[0-5]", speech(ev)[0]["text"]), _summary(ev)
+    assert len({h["trackId"] for _, h in hz(doc, "pole")}) >= 2            # the fragmentation really happened
+    assert any(h["urgency"] == "final" for _, h in hz(doc, "pole"))        # ... and the final range was reached
+    # without the world memory (v26.1.6 / no motion data) the repeat is there ...
+    _, old = run(frames, mot=mot, config=_no_memory())
+    assert [r for r, _ in _summary(old)] == ["feature", "danger", "final"], _summary(old)
+    # ... and the parking-sensor beeps are untouched by the memory
+    assert tones(ev) == tones(old) and [b["text"] for b in ev["events"] if b["type"] == "beeps"] == \
+        [b["text"] for b in old["events"] if b["type"] == "beeps"]
+    assert tones(ev)
+    # no motion track at all: the track rules of v26.1.6 apply (and the object is announced on each new track)
+    _, nomot = run(frames)
+    assert [r for r, _ in _summary(nomot)][-1] == "final"
+
+
+def test_final_call_is_still_spoken_for_an_object_that_was_never_named():
+    """Something that appears suddenly close has not been named: "pole at 12 in 2" as before (the rule is about repeats)."""
+    frames, mot = walk([POLE], 12, hidden=lambda n, t: t < 9.5)
+    doc, ev = run(frames, mot=mot)
+    fin = speech(ev, "final")
+    assert len(fin) == 1 and re.fullmatch(r"pole at 12 in [123]", fin[0]["text"]), _summary(ev)
+    assert tones(ev)
+
+
+def test_a_second_object_of_the_same_type_further_on_is_announced():
+    poles = [{"name": "a", "cls": "pole", "x": 1.5, "y": 14.0}, {"name": "b", "cls": "pole", "x": 1.5, "y": 60.0}]
+    frames, mot = walk(poles, 52)
+    doc, ev = run(frames, mot=mot)
+    sp = speech(ev)
+    assert len(sp) == 2 and all(re.fullmatch(r"pole at 12 in 1[0-5]", e["text"]) for e in sp), _summary(ev)
+    assert sp[0]["t"] < 6 and sp[1]["t"] > 35                 # the first when it came into view, the second 46 m further on
+
+
+def test_object_in_view_throughout_is_named_once_however_often_it_is_re_tracked():
+    """Fragments of the same pole under new track ids (every 0.9 s) and a turn of 30 degrees: one notice."""
+    frames, mot = walk([POLE], 9, turns=[(4.0, 6.0, 30.0)], hidden=lambda n, t: (t * 10) % 9 < 1.2 and t > 4.0)
+    doc, ev = run(frames, mot=mot)
+    assert len({h["trackId"] for _, h in hz(doc, "pole")}) >= 3
+    assert len([e for e in speech(ev) if "pole" in e["text"]]) == 1, _summary(ev)
+
+
+# -- the memory itself ------------------------------------------------------
+
+def _mem_item(track_id, label, dist, lat, steps=8, family=None, clock=12):
+    it = _item(track_id, "context", steps, label, clock=clock, dist=dist)
+    it.lateral_m = lat
+    it.family = family or label
+    return it
+
+
+def _world():
+    w = col._WorldMemory(CONFIG["memory"])
+    w.advance(0.0, 0.0, 1.26, 0.0)
+    return w
+
+
+def test_memory_matches_same_family_within_radius_plus_ten_percent_of_distance():
+    w = _world()
+    tr = _tracks(*range(1, 8))
+    named = _mem_item(1, "building", 10.0, 0.0)
+    w.link([named], tr, 0.0)
+    w.add(named, 0.0)
+    r = CONFIG["memory"]["matchRadiusM"]
+    # a candidate 2.4 m away at 10 m range is the same object (2.5 + 1.0 m), 3.4 m away is not; another label never is
+    near = _mem_item(2, "building", 10.0, 2.4)
+    far = _mem_item(3, "building", 10.0, r + 0.1 * 10.0 + 0.3)
+    other = _mem_item(4, "obstacle", 10.0, 0.0)
+    w.link([near, far, other], tr, 0.1)
+    assert near.mem_id is not None and far.mem_id is None and other.mem_id is None
+    # the vehicle / parked car family is one thing
+    car = _mem_item(5, "vehicle", 12.0, 3.0)
+    w.link([car], tr, 0.2)
+    eid = w.add(car, 0.2)
+    parked = _mem_item(6, "parked car", 12.0, 3.2, family="vehicle")
+    w.link([parked], tr, 0.3)
+    assert parked.mem_id == eid
+
+
+def test_memory_forgets_objects_that_are_passed_or_too_far():
+    w = _world()
+    tr = _tracks(1, 2, 3)
+    a, b, far = _mem_item(1, "pole", 6.0, 0.0), _mem_item(2, "pole", 25.0, 0.0), _mem_item(3, "pole", 35.0, 0.0)
+    w.link([a, b, far], tr, 0.0)
+    ids = [w.add(a, 0.0), w.add(b, 0.0), w.add(far, 0.0)]
+    t = 0.0
+    while t < 1.25:                                    # 35 m away is "too far": gone once it is not held as just seen
+        t += 0.1
+        w.advance(t, 0.1, 1.26, 0.0)
+    assert set(w.entries) == set(ids[:2])
+    # walk on: a is passed once it is more than 1 m behind us (6 m + 1 m = 7 m of walking, 5.6 s), b is still 17 m ahead
+    while t < 5.0:
+        t += 0.1
+        w.advance(t, 0.1, 1.26, 0.0)
+    assert set(w.entries) == set(ids[:2])             # 6.3 m walked: a is 0.3 m behind, not passed yet
+    while t < 6.5:
+        t += 0.1
+        w.advance(t, 0.1, 1.26, 0.0)
+    assert set(w.entries) == {ids[1]}
+    # an object in view right now is not dropped on the dead reckoning's say-so (the camera outranks it) ...
+    owner = _mem_item(2, "pole", 17.0, 0.0)
+    owner.track_id = 2
+    w.link([owner], tr, t)
+    for _ in range(5):
+        t += 0.1
+        w.advance(t, 0.1, 1.26, 180.0)                 # (we "turn round": it is now behind us)
+        w.link([owner], tr, t)
+    assert set(w.entries) == {ids[1]}
+    # ... until it is out of view for a second
+    for _ in range(12):
+        t += 0.1
+        w.advance(t, 0.1, 1.26, 180.0)
+    assert w.entries == {}
+
+
+def test_memory_needs_a_heading_and_is_inactive_without_motion():
+    w = col._WorldMemory(CONFIG["memory"])
+    assert not w.active
+    w.advance(0.0, 0.0, None, None)
+    assert not w.active
+    w.advance(0.1, 0.1, 1.2, 10.0)
+    assert w.active
+    assert not col._WorldMemory(CONFIG["memory"], enabled=False).active
+    p = col.SpeechPolicy(CONFIG)
+    assert p.world is None and not p._mem
+    doc, _ = run(approach_frames(seconds=3))
+    assert doc["egoAvailable"] is False
+
+
+def test_object_seen_again_after_a_turn_is_not_announced_again_but_a_new_one_is():
+    world = col._WorldMemory(CONFIG["memory"])
+    policy = col.SpeechPolicy(CONFIG)
+    policy.world, policy.summary = world, False
+    tr = _tracks(*range(1, 6))
+    world.advance(0.0, 0.0, 1.26, 0.0)
+    b1 = _mem_item(1, "building", 6.0, 3.0, steps=9, clock=2)
+    world.link([b1], tr, 0.0)
+    e = policy.step(0.0, [b1], tr)
+    assert e and e["text"] == "building at 2 in 9"
+    # 3 s later we have walked 3.8 m and turned 60 degrees right: the same building is now straight ahead, a new track
+    for k in range(1, 31):
+        world.advance(k * 0.1, 0.1, 1.26, 60.0 * min(1.0, k / 20))
+    fwd, right = 3.0 * math.sin(math.radians(60)) + (6.0 - 3.78) * math.cos(math.radians(60)), \
+        3.0 * math.cos(math.radians(60)) - (6.0 - 3.78) * math.sin(math.radians(60))
+    b2 = _mem_item(2, "building", fwd, right, steps=5, clock=12)
+    world.link([b2], tr, 3.0)
+    assert b2.mem_id is not None
+    policy.clear_context(3.0)                        # the turn forgets the label memory (v26.1.5) ...
+    assert policy.step(8.0, [b2], tr) is None        # ... but not the object: nothing is said
+    # a second building 20 m further on, same label, is a new object (the label memory of v26.1.5 lapses after 30 s unseen
+    # or on a turn; it is the second gate that this object memory adds to)
+    for k in range(80):
+        world.advance(3.0 + k * 0.1, 0.1, 1.26, 60.0)
+    b3 = _mem_item(3, "building", 5.0, 2.5, steps=7, clock=2)
+    world.link([b3], tr, 12.0)
+    assert b3.mem_id is None
+    policy.observe_context(45.0, set())
+    assert policy.step(45.0, [b3], tr)["text"] == "building at 2 in 7"
+
+
+def test_grouped_context_and_thin_cluster_members_are_all_remembered():
+    world = col._WorldMemory(CONFIG["memory"])
+    policy = col.SpeechPolicy(CONFIG)
+    policy.world, policy.summary = world, False
+    tr = _tracks(*range(1, 8))
+    world.advance(0.0, 0.0, 1.26, 0.0)
+    a, b = _mem_item(1, "building", 5.0, -2.0, clock=11), _mem_item(2, "obstacle", 4.0, 2.0, clock=1)
+    p1, p2 = _pole(3, 8, lat=-1.0), _pole(4, 9, lat=1.5)
+    for it, (d, lat) in ((p1, (5.6, -1.0)), (p2, (6.3, 1.5))):
+        it.distance_m, it.lateral_m, it.family, it.role = d, lat, "pole", "none"
+    p1.clock, p2.clock = 11, 1
+    world.link([a, b, p1, p2], tr, 0.0)
+    e = policy.step(0.0, [a, b, p1, p2], tr)
+    assert e["text"] == "poles at 11 and 1 in 8"
+    e2 = policy.step(3.0, [a, b], tr)
+    assert e2 and set(e2["text"].split(", ")) == {"obstacle at 1 in 8", "building at 11 in 8"}
+    # a minute later (re-detections under new track ids, nothing passed yet) nothing is announced again
+    tr2 = _tracks(11, 12, 13, 14)
+    again = [_mem_item(11, "building", 5.0, -2.0, clock=11), _mem_item(12, "obstacle", 4.0, 2.0, clock=1)]
+    pp1, pp2 = _pole(13, 8, lat=-1.0), _pole(14, 9, lat=1.5)
+    for it, (d, lat) in ((pp1, (5.6, -1.0)), (pp2, (6.3, 1.5))):
+        it.distance_m, it.lateral_m, it.family, it.role = d, lat, "pole", "none"
+    world.link(again + [pp1, pp2], tr2, 3.5)
+    assert all(i.mem_id is not None for i in again + [pp1, pp2])
+    policy.clear_context(4.0)
+    assert policy.step(20.0, again + [pp1, pp2], tr2) is None
+
+
+def test_final_needs_no_earlier_name_but_a_covered_pole_counts_as_named():
+    """A thin object that was only covered by an earlier notice (never spoken for itself) is not new either."""
+    world = col._WorldMemory(CONFIG["memory"])
+    policy = col.SpeechPolicy(CONFIG)
+    policy.world, policy.summary = world, False
+    tr = _tracks(1, 2)
+    world.advance(0.0, 0.0, 1.26, 0.0)
+    fin = _item(1, "danger", 2.0, "pole")
+    fin.family, fin.distance_m, fin.collision = "pole", 1.4, True
+    world.link([fin], tr, 0.0)
+    assert policy.step(0.0, [fin], tr)["role"] == "final"                 # never named: spoken
+    fin2 = _item(2, "danger", 2.0, "pole")
+    fin2.family, fin2.distance_m, fin2.collision = "pole", 1.4, True
+    world2 = col._WorldMemory(CONFIG["memory"])
+    policy2 = col.SpeechPolicy(CONFIG)
+    policy2.world, policy2.summary = world2, False
+    world2.advance(0.0, 0.0, 1.26, 0.0)
+    world2.link([fin2], tr, 0.0)
+    world2.add(fin2, 0.0, named=False)                                   # covered by a cluster notice
+    world2.link([fin2], tr, 0.1)
+    assert policy2.step(0.1, [fin2], tr) is None                         # the beeps carry it
+
+
+def test_approaching_after_being_named_standing_is_news_but_only_once():
+    """201.33 s of the review: "person at 12 in 14" at 196.3, then "person approaching at 12" at 201.3 - the user ticked both."""
+    world = col._WorldMemory(CONFIG["memory"])
+    policy = col.SpeechPolicy(CONFIG)
+    policy.world, policy.summary = world, False
+    tr = _tracks(1, 2, 3)
+    world.advance(0.0, 0.0, 1.26, 0.0)
+    walker = _item(1, "danger", 12, "person", group="moving")
+    walker.people, walker.family, walker.distance_m = True, "person", 8.0
+    world.link([walker], tr, 0.0)
+    assert policy.step(0.0, [walker], tr)["text"] == "person at 12 in 12"
+    # the same person under a new track (a hand-off within a second), now measured to approach: news, once
+    again = _item(2, "danger", 9, "person", group="moving", approaching=True)
+    again.people, again.family, again.distance_m = True, "person", 6.0
+    world.link([again], tr, 0.8)
+    assert again.mem_id is not None and not again.mem_approach
+    assert policy.step(8.0, [again], tr)["text"] == "person approaching at 12 in 9"
+    third = _item(2, "danger", 7, "person", group="moving", approaching=True)      # (the same track goes on)
+    third.people, third.family, third.distance_m = True, "person", 5.0
+    world.link([third], tr, 8.5)
+    assert third.mem_id is not None and third.mem_approach
+    assert policy.step(16.0, [third], tr) is None
+    # a person who left our sight for more than a second is a new person (people walk on)
+    stranger = _item(4, "danger", 9, "person", group="moving")
+    stranger.people, stranger.family, stranger.distance_m = True, "person", 6.0
+    world.link([stranger], _tracks(4), 11.0)
+    assert stranger.mem_id is None
+
+
+# -- phrases ----------------------------------------------------------------
+
+ENTRY = r"[a-z ]+? (?:approaching )?at \d+(?:, \d+)*(?: and \d+)? in \d+(?: steps?)?"
+
+
+def test_every_object_phrase_has_a_position_and_a_distance():
+    scenes = [approach_frames(seconds=15), approach_frames(lat=2.0, half_w=3.0, seconds=14), _curb_scene(),
+              _wall_frames(10)]
+    for frames in scenes:
+        _, ev = run(frames, mot=motion(len(frames) / FPS))
+        for e in speech(ev):
+            if e["role"] != "surface":
+                assert re.fullmatch(f"{ENTRY}(?:, {ENTRY})*", e["text"]), e["text"]
+    p = col.SpeechPolicy(CONFIG)
+    assert p.step(0.0, [_pole(1, 8)], _tracks(1))["text"] == "pole at 12 in 8"
+    one = _item(1, "context", 1, "building", clock=2)
+    assert col.SpeechPolicy(CONFIG)._text("context", one) == "building at 2 in 1 step"
+
+
+def test_steps_are_left_out_only_when_the_distance_is_unknown():
+    p = col.SpeechPolicy(CONFIG)
+    it = _item(1, "context", 8, "building", clock=2)
+    it.steps = float("nan")
+    assert p._text("context", it) == "building at 2"
+    it.steps = None
+    assert p._text("context", it) == "building at 2"
+    a, b = _item(1, "danger", 7, "person", group="moving", clock=1), _item(2, "danger", 9, "person", group="moving", clock=2)
+    a.steps = b.steps = float("nan")
+    assert p._entry("danger", [a, b]) == "person at 1 and 2"

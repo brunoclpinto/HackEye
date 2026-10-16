@@ -1,5 +1,5 @@
 {
-  "version": "v26.1.6",
+  "version": "v26.1.7",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -28,9 +28,14 @@
     "seedBox": [0.40, 0.90, 0.60, 1.00],
     "debounceSeconds": 3.0,
     "minPersistSeconds": 8.0,
+    "windowSeconds": 10.0,
+    "majority": 0.7,
+    "announceFirstSurface": false,
     "requireCrossingEvidence": true,
-    "crossingEvidenceSteps": 2,
-    "evidenceLookbackSeconds": 4.0,
+    "passUnderRows": 6,
+    "passUnderGoneSeconds": 1.5,
+    "passUnderMinWidth": 0.15,
+    "evidenceLookbackSeconds": 10.0,
     "announceGroups": ["road", "rail"]
   },
   "classes": {
@@ -100,21 +105,29 @@
     "priorStepLengthM": 0.70, "scalePrior": null, "scalePriorSeconds": 30.0, "scaleMaxChangePerSecond": 0.25, "scaleRange": [0.5, 4.0], "calibrationMinRawSpeed": 0.2
   },
   "contextMemory": {"forgetAfterSeconds": 30.0},
+  "memory": {
+    "enabled": true,
+    "matchRadiusM": 2.5, "matchRangeFraction": 0.10,
+    "maxRangeM": 30.0, "behindM": -1.0,
+    "speedHoldSeconds": 5.0,
+    "seenHoldSeconds": 1.0, "moverTakeoverSeconds": 1.0, "ownerAdoptSeconds": 3.0,
+    "radiusOverrides": {}
+  },
   "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
   "speech": {
     "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0, "contextMaxItems": 3, "summaryHoldSeconds": 0.5,
     "maxEntries": 3, "peopleMotionWaitSeconds": 1.5, "peopleMotionWaitSteps": 6, "priorityMinGapSeconds": 1.0, "thinRearmSeconds": 8.0, "featureLabelGapSeconds": 6.0, "featureNewCrossingSteps": 5,
     "featureLabelOverrides": {"crosswalk": {"gapSeconds": 20, "newCrossingSteps": 14}},
     "templates": {
-      "context":  "{label} at {clock}",
+      "context":  "{label} at {clock} in {steps}",
       "surface":  "{label}",
       "feature":  "{label} at {clock} in {steps}",
       "danger":   "{label} at {clock} in {steps}",
-      "approach": "{label} approaching at {clock}",
+      "approach": "{label} approaching at {clock} in {steps}",
       "final":    "{label} at {clock} in {steps}",
       "contextGroup": "{items}",
-      "multi":    "{label} at {clocks}",
-      "thin":     "beware poles"
+      "multi":    "{label} at {clocks} in {steps}",
+      "thinNotice": "{label} at {clocks} in {steps}"
     }
   },
   "tones": {

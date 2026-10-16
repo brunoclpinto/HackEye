@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1.6)
+# HackEye Lab — contracts (v26.1.7)
 
 The single source of truth that `lab/server.py`, `src/collision.py` and
 `lab/static/` are built against. Change this file first, then the code.
@@ -706,3 +706,62 @@ Review-1 tests stay green, with their phrase expectations updated to the new phr
 - **`events.json`** adds `{"type": "beeps", "t", "tEnd", "trackId", "label", "clock", "minSteps", "role": "danger", "text"}`. Individual `tone` events stay, and drive audio.
 - **Review annotations:** `event` snapshots carry `type: "speech" | "beeps"`; old snapshots without `type` mean speech. An `added` annotation may have `type: "beeps"` with `tEnd > t`. `added` without `type` means speech.
 - **Matching key:** unchanged, `(runId, collisionVersion, round(event.t, 3), event.text)`.
+
+## 15. v26.1.7 — from the user's third review (`RnD/tests/fixtures/4929_review3.json`)
+
+### 15 · Context
+The user's third review was of v26.1.6 on 4929 (run `7b9d5ac14e14`, 0–247 s). It has 33 judgements: **27 correct** (including 3 beep episodes), **0 incorrect**, **0 missing**, **6 "should not be said"**. The direction is right; what's left is mostly repetition.
+
+| t (s) | System said | Verdict and note |
+|---|---|---|
+| 7.84 | "building at 1, vehicle at 11" | ⊘ already referenced |
+| 40.50 | "beware poles" | ⊘ already notified |
+| 41.17 | final "pole at 12 in 2" | ⊘ notified earlier, no need to repeat (the beeps at 41.17 were ✓) |
+| 59.85 | "crosswalk at 12 in 7" | ⊘ same crosswalk (announced at 52.34 as "at 10 in 5", seen again after the turn) |
+| 118.66 | "person at 1 in 4" | ⊘ same person as before (106.98 "person approaching at 12") |
+| 199.16 | surface "road" | ⊘ still on the sidewalk; the colouring shows a curb, same path ("what can one do here?") |
+| 213.84 | "beware poles" | ✓, but **"missing position and distance, always add them, to any type of object that is announced"** |
+
+**Root cause of 5 of the 6:** there's no **object permanence**. Identity exists only as image tracks. Fragmented detections and camera turns turn the same real object into a "new" track, which gets announced again.
+
+**Decisions with the user:**
+- Final calls only for objects **never named before** (otherwise the beeps carry proximity).
+- Surface: **stricter logic** (the model-level cure is a separate, later plan).
+- Announced objects stay known **until passed** (behind you, or more than 30 m away).
+
+### 15 · Design — collision v26.1.7 (`RnD/src/collision.py`, `common/config/collision.json`)
+1. **World memory (dead reckoning):**
+   - Integrate the user's ground position from the calibrated ego speed and heading (yaw from the motion track).
+   - Every announced item (any role, including "beware poles" clusters and grouped context entries) is stored as `{label family, world x/y, announcedAt, lastSeen}`.
+   - **Same object:** a new candidate with the same label family within `memory.matchRadiusM` (2.5 m, plus 10% of its distance for range error) of a remembered entry. It is **not announced again** (the track inherits "announced").
+   - **Forgotten when passed:** behind the user (`ahead < -1 m` in the current heading frame), or more than `memory.maxRangeM` (30 m) away.
+   - Without ego motion (old runs, standing still), fall back to today's track-based rules.
+   - Replaces the per-label context memory for announced objects. The per-label `forgetAfterSeconds` stays only as a fallback.
+2. **Final call only if never named:**
+   - A final (≤ 3 steps) phrase is spoken only when no memory entry matches. That covers something appearing suddenly close.
+   - Otherwise the parking-style beeps carry the proximity. The beeps are unchanged.
+3. **Every announced object gets position and distance:**
+   - "beware poles" becomes `"poles at 11 and 1 in 8"` (the same-label grouping with clocks, plus steps to the nearest).
+   - Context entries: `"{label} at {clock} in {steps}"`, e.g. "building at 2 in 6".
+   - Template keys are updated; a `thinNotice` template is added.
+   - Steps are omitted only when the distance is unknown.
+4. **Stricter surface evidence:**
+   - A surface change counts only if **a curb (or crosswalk edge) passed under the user**: its contact row reached the bottom `surfaces.passUnderRows` (6) grid rows inside the lane, then the track disappeared or moved out of view within 1.5 s.
+   - It also needs the new surface to hold a **majority over a sliding 10 s window** (≥ 70% of frames).
+   - Otherwise the previous surface is kept: the region still updates, but nothing is spoken and the context memory isn't reset.
+   - This fixes the 199 s "road" flicker (curb beside, not under).
+5. Version bumped to `v26.1.7`.
+
+**Regression fixtures** (Claude extracts them before any bump, as for reviews 1 and 2):
+- `RnD/tests/fixtures/4929_review3.{npz,json}`, with windows 0–12, 36–62, 100–122, 192–218 s from `7b9d5ac14e14`, plus all 33 annotations and the v26.1.6 speech.
+- **Regression tests:**
+  - no repeat at 7.84, 40.50, 59.85 and 118.66 s;
+  - no final at 41.17 s, but beeps still present there;
+  - no surface event near 199.16 s;
+  - every object phrase contains "at <clock>" and "in <n>" (except surface);
+  - all **27 ✓ events still produced** (same text pattern, within ±1.5 s), so the fixes mustn't remove anything the user confirmed.
+- Reviews 1 and 2 stay green (expectations updated only for the new phrasing).
+
+### 15 · Separate, later: model-level fix for surface confusion
+The segmentation model labels coloured sidewalk as road. The real cure is fine-tuning in HackEye-Models with frames from the user's own footage (labelling effort, fits the existing Vistas pipeline). It's not part of v26.1.7; it gets its own plan when the user wants it.
+
