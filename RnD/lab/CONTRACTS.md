@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1.1)
+# HackEye Lab — contracts (v26.1.2)
 
 The single source of truth that `lab/server.py`, `src/collision.py` and
 `lab/static/` are built against. Change this file first, then the code.
@@ -35,6 +35,7 @@ LAB_DIR/
   runs/<runId>/run.json          run metadata + status (§5)
   runs/<runId>/grids.npz         class grids (§5)
   runs/<runId>/motion.npz        ego-motion track at full source fps (§5)
+  reviews/<recId>.json           speech reviews / ground truth (§10)
   runs/<runId>/masks/<i>.png     overlay masks, i = 0..frameCount-1 (§5)
   runs/<runId>/hazards.json      collision output (§7)
   runs/<runId>/events.json       collision output (§7)
@@ -410,3 +411,95 @@ Same as v26.1.0, with these differences:
 - **Event list and timeline:** role filter chips (context, surface, feature, danger, final), all on by default. Timeline ticks are coloured by role.
 - **Audio:** as v26.1.0 (tones come only from danger events). Final calls pre-empt any phrase currently being spoken.
 - **Old runs** (no `region`/`ego` in hazards): draw what's present, and the HUD shows "no ego data (re-analyse)".
+
+## 10. Speech reviews  (v26.1.2: `lab/reviews.py`, `lab/server.py`, `lab/static/js/reviews.js`)
+
+**Purpose:** ground truth for analysing and planning later collision versions. The user judges each spoken phrase while watching, and adds phrases the system missed.
+
+**Reviews belong to the recording, not the run.** What should be said at a recording time is stable across re-analysis and new collision versions. Each verdict snapshots the event it judged, plus the `runId` and `collisionVersion` it came from.
+
+### Storage — `LAB_DIR/reviews/<recId>.json` (atomic writes, like `recordings._atomic_write_json`)
+```jsonc
+{"recording": "4929", "annotations": [
+  {"id": "a1b2c3d4", "kind": "verdict",
+   "verdict": "correct|incorrect|remove",          // remove = "should not be said" (kept, struck through, undoable)
+   "note": "free text (<= 2000 chars, may be empty)",
+   "t": 1089.84,                                    // = event.t
+   "event": {"t": 1089.84, "text": "vehicle, 12 o'clock, 9 steps", "role": "danger",
+             "trackId": 1416, "urgency": "danger", "clock": 12},
+   "runId": "8ab9a0e06ae3", "collisionVersion": "v26.1.1", "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T13:00:00Z", "updatedAt": "2026-10-16T13:00:00Z"},
+  {"id": "e5f6a7b8", "kind": "added",               // a phrase the system should have said
+   "t": 1052.3, "text": "bench, 1 o'clock, 4 steps",
+   "role": "context|surface|feature|danger|final|other", "note": "",
+   "runId": "8ab9a0e06ae3", "collisionVersion": "v26.1.1",
+   "createdAt": "...", "updatedAt": "..."}
+]}
+```
+- `id`: 8 random hex characters, assigned by the server.
+- `analysisVersion` and `modelName` are filled by the server from the run's `run.json` when `runId` is given.
+- **Matching key** (verdict ↔ event of the loaded run): `(runId, collisionVersion, round(event.t, 3), event.text)`. Re-running collision with the same version reproduces identical events, so verdicts stay attached.
+- There is at most one verdict per matching key. POSTing a second one for the same key returns **409**; the client PUTs instead.
+- `added` annotations are shown with every run of the recording, whatever its `runId`/`collisionVersion`; those fields only record what was loaded when they were made.
+
+### API
+| Method + path | Body | Returns |
+|---|---|---|
+| `GET /api/recordings/{id}/reviews` | | `{"recording", "annotations": [...]}` (sorted by `t`) |
+| `POST /api/recordings/{id}/reviews` | annotation without `id`/`createdAt`/`updatedAt` | the stored annotation, 201 |
+| `PUT /api/recordings/{id}/reviews/{annId}` | any of `{verdict, note, t, text, role}` | the updated annotation |
+| `DELETE /api/recordings/{id}/reviews/{annId}` | | 204 |
+| `GET /api/reviews/export?recording=<id>` | omit the query to export all recordings | the export below |
+
+**Validation (422 otherwise):**
+- `kind` ∈ `verdict | added`; `verdict` is required for kind verdict.
+- `verdict` ∈ `correct | incorrect | remove`.
+- `role` ∈ `context | surface | feature | danger | final | other`.
+- `0 ≤ t ≤ recording.duration`.
+- `text` is required and non-empty for `added`, at most 300 characters.
+- `note` is at most 2000 characters.
+- `event` is required for `verdict`.
+- `runId`, if given, must exist.
+- Unknown recording or annotation → 404.
+
+**Export** (`GET /api/reviews/export`):
+```jsonc
+{"exportedAt": "...", "recordings": [
+  {"recording": "4929", "summary": {"correct": 3, "incorrect": 1, "remove": 1, "added": 2},
+   "annotations": [ { ...annotation...,
+      "context": {                                   // from the annotation's run (null if the run or its hazards are gone)
+        "frameT": 1089.84,                           // nearest analysed frame
+        "items": [ ...hazards items with role != "none"... ],
+        "ego": {...}, "surface": "road", "horizonY": 0.43,
+        "nearbySpeech": [ ...the run's speech events within ±3 s... ]
+      } } ] } ]}
+```
+
+### UI (right-hand review panel)
+- **Layout:**
+  - Width ≥ 1200 px: three columns, i.e. sidebar | player | review panel (about 380 px, `position: sticky`, own scroll, full viewport height).
+  - 900–1199 px: the panel goes under the player.
+  - Below 900 px: stacked.
+  - The old "Speech events" list under the timeline is **replaced** by this panel; the role chips keep filtering it.
+- **Header counts:** ✓ correct · ✗ incorrect · ⊘ should-not-be-said · + added · unreviewed (= speech events of the loaded run without a matching verdict).
+- **Rows**, one per speech event of the loaded run plus added annotations, sorted by `t`:
+  - timestamp `m:ss.s`, which seeks on click
+  - role badge, coloured as the overlay roles
+  - text
+  - toggles **✓**, **✗**, **⊘**:
+    - Clicking an inactive toggle creates or updates the verdict.
+    - Clicking the active one deletes the verdict.
+    - ⊘ shows the text struck through.
+  - a note `<textarea>`, shown when a verdict is set or the row is expanded; autosaves after 600 ms of inactivity and on blur, with a small "saved ✓" indicator
+- **Added rows:**
+  - A distinct style with a "+ added" badge.
+  - Inline-editable time (plus a "⟲ playhead" button), text, role select and note.
+  - 🗑 delete, with confirm.
+- **"+ Add speech at playhead"**: an inline form (time prefilled from the playhead, text, role defaulting to danger, note). It POSTs a `kind: added` annotation with the loaded `runId`/`collisionVersion`.
+- **Following playback:** the row nearest before the playhead is highlighted and scrolled into view during playback (not while the user is typing).
+- **"Other versions (n)":** a collapsed section with verdicts whose matching key doesn't match the loaded run, read-only apart from 🗑.
+- **Keyboard** (ignored while focus is in an input, textarea or select):
+  - `c` / `x` / `r` toggle correct / incorrect / remove on the highlighted row.
+  - `a` opens "add at playhead".
+- **Optimistic updates:** on API failure, show a toast with `detail` and revert. Reviews load when a recording is selected; they don't depend on a run being loaded, but verdict rows need a run.

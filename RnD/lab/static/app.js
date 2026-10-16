@@ -1,16 +1,17 @@
 // HackEye Lab frontend: state + wiring. Heavy lifting lives in js/*.js.
-import { $, parseTime, fmtTime, toast, clamp, lastAtOrBefore, ROLES, ROLE_COLOR, eventRole, eventColor } from "./js/util.js";
+import { $, parseTime, fmtTime, toast, clamp, ROLES, ROLE_COLOR } from "./js/util.js";
 import { api } from "./js/api.js";
 import { Overlay } from "./js/overlay.js";
 import { AudioEngine } from "./js/audio.js";
 import { Timeline } from "./js/timeline.js";
+import { Reviews } from "./js/reviews.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 const video = $("#video");
 
 const S = {
   recs: [], rec: null, settings: null, config: null, models: null,
-  runs: [], run: null, hazards: null, events: [], speech: [], shown: [], roles: new Set(ROLES),
+  runs: [], run: null, hazards: null, events: [], speech: [], roles: new Set(ROLES),
   pendingSeek: null, rangeTouched: false, runPoll: null, recPoll: null, loadedVideoRec: null,
 };
 
@@ -18,6 +19,12 @@ const overlay = new Overlay(video, $("#overlay"));
 overlay.hudEl = $("#hud");
 const audio = new AudioEngine(video);
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
+const reviews = new Reviews({
+  seek: (t) => seekTo(t),
+  pause: () => video.pause(),
+  getTime: () => video.currentTime || 0,
+  transport: (id) => $(`#${id}`).click(),
+});
 
 // ---------------------------------------------------------------- helpers
 const recById = (id) => S.recs.find((r) => r.id === id);
@@ -137,7 +144,7 @@ async function selectRecording(id, { keepRun = false } = {}) {
   if (rec.proxy?.status === "ready") { if (changed) attachVideo(); } else updateStageMsg();
   $("#analyseBtn").disabled = false;
   if (changed) {
-    await Promise.all([loadSettings(), loadRuns()]);
+    await Promise.all([loadSettings(), loadRuns(), reviews.setRecording(rec)]);
     if (isNarrow()) { $("#secLib").open = false; $("#stage").scrollIntoView({ behavior: "smooth", block: "start" }); }
   }
   syncDefaultRange();
@@ -207,7 +214,7 @@ async function rerunCollision() {
     const fmt = (v) => (v < 1000 ? Math.round(v) + " ms" : (v / 1000).toFixed(2) + " s");
     const compute = r.elapsedSeconds != null ? `${fmt(r.elapsedSeconds * 1000)} compute, ` : "";
     info.textContent = `Collision ${r.version ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events`;
-    api(`/api/runs/${S.run.id}`, { quiet: true }).then((run) => { S.run = run; applyRunMeta(); }).catch(() => {});
+    api(`/api/runs/${S.run.id}`, { quiet: true }).then((run) => { S.run = run; applyRunMeta(); reviews.setRun(run, S.speech); }).catch(() => {});
   } catch { info.textContent = "Failed (see error)"; }
   finally { btn.disabled = !S.run; }
 }
@@ -291,11 +298,11 @@ function watchRun(runId) {
 }
 
 function unloadRun() {
-  S.run = null; S.hazards = null; S.events = []; S.speech = []; S.shown = [];
+  S.run = null; S.hazards = null; S.events = []; S.speech = [];
   overlay.setRun(null, null);
   audio.setEvents([]);
   timeline.set(null, []);
-  renderEvents();
+  reviews.setRun(null, []);
   $("#runBadge").textContent = "";
   $("#rerunBtn").disabled = true;
 }
@@ -307,11 +314,10 @@ async function loadRunData(run, links) {
   S.hazards = hazards;
   S.events = events.events ?? [];
   S.speech = S.events.filter((e) => e.type === "speech");
-  S.shown = S.speech.filter((e) => S.roles.has(eventRole(e)));
   overlay.setRun(run, hazards);
   audio.setEvents(S.events);
   timeline.set(run, S.events);
-  renderEvents();
+  reviews.setRun(run, S.speech);
 }
 
 function applyRunMeta() {
@@ -352,29 +358,7 @@ function setFromHead(which) {
   $(which === "start" ? "#rangeStart" : "#rangeEnd").value = fmtTime(video.currentTime, 1);
 }
 
-// ---------------------------------------------------------------- events list
-function renderEvents() {
-  const ol = $("#eventList");
-  ol.replaceChildren();
-  S.shown = S.speech.filter((e) => S.roles.has(eventRole(e)));
-  $("#eventCount").textContent = S.speech.length
-    ? `(${S.shown.length === S.speech.length ? S.speech.length : `${S.shown.length} of ${S.speech.length}`})` : "";
-  S.shown.forEach((e, i) => {
-    const li = document.createElement("li");
-    li.dataset.i = i;
-    const c = eventColor(e);
-    li.innerHTML = '<span class="mono"></span><span></span><span class="u"></span>';
-    li.children[0].textContent = fmtTime(e.t, 1);
-    li.children[1].textContent = e.text;
-    li.children[2].textContent = e.role ?? e.urgency;
-    li.children[2].style.color = c;
-    li.style.boxShadow = `inset 4px 0 0 ${c}`;
-    li.addEventListener("click", () => { video.pause(); seekTo(e.t + 0.001); });
-    ol.append(li);
-  });
-  curEventIdx = -2;
-}
-
+// ---------------------------------------------------------------- role chips (filter the review panel + timeline)
 function renderRoleChips() {
   const host = $("#roleChips");
   for (const role of ROLES) {
@@ -387,21 +371,10 @@ function renderRoleChips() {
       if (e.target.checked) S.roles.add(role); else S.roles.delete(role);
       lab.classList.toggle("on", e.target.checked);
       timeline.setRoles(S.roles);
-      renderEvents();
-      highlightEvent(video.currentTime);
+      reviews.setRoles(S.roles);
     });
     host.append(lab);
   }
-}
-
-let curEventIdx = -2;
-function highlightEvent(t) {
-  const i = lastAtOrBefore(S.shown, t);
-  if (i === curEventIdx) return;
-  const ol = $("#eventList");
-  ol.children[curEventIdx]?.classList.remove("cur");
-  curEventIdx = i;
-  ol.children[i]?.classList.add("cur");
 }
 
 // ---------------------------------------------------------------- transport
@@ -411,7 +384,7 @@ function updateTime(t) {
   const bar = $("#seekBar");
   if (!draggingSeek) { bar.max = dur || 1; bar.value = t; }
   timeline.setPlayhead(t);
-  highlightEvent(t);
+  reviews.highlight(t);
 }
 let draggingSeek = false;
 

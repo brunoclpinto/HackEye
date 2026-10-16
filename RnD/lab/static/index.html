@@ -110,10 +110,45 @@
     <div class="legend">
       <span class="muted">ticks = speech by role, orange bar = beep density</span>
     </div>
-
-    <h2>Speech events <span id="eventCount" class="muted"></span></h2>
-    <ol id="eventList" class="events"></ol>
   </main>
+
+  <aside id="reviewPanel" aria-label="Speech review">
+    <div class="rv-head">
+      <h2>Speech review</h2>
+      <div class="rv-counts" aria-live="polite">
+        <span class="rv-c ok" title="Correct">&#10003; <b id="rvCorrect">0</b></span>
+        <span class="rv-c bad" title="Incorrect">&#10007; <b id="rvIncorrect">0</b></span>
+        <span class="rv-c rm" title="Should not be said">&#8856; <b id="rvRemove">0</b></span>
+        <span class="rv-c add" title="Added by you">+ <b id="rvAdded">0</b></span>
+        <span class="rv-c un" title="Spoken, not yet reviewed"><b id="rvUnrev">&ndash;</b> unreviewed</span>
+      </div>
+      <div class="rv-bar">
+        <button type="button" id="rvAddBtn" class="primary" disabled title="Add a phrase the system missed (a)">+ Add speech at playhead</button>
+        <span class="rv-transport">
+          <button type="button" id="rvPrev" aria-label="Previous frame">&#9664;&#9664;</button>
+          <button type="button" id="rvPlay" aria-label="Play / pause">&#9199;</button>
+          <button type="button" id="rvNext" aria-label="Next frame">&#9654;&#9654;</button>
+        </span>
+        <a id="rvExport" href="#" download="speech-reviews.json" hidden>Export</a>
+      </div>
+      <div id="rvAddForm" class="rv-addform" hidden>
+        <div class="row">
+          <input id="rvAddT" class="mono" inputmode="decimal" aria-label="Time" autocomplete="off">
+          <button type="button" id="rvAddHead" title="Set to playhead">&#10226; playhead</button>
+          <select id="rvAddRole" aria-label="Role"></select>
+        </div>
+        <input id="rvAddText" maxlength="300" placeholder="What should have been said, e.g. bench, 1 o'clock, 4 steps" autocomplete="off">
+        <textarea id="rvAddNote" rows="2" maxlength="2000" placeholder="Note (optional)"></textarea>
+        <div class="row"><button type="button" id="rvAddSubmit" class="primary">Add</button><button type="button" id="rvAddCancel">Cancel</button></div>
+      </div>
+    </div>
+    <p id="rvEmpty" class="hint"></p>
+    <ol id="rvList" class="rv-list"></ol>
+    <details id="rvOther" hidden>
+      <summary id="rvOtherSum">Other versions (0)</summary>
+      <ul id="rvOtherList" class="rv-list"></ul>
+    </details>
+  </aside>
 </div>
 
 <div id="toasts" aria-live="polite"></div>

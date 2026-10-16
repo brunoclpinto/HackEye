@@ -14,10 +14,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
-from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.responses import FileResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from lab import analysis, recordings  # noqa: E402
+from lab import analysis, recordings, reviews  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -181,6 +181,51 @@ def get_mask(run_id: str, index: int) -> FileResponse:
     if index < 0 or not path.exists():
         raise HTTPException(404, "No such frame")
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+# --- speech reviews (§10) ----------------------------------------------------
+
+def _review_call(fn, *args):
+    try:
+        return fn(*args)
+    except reviews.ReviewError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
+# (declared before the {name}.json run route; no path clash, kept with its peers)
+@app.get("/api/reviews/export")
+def export_reviews(recording: str | None = None) -> dict:
+    if recording is not None:
+        _recording(recording)
+        ids = [recording]
+    else:
+        ids = reviews.recordings_with_reviews()
+    return reviews.export(ids)
+
+
+@app.get("/api/recordings/{rec_id}/reviews")
+def list_reviews(rec_id: str) -> dict:
+    _recording(rec_id)
+    return reviews.list_annotations(rec_id)
+
+
+@app.post("/api/recordings/{rec_id}/reviews", status_code=201)
+def post_review(rec_id: str, body: dict) -> dict:
+    rec = _recording(rec_id)
+    return _review_call(reviews.create, rec_id, rec["duration"], body)
+
+
+@app.put("/api/recordings/{rec_id}/reviews/{ann_id}")
+def put_review(rec_id: str, ann_id: str, body: dict) -> dict:
+    rec = _recording(rec_id)
+    return _review_call(reviews.update, rec_id, rec["duration"], ann_id, body)
+
+
+@app.delete("/api/recordings/{rec_id}/reviews/{ann_id}", status_code=204)
+def delete_review(rec_id: str, ann_id: str) -> Response:
+    _recording(rec_id)
+    _review_call(reviews.delete, rec_id, ann_id)
+    return Response(status_code=204)
 
 
 # --- frontend ---------------------------------------------------------------
