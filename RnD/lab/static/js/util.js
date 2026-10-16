@@ -2,15 +2,25 @@
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
-// Urgency colours (spec). "none" is only used for dim UI hints.
-export const URGENCY_COLOR = {
-  caution: "#f5c518",
-  warning: "#ff8c1a",
-  imminent: "#ff2d2d",
-  none: "#8a8f98",
+// Role colours (CONTRACTS §9). Roles of items: danger | feature | context | none;
+// speech events additionally: surface | final.
+export const ROLE_COLOR = {
+  danger: "#ff8c1a",
+  final: "#ff2d2d",
+  feature: "#22d3ee",
+  context: "#c9ced6",
+  surface: "#a78bfa",
+  none: "#6b7280",
 };
-export const URGENCY_RANK = { none: 0, caution: 1, warning: 2, imminent: 3 };
-export const CORRIDOR_COLOR = "#22d3ee";
+export const ROLES = ["context", "surface", "feature", "danger", "final"];  // filter chips, in this order
+// Tone events carry urgency danger|final; used to weight the timeline's beep density row.
+export const URGENCY_RANK = { none: 0, danger: 1, final: 2 };
+// Runs from v26.1.0 have no role fields; their urgency scale is mapped for display only.
+const LEGACY_COLOR = { caution: "#f5c518", warning: "#ff8c1a", imminent: "#ff2d2d" };
+
+/** Role of a speech event; v26.1.0 events (no role) count as danger. */
+export const eventRole = (e) => e.role ?? "danger";
+export const eventColor = (e) => ROLE_COLOR[e.role] ?? LEGACY_COLOR[e.urgency] ?? ROLE_COLOR.none;
 
 /** Parse "ss", "mm:ss" or "hh:mm:ss" (fractions allowed). Returns NaN if invalid. */
 export function parseTime(str) {

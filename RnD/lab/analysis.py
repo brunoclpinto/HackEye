@@ -40,6 +40,7 @@ from lab import recordings  # noqa: E402
 
 LAB_DIR = recordings.LAB_DIR
 GRID_W = 240
+ANALYSIS_VERSION = 2  # 2: ego-motion track (motion.npz); v26.1.0 runs are implicitly 1
 PROFILES = ["default", "production", "half", "quarter"]
 IDLE_SECONDS = float(os.environ.get("HACKEYE_LAB_IDLE_SECONDS", "300"))
 RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
@@ -165,7 +166,8 @@ def _normalise_request(req: dict) -> dict:
 
 def _run_id(request: dict) -> str:
     mtime = Path(request["model"]).stat().st_mtime
-    canon = json.dumps(request, sort_keys=True, separators=(",", ":")) + f"|{mtime}"
+    canon = json.dumps({**request, "analysisVersion": ANALYSIS_VERSION}, sort_keys=True,
+                       separators=(",", ":")) + f"|{mtime}"
     return hashlib.sha1(canon.encode()).hexdigest()[:12]
 
 
@@ -187,9 +189,9 @@ def submit_run(req: dict) -> dict:
             return existing
 
     doc = {
-        "id": run_id, "request": request, "status": "queued", "progress": 0.0, "error": None,
+        "id": run_id, "request": request, "analysisVersion": ANALYSIS_VERSION, "status": "queued", "progress": 0.0, "error": None,
         "createdAt": _now(), "finishedAt": None,
-        "frameCount": 0, "gridW": GRID_W, "gridH": 0, "srcW": 0, "srcH": 0,
+        "frameCount": 0, "motionFrames": 0, "gridW": GRID_W, "gridH": 0, "srcW": 0, "srcH": 0,
         "inputSpec": None, "modelName": Path(request["model"]).name, "classNames": [],
         "msPerFrame": None, "collisionVersion": None,
     }
@@ -276,13 +278,23 @@ def _finish(run_id: str, **fields) -> None:
         _active.pop(run_id, None)
 
 
+MOTION_W, MOTION_H = 160, 90
+
+
 class _FrameReader:
     """Sequential reader over a recording's chapters, addressed by recording
-    time. Seeks once per chapter (or after a long gap), then grab()s forward."""
+    time. Seeks once to the first sampled frame, then decodes forward.
 
-    MAX_GRAB_GAP = 240  # frames; beyond this a seek is cheaper than decoding through
+    With `motion_end` set it also builds the ego-motion track (CONTRACTS §5):
+    every source frame in [first sampled frame, motion_end) is retrieve()d,
+    reduced to 160x90 gray and phase-correlated against its predecessor. The
+    track continues across chapter boundaries (the rest of a chapter is
+    drained before the next one is opened, and decoding of the next starts at
+    its frame 0), so no long-gap seek is used in that mode."""
 
-    def __init__(self, rec: dict) -> None:
+    MAX_GRAB_GAP = 240  # frames; beyond this a seek is cheaper than decoding through (no-motion mode only)
+
+    def __init__(self, rec: dict, motion_end: float | None = None) -> None:
         self.rec = rec
         self.fps = rec["fps"]
         self.chapters = rec["chapters"]
@@ -291,6 +303,13 @@ class _FrameReader:
         self.pos = 0
         self.last: tuple[int, int, np.ndarray] | None = None  # (chapter, frame, bgr)
         self.seek_seconds = 0.0
+        self.motion_end = motion_end
+        self.motion_seconds = 0.0  # time spent on gray/resize/phaseCorrelate
+        self._m_t: list[float] = []
+        self._m_dx: list[float] = []
+        self._m_dy: list[float] = []
+        self._m_prev: np.ndarray | None = None
+        self._m_win = cv2.createHanningWindow((MOTION_W, MOTION_H), cv2.CV_32F)
 
     def _locate(self, t: float) -> tuple[int, int]:
         """Recording time -> (chapter index, chapter-local frame index)."""
@@ -299,6 +318,36 @@ class _FrameReader:
             if t < ch["start"] + ch["duration"] and f < ch["frames"]:
                 return i, max(0, f)
         return len(self.chapters), 0
+
+    def _motion(self, bgr: np.ndarray, frame_t: float) -> None:
+        if self.motion_end is None or frame_t >= self.motion_end:
+            return
+        t0 = time.perf_counter()
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        small = cv2.resize(gray, (MOTION_W, MOTION_H), interpolation=cv2.INTER_AREA).astype(np.float32)
+        dx = dy = 0.0
+        if self._m_prev is not None:
+            (sx, sy), _ = cv2.phaseCorrelate(self._m_prev, small, self._m_win)
+            dx, dy = sx / MOTION_W, sy / MOTION_H
+        self._m_prev = small
+        self._m_t.append(frame_t)
+        self._m_dx.append(dx)
+        self._m_dy.append(dy)
+        self.motion_seconds += time.perf_counter() - t0
+
+    def _step_skipped(self) -> bool:
+        """Decode the frame at self.pos without returning it (motion only)."""
+        ch = self.chapters[self.ch]
+        frame_t = ch["start"] + self.pos / self.fps
+        if self.motion_end is None or frame_t >= self.motion_end:
+            return self.cap.grab()
+        if not self.cap.grab():
+            return False
+        ok, bgr = self.cap.retrieve()
+        if not ok:
+            return False
+        self._motion(bgr, frame_t)
+        return True
 
     def read(self, t: float) -> tuple[float, np.ndarray] | None:
         """Frame nearest to recording time t as (its exact time, BGR), or None at the end."""
@@ -309,20 +358,27 @@ class _FrameReader:
         frame_t = ch["start"] + f / self.fps
         if self.last and self.last[:2] == (i, f):
             return frame_t, self.last[2]
-        if i != self.ch or f < self.pos or f - self.pos > self.MAX_GRAB_GAP:
+        tracking = self.motion_end is not None
+        if i != self.ch:
+            if tracking and self.cap is not None:  # finish the old chapter's motion frames
+                while self.pos < self.chapters[self.ch]["frames"] and self._step_skipped():
+                    self.pos += 1
+            self._seek(i, f, from_start=tracking and self.ch != -1)
+        elif f < self.pos or (not tracking and f - self.pos > self.MAX_GRAB_GAP):
             self._seek(i, f)
         while self.pos < f:
-            if not self.cap.grab():
+            if not self._step_skipped():
                 return None
             self.pos += 1
         ok, bgr = self.cap.read()
         if not ok:
             return None
         self.pos += 1
+        self._motion(bgr, frame_t)
         self.last = (i, f, bgr)
         return frame_t, bgr
 
-    def _seek(self, i: int, f: int) -> None:
+    def _seek(self, i: int, f: int, from_start: bool = False) -> None:
         t0 = time.perf_counter()
         if i != self.ch:
             if self.cap is not None:
@@ -331,10 +387,29 @@ class _FrameReader:
             if not self.cap.isOpened():
                 raise RuntimeError(f"Cannot open {self.chapters[i]['file']}")
             self.ch, self.pos = i, 0
-        if f != self.pos:
+        if f != self.pos and not from_start:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, f)
             self.pos = f
         self.seek_seconds += time.perf_counter() - t0
+
+    def finish_motion(self) -> None:
+        """Process the remaining source frames up to motion_end (after the last sampled frame)."""
+        if self.motion_end is None or self.cap is None:
+            return
+        while True:
+            ch = self.chapters[self.ch]
+            if self.pos >= ch["frames"]:
+                if self.ch + 1 >= len(self.chapters):
+                    return
+                self._seek(self.ch + 1, 0)
+                continue
+            if ch["start"] + self.pos / self.fps >= self.motion_end or not self._step_skipped():
+                return
+            self.pos += 1
+
+    def motion_track(self) -> dict[str, np.ndarray]:
+        return {"t": np.array(self._m_t, np.float64), "dx": np.array(self._m_dx, np.float32),
+                "dy": np.array(self._m_dy, np.float32)}
 
     def close(self) -> None:
         if self.cap is not None:
@@ -379,7 +454,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                 inputSpec={"w": spec.dst_w, "h": spec.dst_h, "description": spec.description},
                 classNames=cache.class_names)
 
-    reader = _FrameReader(rec)
+    reader = _FrameReader(rec, motion_end=end)
     grids: list[np.ndarray] = []
     times: list[float] = []
     t_start = time.perf_counter()
@@ -410,6 +485,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
             if i == 0:
                 _log(f"run {run_id}: first frame ready, seek {reader.seek_seconds:.2f}s")
             _update_run(run_id, persist=False, progress=(k + 1) / n_target)
+        reader.finish_motion()
     finally:
         reader.close()
 
@@ -418,7 +494,12 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     elapsed = time.perf_counter() - t_start
     np.savez_compressed(out / "grids.npz", grids=np.stack(grids), t=np.array(times, np.float64),
                         index=np.arange(len(grids), dtype=np.int32))
-    _update_run(run_id, frameCount=len(grids), msPerFrame=round(elapsed * 1000 / len(grids), 1),
+    motion = reader.motion_track()
+    np.savez_compressed(out / "motion.npz", **motion)
+    n_motion = len(motion["t"])
+    _log(f"run {run_id}: motion {n_motion} source frames, {reader.motion_seconds * 1000 / max(n_motion, 1):.2f} ms/frame")
+    _update_run(run_id, analysisVersion=ANALYSIS_VERSION, motionFrames=n_motion,
+                frameCount=len(grids), msPerFrame=round(elapsed * 1000 / len(grids), 1),
                 seekSeconds=round(reader.seek_seconds, 3), progress=1.0)
     _log(f"run {run_id}: {len(grids)} frames in {elapsed:.1f}s")
 
@@ -446,13 +527,21 @@ def collision_pass(run_id: str) -> dict | None:
     doc = get_run(run_id)
     config = collision.load_config()
     stored = recordings.get_settings(doc["request"]["recording"], config["defaultMount"])
-    settings = collision.resolve_settings(config, stored["mount"], stored["hfovDeg"], stored["corridor"])
-    with np.load(run_dir(run_id) / "grids.npz") as z:
-        grids, times = z["grids"], z["t"]
-    hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings)
-    hazards.setdefault("settings", {})["mount"] = stored["mount"]
+    settings = collision.resolve_settings(config, stored["mount"], stored["hfovDeg"],
+                                          stored["cameraHeightM"], stored["stepLengthM"])
     out = run_dir(run_id)
+    with np.load(out / "grids.npz") as z:
+        grids, times = z["grids"], z["t"]
+    motion = None  # v26.1.0 runs have no motion track
+    if (out / "motion.npz").exists():
+        with np.load(out / "motion.npz") as z:
+            motion = {"t": z["t"], "dx": z["dx"], "dy": z["dy"]}
+    t0 = time.perf_counter()
+    hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings, motion)
+    elapsed = round(time.perf_counter() - t0, 3)
+    hazards.setdefault("settings", {})["mount"] = stored["mount"]
     _write_json(out / "hazards.json", hazards)
     _write_json(out / "events.json", events)
     _update_run(run_id, collisionVersion=config["version"])
-    return {"version": config["version"]}
+    _log(f"run {run_id}: collision pass {elapsed:.2f}s")
+    return {"version": config["version"], "elapsedSeconds": elapsed}

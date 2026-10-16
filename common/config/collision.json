@@ -1,16 +1,45 @@
 {
-  "version": "v26.1.0",
-  "obstacleClasses": {
-    "static": ["pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign",
-               "sidewalk-obstacle", "barrier", "barrier fence", "barrier guard-rail",
-               "divider", "barrier wall", "nature vegetation"],
-    "moving": ["person", "rider", "vehicle", "animal"]
+  "version": "v26.1.1",
+  "defaultMount": "chest",
+  "defaultHfovDeg": 118,
+  "mountPresets": {
+    "chest":    {"label": "Chest",         "horizon": 0.45, "cameraHeightM": 1.30},
+    "head":     {"label": "Head / helmet", "horizon": 0.40, "cameraHeightM": 1.65},
+    "handheld": {"label": "Handheld",      "horizon": 0.50, "cameraHeightM": 1.10}
+  },
+  "geometry": {
+    "defaultStepLengthM": 0.70,
+    "laneHalfWidthM": 0.60,
+    "maxRangeM": 30.0,
+    "horizonEma": 0.05,
+    "horizonMaxStep": 0.004,
+    "horizonValidRange": [0.25, 0.75],
+    "minRegionRows": 12
+  },
+  "surfaces": {
+    "groups": {
+      "pedestrian": {"label": "sidewalk",  "classes": ["flat sidewalk", "flat pedestrian-area", "flat traffic-island"]},
+      "bikeLane":   {"label": "bike lane", "classes": ["flat bike-lane"]},
+      "road":       {"label": "road",      "classes": ["flat road", "flat road-shoulder", "flat service-lane", "flat driveway", "parking"]},
+      "rail":       {"label": "rail track", "classes": ["flat rail-track"]}
+    },
+    "inside": ["crosswalk", "curb", "lane-line-dashed", "continuous solid", "marking-other", "discrete stop-line",
+               "symbol bicycle", "utility-cover", "object pothole", "void ground"],
+    "seedBox": [0.40, 0.90, 0.60, 1.00],
+    "debounceSeconds": 3.0,
+    "announceGroups": ["road", "rail"]
+  },
+  "classes": {
+    "static":  ["pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign", "sidewalk-obstacle",
+                "barrier", "barrier fence", "barrier guard-rail", "divider", "barrier wall", "nature vegetation", "building"],
+    "moving":  ["person", "rider", "vehicle", "animal"],
+    "feature": ["curb", "crosswalk", "object pothole"]
   },
   "spokenLabels": {
     "pole": "pole",
     "sign": "sign",
     "traffic-light": "traffic light",
-    "traffic-light pedestrians": "traffic light",
+    "traffic-light pedestrians": "pedestrian light",
     "traffic-sign": "traffic sign",
     "sidewalk-obstacle": "obstacle",
     "barrier": "barrier",
@@ -19,28 +48,54 @@
     "divider": "divider",
     "barrier wall": "wall",
     "nature vegetation": "vegetation",
+    "building": "building",
     "person": "person",
     "rider": "cyclist",
     "vehicle": "vehicle",
-    "animal": "animal"
+    "animal": "animal",
+    "curb": "curb",
+    "crosswalk": "crosswalk",
+    "object pothole": "pothole",
+    "utility-cover": "manhole"
   },
-  "defaultMount": "chest",
-  "defaultHfovDeg": 118,
-  "mountPresets": {
-    "chest":    {"label": "Chest",          "corridor": {"horizon": 0.45, "bottomY": 1.0, "topWidth": 0.12, "bottomWidth": 0.60, "centerX": 0.5}},
-    "head":     {"label": "Head / helmet",  "corridor": {"horizon": 0.40, "bottomY": 1.0, "topWidth": 0.10, "bottomWidth": 0.45, "centerX": 0.5}},
-    "handheld": {"label": "Handheld",       "corridor": {"horizon": 0.50, "bottomY": 1.0, "topWidth": 0.14, "bottomWidth": 0.70, "centerX": 0.5}}
-  },
+  "contextSpeak": ["wall", "fence", "guard rail", "barrier", "parked car"],
+  "parkedLabels": {"vehicle": "parked car"},
   "minComponentFraction": 0.0004,
-  "urgency": {
-    "static": {"caution": {"proximity": 0.35, "ttc": null}, "warning": {"proximity": 0.60, "ttc": 3.0}, "imminent": {"proximity": 0.85, "ttc": 1.5}},
-    "moving": {"caution": {"proximity": 0.25, "ttc": null}, "warning": {"proximity": 0.50, "ttc": 4.0}, "imminent": {"proximity": 0.75, "ttc": 2.0}}
+  "roles": {
+    "dangerSteps": 10, "finalSteps": 3,
+    "featureSteps": 10,
+    "contextMaxDistanceM": 25.0,
+    "contextMinAreaFraction": 0.003,
+    "featureMinLaneCover": 0.5,
+    "alongPathRatio": 0.5,
+    "minObstacleAreaM2": 0.08,
+    "boundaryMarginPx": 2,
+    "stationaryMps": 0.5,
+    "approachingMps": 0.5
   },
-  "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "approachWindowSeconds": 1.5},
-  "speech": {"template": "{label}, {clock} o'clock", "trackCooldownSeconds": 4.0, "globalMinGapSeconds": 1.2},
+  "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
+               "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2,
+               "motionMinRowsBelowHorizon": 8, "motionMinSeconds": 0.75},
+  "ego": {
+    "cadenceWindowSeconds": 4.0, "cadenceBandHz": [0.8, 3.5], "cadenceMinPeakRatio": 3.0,
+    "minStepHz": 1.4, "harmonicMinRatio": 0.25,
+    "speedMinTracks": 1, "speedMaxMps": 6.0, "speedEma": 0.3, "stepLengthRangeM": [0.3, 1.8]
+  },
+  "contextMemory": {"forgetAfterSeconds": 30.0},
+  "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
+  "speech": {
+    "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0,
+    "templates": {
+      "context":  "{label} at {clock} o'clock",
+      "surface":  "{label}",
+      "feature":  "{label} in {steps} steps",
+      "danger":   "{label}, {clock} o'clock, {steps} steps",
+      "approach": "{label} approaching, {clock} o'clock",
+      "final":    "{label}, {steps} steps"
+    }
+  },
   "tones": {
-    "intervalSeconds": {"caution": 1.0, "warning": 0.5, "imminent": 0.2},
-    "frequencyHz":     {"caution": 660, "warning": 880, "imminent": 1100},
+    "bySteps": [[10, 1.0, 660], [6, 0.6, 780], [3, 0.3, 940], [1, 0.15, 1100]],
     "durationSeconds": 0.08
   }
 }

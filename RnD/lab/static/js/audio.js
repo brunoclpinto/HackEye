@@ -155,14 +155,18 @@ export class AudioEngine {
     const a = prev - shift, b = cur - shift;
     let hit = null;
     for (let i = firstAtOrAfter(this.speech, a); i < this.speech.length && this.speech[i].t <= b; i++) {
-      if (this.speech[i].t > a) hit = this.speech[i]; // keep the latest one in the window
+      const e = this.speech[i];
+      if (e.t <= a) continue;
+      // A final call wins the window; otherwise keep the latest phrase.
+      if (!hit || e.role === "final" || hit.role !== "final") hit = e;
     }
-    if (hit) this.speak(hit.text, rate);
+    if (hit) this.speak(hit.text, rate, hit.role === "final");
   }
 
-  speak(text, rate) {
+  /** Final calls pre-empt whatever is being spoken; other phrases queue behind it. */
+  speak(text, rate, final = false) {
     if (!("speechSynthesis" in window)) return;
-    speechSynthesis.cancel(); // newest warning pre-empts whatever is still being spoken
+    if (final) speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.rate = clamp(rate, 0.5, 2);
     u.volume = this.volume;

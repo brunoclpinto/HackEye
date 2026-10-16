@@ -277,7 +277,8 @@ def _settings_path(rec_id: str) -> Path:
 
 def get_settings(rec_id: str, default_mount: str) -> dict:
     """Stored settings, or the defaults when nothing was saved."""
-    defaults = {"mount": default_mount, "hfovDeg": None, "corridor": None}
+    defaults = {"mount": default_mount, "hfovDeg": None,
+                "cameraHeightM": None, "stepLengthM": None}
     try:
         stored = json.loads(_settings_path(rec_id).read_text())
     except (OSError, ValueError):

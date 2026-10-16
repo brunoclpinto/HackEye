@@ -1,5 +1,5 @@
 // HackEye Lab frontend: state + wiring. Heavy lifting lives in js/*.js.
-import { $, parseTime, fmtTime, toast, clamp, lastAtOrBefore, URGENCY_COLOR } from "./js/util.js";
+import { $, parseTime, fmtTime, toast, clamp, lastAtOrBefore, ROLES, ROLE_COLOR, eventRole, eventColor } from "./js/util.js";
 import { api } from "./js/api.js";
 import { Overlay } from "./js/overlay.js";
 import { AudioEngine } from "./js/audio.js";
@@ -10,11 +10,12 @@ const video = $("#video");
 
 const S = {
   recs: [], rec: null, settings: null, config: null, models: null,
-  runs: [], run: null, hazards: null, events: [], speech: [],
+  runs: [], run: null, hazards: null, events: [], speech: [], shown: [], roles: new Set(ROLES),
   pendingSeek: null, rangeTouched: false, runPoll: null, recPoll: null, loadedVideoRec: null,
 };
 
 const overlay = new Overlay(video, $("#overlay"));
+overlay.hudEl = $("#hud");
 const audio = new AudioEngine(video);
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
 
@@ -151,6 +152,19 @@ function fillMountSelect() {
   for (const [k, v] of Object.entries(presets)) sel.add(new Option(v.label ?? k, k));
   if (S.config?.defaultMount) sel.value = S.config.defaultMount;
   if (S.config?.defaultHfovDeg) $("#hfovInput").placeholder = `${S.config.defaultHfovDeg} (default)`;
+  updateSettingPlaceholders();
+}
+
+/** Placeholders show what an empty field resolves to; camera height follows the selected mount. */
+function updateSettingPlaceholders() {
+  const r = S.settings?.resolved;
+  const preset = S.config?.mountPresets?.[$("#mountSel").value];
+  const h = preset?.cameraHeightM ?? r?.cameraHeightM;
+  $("#camHeightInput").placeholder = h != null ? `${h} (preset)` : "preset";
+  const dflt = S.config?.geometry?.defaultStepLengthM;
+  $("#stepLenInput").placeholder = dflt != null ? `auto (default ${dflt})` : "auto";
+  const hf = r?.hfovDeg ?? S.config?.defaultHfovDeg;
+  if (hf != null) $("#hfovInput").placeholder = `${hf} (default)`;
 }
 
 async function loadSettings() {
@@ -162,17 +176,17 @@ function applySettingsToForm() {
   if (!s) return;
   $("#mountSel").value = s.mount;
   $("#hfovInput").value = s.hfovDeg ?? "";
-  if (s.resolved?.hfovDeg) $("#hfovInput").placeholder = `${s.resolved.hfovDeg} (default)`;
+  $("#camHeightInput").value = s.cameraHeightM ?? "";
+  $("#stepLenInput").value = s.stepLengthM ?? "";
+  updateSettingPlaceholders();
 }
 function settingsFromForm() {
-  const prev = S.settings ?? {};
-  const mount = $("#mountSel").value;
-  const hfovRaw = $("#hfovInput").value.trim();
+  const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
   return {
-    mount,
-    hfovDeg: hfovRaw === "" ? null : Number(hfovRaw),
-    // A custom corridor belongs to the old mount; switching mount falls back to the preset.
-    corridor: mount === prev.mount ? (prev.corridor ?? null) : null,
+    mount: $("#mountSel").value,
+    hfovDeg: num("#hfovInput"),
+    cameraHeightM: num("#camHeightInput"),
+    stepLengthM: num("#stepLenInput"),
   };
 }
 async function putSettings() {
@@ -190,7 +204,9 @@ async function rerunCollision() {
     const r = await api(`/api/runs/${S.run.id}/collision`, { method: "POST" });
     await loadRunData(S.run, r);
     const ms = performance.now() - t0;
-    info.textContent = `Collision ${r.version ?? ""} re-run in ${ms < 1000 ? Math.round(ms) + " ms" : (ms / 1000).toFixed(2) + " s"} · ${S.events.filter((e) => e.type === "speech").length} speech events`;
+    const fmt = (v) => (v < 1000 ? Math.round(v) + " ms" : (v / 1000).toFixed(2) + " s");
+    const compute = r.elapsedSeconds != null ? `${fmt(r.elapsedSeconds * 1000)} compute, ` : "";
+    info.textContent = `Collision ${r.version ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events`;
     api(`/api/runs/${S.run.id}`, { quiet: true }).then((run) => { S.run = run; applyRunMeta(); }).catch(() => {});
   } catch { info.textContent = "Failed (see error)"; }
   finally { btn.disabled = !S.run; }
@@ -275,7 +291,7 @@ function watchRun(runId) {
 }
 
 function unloadRun() {
-  S.run = null; S.hazards = null; S.events = []; S.speech = [];
+  S.run = null; S.hazards = null; S.events = []; S.speech = []; S.shown = [];
   overlay.setRun(null, null);
   audio.setEvents([]);
   timeline.set(null, []);
@@ -291,6 +307,7 @@ async function loadRunData(run, links) {
   S.hazards = hazards;
   S.events = events.events ?? [];
   S.speech = S.events.filter((e) => e.type === "speech");
+  S.shown = S.speech.filter((e) => S.roles.has(eventRole(e)));
   overlay.setRun(run, hazards);
   audio.setEvents(S.events);
   timeline.set(run, S.events);
@@ -300,7 +317,7 @@ async function loadRunData(run, links) {
 function applyRunMeta() {
   const r = S.run;
   if (!r) return;
-  $("#runBadge").textContent = `run ${r.id} · ${runLabel(r)} · ${r.frameCount} frames · ${r.modelName ?? ""}${r.msPerFrame ? ` · ${Math.round(r.msPerFrame)} ms/frame` : ""} · collision ${r.collisionVersion ?? "?"}`;
+  $("#runBadge").textContent = `run ${r.id} · ${runLabel(r)} · ${r.frameCount} frames · ${r.modelName ?? ""}${r.msPerFrame ? ` · ${Math.round(r.msPerFrame)} ms/frame` : ""} · collision ${r.collisionVersion ?? "?"}${r.motionFrames ? "" : " · no motion track"}`;
 }
 
 async function loadRun(runId, { seek = true, t } = {}) {
@@ -339,15 +356,17 @@ function setFromHead(which) {
 function renderEvents() {
   const ol = $("#eventList");
   ol.replaceChildren();
-  $("#eventCount").textContent = S.speech.length ? `(${S.speech.length})` : "";
-  S.speech.forEach((e, i) => {
+  S.shown = S.speech.filter((e) => S.roles.has(eventRole(e)));
+  $("#eventCount").textContent = S.speech.length
+    ? `(${S.shown.length === S.speech.length ? S.speech.length : `${S.shown.length} of ${S.speech.length}`})` : "";
+  S.shown.forEach((e, i) => {
     const li = document.createElement("li");
     li.dataset.i = i;
-    const c = URGENCY_COLOR[e.urgency] ?? URGENCY_COLOR.none;
+    const c = eventColor(e);
     li.innerHTML = '<span class="mono"></span><span></span><span class="u"></span>';
     li.children[0].textContent = fmtTime(e.t, 1);
     li.children[1].textContent = e.text;
-    li.children[2].textContent = e.urgency;
+    li.children[2].textContent = e.role ?? e.urgency;
     li.children[2].style.color = c;
     li.style.boxShadow = `inset 4px 0 0 ${c}`;
     li.addEventListener("click", () => { video.pause(); seekTo(e.t + 0.001); });
@@ -356,9 +375,28 @@ function renderEvents() {
   curEventIdx = -2;
 }
 
+function renderRoleChips() {
+  const host = $("#roleChips");
+  for (const role of ROLES) {
+    const lab = document.createElement("label");
+    lab.className = "chip on";
+    lab.style.setProperty("--c", ROLE_COLOR[role]);
+    lab.innerHTML = '<input type="checkbox" checked><i></i><span></span>';
+    lab.lastChild.textContent = role;
+    lab.firstChild.addEventListener("change", (e) => {
+      if (e.target.checked) S.roles.add(role); else S.roles.delete(role);
+      lab.classList.toggle("on", e.target.checked);
+      timeline.setRoles(S.roles);
+      renderEvents();
+      highlightEvent(video.currentTime);
+    });
+    host.append(lab);
+  }
+}
+
 let curEventIdx = -2;
 function highlightEvent(t) {
-  const i = lastAtOrBefore(S.speech, t);
+  const i = lastAtOrBefore(S.shown, t);
   if (i === curEventIdx) return;
   const ol = $("#eventList");
   ol.children[curEventIdx]?.classList.remove("cur");
@@ -468,7 +506,10 @@ function wire() {
 
   // overlay layers
   const layer = (id, key) => $(id).addEventListener("change", (e) => { overlay.layers[key] = e.target.checked; overlay.redraw(); });
-  layer("#maskChk", "mask"); layer("#corridorChk", "corridor"); layer("#hazardChk", "hazards");
+  layer("#maskChk", "mask"); layer("#regionChk", "region"); layer("#laneChk", "lane");
+  layer("#horizonChk", "horizon"); layer("#hazardChk", "hazards"); layer("#showAllChk", "showAll");
+  $("#mountSel").addEventListener("change", updateSettingPlaceholders);
+  renderRoleChips();
   $("#maskOpacity").addEventListener("input", (e) => { overlay.maskOpacity = Number(e.target.value); overlay.redraw(); });
 
   // run panel

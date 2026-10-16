@@ -1,7 +1,7 @@
 :root {
   --bg: #0e1013; --panel: #171a1f; --panel2: #20242b; --border: #2c313a;
   --fg: #e8eaed; --muted: #9aa0aa; --accent: #22d3ee; --accent-fg: #04222a;
-  --caution: #f5c518; --warning: #ff8c1a; --imminent: #ff2d2d;
+  --imminent: #ff2d2d; --caution: #f5c518;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -102,3 +102,15 @@ input[type=range] { max-width: 140px; }
   .events li { grid-template-columns: 56px 1fr 64px; }
   input, select { font-size: 16px; } /* prevents iOS zoom-on-focus */
 }
+
+#hud { position: absolute; top: 8px; left: 8px; padding: 5px 8px; background: rgba(0,0,0,0.6); color: #fff;
+  border-radius: 5px; font-size: 12px; line-height: 1.35; white-space: pre; pointer-events: none; }
+#hud[hidden] { display: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px 2px 8px; border: 1px solid var(--border);
+  border-radius: 14px; cursor: pointer; font-size: 12px; user-select: none; }
+.chip input { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
+.chip i { width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+.chip:not(.on) { opacity: .45; }
+.chip:not(.on) i { background: transparent; border: 1px solid var(--c); }
+.chip:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }

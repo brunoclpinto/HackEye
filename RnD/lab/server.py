@@ -72,40 +72,40 @@ def get_proxy(name: str) -> FileResponse:
 
 # --- settings ---------------------------------------------------------------
 
-_CORRIDOR_KEYS = ("horizon", "bottomY", "topWidth", "bottomWidth", "centerX")
+def _opt_number(body: dict, key: str, lo: float, hi: float, hi_inclusive: bool = True):
+    v = body.get(key)
+    if v is None:
+        return None
+    ok = not isinstance(v, bool) and isinstance(v, (int, float)) and lo <= v and (v <= hi if hi_inclusive else v < hi)
+    if not ok:
+        bracket = "]" if hi_inclusive else ")"
+        raise HTTPException(422, f"{key} must be null or a number in [{lo:g}, {hi:g}{bracket}")
+    return v
 
 
 def _validated_settings(body: dict, config: dict) -> dict:
+    """Validate a settings body (§4). A legacy `corridor` key is ignored."""
     mount = body.get("mount") or config["defaultMount"]
     if mount not in config["mountPresets"]:
         raise HTTPException(422, f"Unknown mount {mount!r}; expected one of {list(config['mountPresets'])}")
-    hfov = body.get("hfovDeg")
-    if hfov is not None:
-        if isinstance(hfov, bool) or not isinstance(hfov, (int, float)) or not 10 <= hfov < 180:
-            raise HTTPException(422, "hfovDeg must be null or a number in [10, 180)")
-    corridor = body.get("corridor")
-    if corridor is not None:
-        if not isinstance(corridor, dict) or set(corridor) != set(_CORRIDOR_KEYS):
-            raise HTTPException(422, f"corridor must be null or an object with keys {list(_CORRIDOR_KEYS)}")
-        for k, v in corridor.items():
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
-                raise HTTPException(422, f"corridor.{k} must be a number in [0, 1]")
-        if corridor["bottomY"] <= corridor["horizon"]:
-            raise HTTPException(422, "corridor.bottomY must be greater than corridor.horizon")
-    return {"mount": mount, "hfovDeg": hfov, "corridor": corridor}
+    return {"mount": mount,
+            "hfovDeg": _opt_number(body, "hfovDeg", 10, 180, hi_inclusive=False),
+            "cameraHeightM": _opt_number(body, "cameraHeightM", 0.5, 2.5),
+            "stepLengthM": _opt_number(body, "stepLengthM", 0.3, 2.0)}
 
 
 def _settings_response(rec_id: str) -> dict:
     collision = _collision()
     config = collision.load_config()
     stored = recordings.get_settings(rec_id, config["defaultMount"])
-    resolved = collision.resolve_settings(config, stored["mount"], stored["hfovDeg"], stored["corridor"])
-    return {**stored, "resolved": {"corridor": _corridor_json(resolved.corridor), "hfovDeg": resolved.hfov_deg}}
-
-
-def _corridor_json(c) -> dict:
-    return {"horizon": c.horizon, "bottomY": c.bottom_y, "topWidth": c.top_width,
-            "bottomWidth": c.bottom_width, "centerX": c.center_x}
+    preset = config["mountPresets"][stored["mount"]]
+    resolved = {
+        "hfovDeg": stored["hfovDeg"] if stored["hfovDeg"] is not None else config["defaultHfovDeg"],
+        "cameraHeightM": stored["cameraHeightM"] if stored["cameraHeightM"] is not None else preset.get("cameraHeightM"),
+        "stepLengthM": stored["stepLengthM"],  # null = auto
+        "horizon": preset.get("horizon"),
+    }
+    return {**stored, "resolved": resolved}
 
 
 @app.get("/api/recordings/{rec_id}/settings")
@@ -159,7 +159,7 @@ def rerun_collision(run_id: str) -> dict:
         raise HTTPException(409, f"Run is {run['status']}, not done")
     _collision()
     result = analysis.collision_pass(run_id)
-    return {"version": result["version"],
+    return {"version": result["version"], "elapsedSeconds": result["elapsedSeconds"],
             "hazards": f"/api/runs/{run_id}/hazards.json", "events": f"/api/runs/{run_id}/events.json"}
 
 

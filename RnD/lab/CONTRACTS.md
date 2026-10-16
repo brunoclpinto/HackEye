@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1)
+# HackEye Lab — contracts (v26.1.1)
 
 The single source of truth that `lab/server.py`, `src/collision.py` and
 `lab/static/` are built against. Change this file first, then the code.
@@ -34,6 +34,7 @@ LAB_DIR/
   recordings/<recId>.json        per-recording settings (§4)
   runs/<runId>/run.json          run metadata + status (§5)
   runs/<runId>/grids.npz         class grids (§5)
+  runs/<runId>/motion.npz        ego-motion track at full source fps (§5)
   runs/<runId>/masks/<i>.png     overlay masks, i = 0..frameCount-1 (§5)
   runs/<runId>/hazards.json      collision output (§7)
   runs/<runId>/events.json       collision output (§7)
@@ -75,157 +76,292 @@ video file in `/media` is its own single-chapter recording with
 {
   "mount": "chest",            // key of collision.json mountPresets
   "hfovDeg": null,             // null = collision.json defaultHfovDeg
-  "corridor": null             // null = the mount preset's corridor; else a Corridor (§6)
+  "cameraHeightM": null,       // null = the mount preset's cameraHeightM
+  "stepLengthM": null          // null = estimate from footage (speed / cadence), else geometry.defaultStepLengthM
 }
 ```
-`GET` returns the stored settings or the defaults (`mount = defaultMount`).
-`PUT` validates and stores them.
+- `GET` returns the stored settings or the defaults.
+- `PUT` validates and stores them:
+  - `mount` must be a known preset
+  - `hfovDeg` must be null or in [10, 180)
+  - `cameraHeightM` must be null or in [0.5, 2.5]
+  - `stepLengthM` must be null or in [0.3, 2.0]
+- Settings files from v26.1.0 may still carry a `corridor` key; ignore it on read and drop it on write.
 
 ## 5. Analysis runs  (`lab/analysis.py`)
 
 **Request:** `{"recording": "4927", "start": 60.0, "end": 120.0, "model": "/hackeye-models/Yolo26m-sem-HackEye20261012-544.pt", "profile": "default", "fps": 6.0}`
 - `profile` ∈ `default | production | half | quarter`, passed to `profiles.resolve_input_spec(src_w, src_h, profile_or_None, None, None)`. `default` → `None`.
-- `runId` = first 12 hex chars of sha1 over the canonical JSON of the request plus the model file's mtime. If a finished run with that id exists, it is reused.
+- `runId` = first 12 hex chars of sha1 over the canonical JSON of the request, **plus `"analysisVersion": 2`**, plus the model file's mtime.
+  - v26.1.0 runs (implicit version 1) keep their ids, stay listable and playable, and have no `motion.npz`.
+  - A finished run with the same id is reused.
 
-**Per sampled frame** (times `start, start + 1/fps, …, < end` in recording time; decode sequentially with `grab()`/`retrieve()` like `src/pipeline.py`, crossing chapter boundaries):
+**Per sampled frame** (times `start, start + 1/fps, …, < end` in recording time; decode sequentially, crossing chapter boundaries):
 1. BGR→RGB, then `letterbox_with_meta(rgb, spec.dst_w, spec.dst_h)`.
 2. `SegmentationModel.predict_class_grid(...)`, then `grid_from_semantic_mask(class_ids, meta)`.
 3. **Crop the padding:** keep rows `[round(pad_y), round(pad_y + src_h*scale))` and the matching columns. Resize nearest-neighbour to `GRID_W = 240`, `GRID_H = round(240 * src_h / src_w)`, as `uint8`.
 4. Write `masks/<i>.png`: an RGBA image at grid size. Pixel colour is `SAFETY_LEVELS[level]["color"]` with alpha 255; level 0 (ignored) is fully transparent.
+
+**Ego-motion track (new in analysisVersion 2):**
+- For **every source frame** in `[start, end)` (all ~24 fps, not just the sampled ones), convert to grayscale at 160×90 (`cv2.resize`, INTER_AREA).
+- `(sx, sy), _ = cv2.phaseCorrelate(prev, cur)` (float32 inputs, with a Hanning window from `cv2.createHanningWindow`). Store `dx = sx / 160`, `dy = sy / 90`: the image-content shift between consecutive frames, normalised to frame size.
+  - **Sign:** `dx > 0` means content moved right, i.e. the camera turned left. `dy > 0` means content moved down, i.e. the camera moved up.
+- The first frame of the range gets `dx = dy = 0`.
+- Skipped frames are already decoded by `grab()`; use `retrieve()` for them too, since gray 160×90 is cheap. Keep the full-res RGB conversion + inference only for sampled frames.
+- **Output** `motion.npz`: `t` float64 (M,) recording seconds of each source frame, `dx` float32 (M,), `dy` float32 (M,). `run.json` gains `"motionFrames": M` and `"analysisVersion": 2`.
 
 **`grids.npz`:** `grids` uint8 (N, GRID_H, GRID_W), `t` float64 (N,) in recording seconds, `index` int32 (N,).
 
 **`run.json`:**
 ```jsonc
 {
-  "id": "a1b2c3d4e5f6", "request": {...as above...},
+  "id": "a1b2c3d4e5f6", "request": {...as above...}, "analysisVersion": 2,
   "status": "queued|running|done|error", "progress": 0.0, "error": null,
   "createdAt": "2026-10-16T12:00:00Z", "finishedAt": null,
-  "frameCount": 360, "gridW": 240, "gridH": 135,
+  "frameCount": 360, "motionFrames": 1439, "gridW": 240, "gridH": 135,
   "srcW": 1920, "srcH": 1080,
   "inputSpec": {"w": 960, "h": 544, "description": "..."},
   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
   "classNames": ["animal", "barrier", ...],     // from the model, in id order
-  "msPerFrame": 123.4,
-  "collisionVersion": "v26.1.0"                   // version of the last collision pass
+  "msPerFrame": 123.4, "seekSeconds": 0.3,
+  "collisionVersion": "v26.1.1"                   // version of the last collision pass
 }
 ```
-After inference finishes, the runner immediately does a collision pass (§7)
-with the recording's current settings.
+After inference finishes, the runner immediately does a collision pass (§7) with the recording's current settings. `motion` is loaded from `motion.npz` when present, else `None`.
 
-**GPU:**
-- One worker thread runs one job at a time; extra jobs wait in a FIFO queue.
-- `gpu_guard.assert_torch_cuda()` is called at job start.
-- The `SegmentationModel` is cached by path and released after 300 s idle (`del` + `torch.cuda.empty_cache()`), so the always-on service holds no VRAM between runs.
+**GPU:** one worker thread, FIFO queue, `gpu_guard.assert_torch_cuda()` at job start. The model is cached by path and released after `HACKEYE_LAB_IDLE_SECONDS` (default 300) idle.
 
-## 6. Collision config  (`common/config/collision.json`)
+## 6. Collision config  (`common/config/collision.json`, v26.1.1)
+
+Class names below are the 48-class HackEye mapping's (`safety_mapping_hackeye48.json`). Names not present in a model's `class_names` are skipped, and that is logged once.
 
 ```jsonc
 {
-  "version": "v26.1.0",
-  "obstacleClasses": {
-    "static": ["pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign",
-               "sidewalk-obstacle", "barrier", "barrier fence", "barrier guard-rail",
-               "divider", "barrier wall", "nature vegetation"],
-    "moving": ["person", "rider", "vehicle", "animal"]
-  },
-  "spokenLabels": {"traffic-light pedestrians": "traffic light", "sidewalk-obstacle": "obstacle",
-                   "barrier fence": "fence", "barrier wall": "wall", "nature vegetation": "vegetation",
-                   "rider": "cyclist", "...": "..."},   // fallback: name with '-' -> ' '
+  "version": "v26.1.1",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
-  "mountPresets": {
-    "chest":    {"label": "Chest",          "corridor": {"horizon": 0.45, "bottomY": 1.0, "topWidth": 0.12, "bottomWidth": 0.60, "centerX": 0.5}},
-    "head":     {"label": "Head / helmet",  "corridor": {"horizon": 0.40, "bottomY": 1.0, "topWidth": 0.10, "bottomWidth": 0.45, "centerX": 0.5}},
-    "handheld": {"label": "Handheld",       "corridor": {"horizon": 0.50, "bottomY": 1.0, "topWidth": 0.14, "bottomWidth": 0.70, "centerX": 0.5}}
+  "mountPresets": {                      // horizon = fallback horizon row (normalised y) when the per-frame estimate fails
+    "chest":    {"label": "Chest",         "horizon": 0.45, "cameraHeightM": 1.30},
+    "head":     {"label": "Head / helmet", "horizon": 0.40, "cameraHeightM": 1.65},
+    "handheld": {"label": "Handheld",      "horizon": 0.50, "cameraHeightM": 1.10}
   },
-  "minComponentFraction": 0.0004,       // of grid area, counted inside the corridor
-  "urgency": {                           // a level fires if proximity >= p OR (ttc != null AND ttc <= ttc)
-    "static": {"caution": {"proximity": 0.35, "ttc": null}, "warning": {"proximity": 0.60, "ttc": 3.0}, "imminent": {"proximity": 0.85, "ttc": 1.5}},
-    "moving": {"caution": {"proximity": 0.25, "ttc": null}, "warning": {"proximity": 0.50, "ttc": 4.0}, "imminent": {"proximity": 0.75, "ttc": 2.0}}
+  "geometry": {
+    "defaultStepLengthM": 0.70,
+    "laneHalfWidthM": 0.60,              // danger lane: |lateral| <= this
+    "maxRangeM": 30.0,                   // ignore items whose contact point is farther (pinhole error grows)
+    "horizonEma": 0.2,                   // smoothing of the per-frame horizon estimate
+    "horizonValidRange": [0.25, 0.75],   // estimates outside -> fall back to the preset
+    "minRegionRows": 12                  // need this many valid region rows to fit boundary lines
   },
-  "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "approachWindowSeconds": 1.5},
-  "speech": {"template": "{label}, {clock} o'clock", "trackCooldownSeconds": 4.0, "globalMinGapSeconds": 1.2},
-  "tones": {
-    "intervalSeconds": {"caution": 1.0, "warning": 0.5, "imminent": 0.2},
-    "frequencyHz":     {"caution": 660, "warning": 880, "imminent": 1100},
+  "surfaces": {                          // walking region: seed class group + classes allowed inside it
+    "groups": {
+      "pedestrian": {"label": "sidewalk",  "classes": ["flat sidewalk", "flat pedestrian-area", "flat traffic-island"]},
+      "bikeLane":   {"label": "bike lane", "classes": ["flat bike-lane"]},
+      "road":       {"label": "road",      "classes": ["flat road", "flat road-shoulder", "flat service-lane", "flat driveway", "parking"]},
+      "rail":       {"label": "rail track","classes": ["flat rail-track"]}
+    },
+    "inside": ["crosswalk", "curb", "lane-line-dashed", "continuous solid", "marking-other", "discrete stop-line",
+               "symbol bicycle", "utility-cover", "object pothole", "void ground"],
+    "seedBox": [0.40, 0.90, 0.60, 1.00],  // x0, y0, x1, y1: majority surface class here picks the group
+    "debounceSeconds": 1.5                 // a surface change must persist this long to count
+  },
+  "classes": {
+    "static":  ["pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign", "sidewalk-obstacle",
+                "barrier", "barrier fence", "barrier guard-rail", "divider", "barrier wall", "nature vegetation", "building"],
+    "moving":  ["person", "rider", "vehicle", "animal"],
+    "feature": ["curb", "crosswalk", "object pothole", "utility-cover"]
+  },
+  "spokenLabels": {"traffic-light pedestrians": "traffic light", "sidewalk-obstacle": "obstacle", "barrier fence": "fence",
+                   "barrier wall": "wall", "barrier guard-rail": "guard rail", "nature vegetation": "vegetation",
+                   "rider": "cyclist", "object pothole": "pothole", "utility-cover": "manhole", "...": "..."},
+  "parkedLabels": {"vehicle": "parked car"},   // label for a moving-class item judged stationary
+  "minComponentFraction": 0.0004,              // of grid area
+  "roles": {
+    "dangerSteps": 10, "finalSteps": 3,
+    "featureSteps": 10,
+    "contextMaxDistanceM": 25.0,               // context only announced if within this distance
+    "boundaryMarginPx": 2,                     // region dilation used to decide "touches the region boundary"
+    "stationaryMps": 0.5,                      // |ground speed| below this = parked / stationary
+    "approachingMps": 0.5                      // moving object's own speed toward the user above this = approaching
+  },
+  "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
+               "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2},
+  "ego": {
+    "cadenceWindowSeconds": 4.0, "cadenceBandHz": [0.8, 3.5], "cadenceMinPeakRatio": 3.0,
+    "speedMinTracks": 1, "speedMaxMps": 6.0, "speedEma": 0.3, "stepLengthRangeM": [0.3, 1.8]
+  },
+  "contextMemory": {"forgetAfterSeconds": 30.0},
+  "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": true},
+  "speech": {
+    "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0,
+    "templates": {
+      "context":  "{label} at {clock} o'clock",
+      "surface":  "{label}",
+      "feature":  "{label} in {steps} steps",
+      "danger":   "{label}, {clock} o'clock, {steps} steps",
+      "approach": "{label} approaching, {clock} o'clock",
+      "final":    "{label}, {steps} steps"
+    }
+  },
+  "tones": {                                   // danger only; interval/frequency interpolated by stepsTo
+    "bySteps": [[10, 1.0, 660], [6, 0.6, 780], [3, 0.3, 940], [1, 0.15, 1100]],   // [steps, intervalSeconds, frequencyHz]
     "durationSeconds": 0.08
   }
 }
 ```
-**Corridor** (normalised, §1) is a trapezoid:
-- Its top edge sits at y = `horizon`, `topWidth` wide.
-- Its bottom edge sits at y = `bottomY`, `bottomWidth` wide.
-- Both edges are centred on `centerX`.
 
-## 7. Collision logic  (`src/collision.py`)
+## 7a. v26.1.1 revisions after real-footage review (these override §6/§7 where they differ)
 
-**Pure logic:** numpy + scipy and `geometry.Box` only. No cv2, no torch, no file
-I/O except `load_config`. The Swift app should be able to port it.
+Found on 4929 at 1040–1100 s, run `8ab9a0e06ae3`:
+- **Fake approach from horizon wobble.** Per-frame horizon jitter (±0.03) near the vanishing point turned a parked/far car (fixed contact row 0.570) into "approaching at 5–7 m/s", producing false final calls.
+- **Lines along the path treated as obstacles.** The central median/curb running *along* the path became features and dangers.
+- **Too much context.** Vegetation, fence and manhole phrases piled up.
+- **Surface flicker.** The model relabels the same promenade road ↔ bike lane ↔ sidewalk, and each relabel reset the context memory.
+
+The fixes:
+1. **Steps use ego speed, not per-object closing.** `stepsTo = distanceM × cadenceHz / egoSpeedMps` when both are known. This is still independent of camera height, since distance and speed scale together. Otherwise use `distanceM / stepLengthM`.
+   - The gate is "10 of *your* steps away": a proximity measure, not a time-to-contact measure.
+   - Per-object `closingMps` is only used to classify movement.
+2. **Common-horizon history for motion.** A track stores the contact **row** history.
+   - `closingMps` is the slope of distances recomputed for all history points with the **current** smoothed horizon. It needs ≥ 0.75 s of history and contact ≥ `motionMinRowsBelowHorizon` (8) grid rows below the horizon; otherwise it is `None`.
+   - `moving = null` (unknown) is treated as **static** for roles. Unknown movers never become "approaching".
+3. **Horizon smoothing:** `horizonEma` 0.05, and the per-frame change is clamped to ≤ `horizonMaxStep` (0.004).
+4. **Things that run along the path are boundary, not danger or feature.**
+   - **Test:** look at the component's pixels inside the dilated region, from its far row to its near row. If its near/far distance ratio is < 0.5 (it spans a long stretch of path), it runs along the path.
+   - **Feature requirement:** a feature must *cross* the lane. It must cover ≥ `featureMinLaneCover` (0.5) of the danger lane's width at its contact row.
+   - **Static danger requirement:** a static item must not run along the path. A run-along item that touches the boundary is context; one that doesn't is none.
+5. **Features:** `["curb", "crosswalk", "object pothole"]`. Utility covers (manholes) are dropped.
+6. **Context:** only `contextSpeak` labels are spoken: `["wall", "fence", "guard rail", "barrier", "parked car"]`. Other context items still get role `context` for the overlay, but stay silent.
+7. **Surface:** `pathChange.onSurfaceChange` = false by default, so surface changes no longer clear the context memory.
+   - Surface is spoken only on a debounced change **into or out of** the `road`/`rail` groups (or a start on one of them). Debounce is 3.0 s.
+   - Pedestrian ↔ bike-lane changes are silent.
+
+New/changed config keys:
+- `geometry.horizonEma: 0.05`, `geometry.horizonMaxStep: 0.004`
+- `tracking.motionMinRowsBelowHorizon: 8`, `tracking.motionMinSeconds: 0.75`
+- `roles.featureMinLaneCover: 0.5`, `roles.alongPathRatio: 0.5`
+- `classes.feature` (updated), `contextSpeak`
+- `surfaces.debounceSeconds: 3.0`, `surfaces.announceGroups: ["road", "rail"]`
+- `pathChange.onSurfaceChange: false`
+
+## 7. Collision logic  (`src/collision.py`, v26.1.1)
+
+**Pure logic:** numpy + scipy and `geometry.Box`/`geometry.iou` only. No cv2, no torch, no file I/O except `load_config`. The Swift app should be able to port it.
 
 ```python
 @dataclass
-class Corridor: horizon: float; bottom_y: float; top_width: float; bottom_width: float; center_x: float
-@dataclass
-class CollisionSettings: corridor: Corridor; hfov_deg: float
+class CollisionSettings:
+    mount: str; hfov_deg: float; camera_height_m: float
+    step_length_m: float | None        # None = estimate, fall back to geometry.defaultStepLengthM
+    horizon_default: float             # from the mount preset
 
-def load_config(path: Path | None = None) -> dict                      # default find_common_dir()/config/collision.json
-def resolve_settings(config: dict, mount: str | None, hfov_deg: float | None, corridor: dict | None) -> CollisionSettings
-def corridor_mask(grid_w: int, grid_h: int, c: Corridor) -> np.ndarray   # bool (H, W)
-def bearing_deg(x_norm: float, hfov_deg: float) -> float                # pinhole: atan((x-0.5)*2*tan(hfov/2)), degrees, + = right
-def clock_from_bearing(bearing: float) -> int                           # 12 + round(b/30) -> 9,10,11,12,1,2,3 (clamped to ±90°)
-def run_collision(grids, times, class_names, config, settings) -> tuple[dict, dict]   # (hazards_doc, events_doc)
+def load_config(path: Path | None = None) -> dict
+def resolve_settings(config, mount=None, hfov_deg=None, camera_height_m=None, step_length_m=None) -> CollisionSettings
+def bearing_deg(x_norm, hfov_deg) -> float            # unchanged from v26.1.0
+def clock_from_bearing(bearing) -> int                # unchanged from v26.1.0
+def focal_px(grid_w, hfov_deg) -> float               # (grid_w / 2) / tan(hfov / 2)
+def ground_distance_m(y_norm, horizon_y, camera_height_m, grid_h, f_px) -> float | None
+    # H * f / ((y - horizon) * grid_h); None if y <= horizon
+def lateral_m(x_norm, distance_m, grid_w, f_px) -> float   # (x - 0.5) * grid_w * distance / f
+def estimate_cadence(t, dy, window_s, band_hz, min_peak_ratio) -> np.ndarray   # per-sample Hz or nan
+def walking_region(grid, ids, config) -> Region | None
+def run_collision(grids, times, class_names, config, settings, motion=None) -> tuple[dict, dict]
+    # motion: {"t": ndarray, "dx": ndarray, "dy": ndarray} or None -> ego estimates unavailable
 ```
 
 **Per frame:**
-1. Split the obstacle mask into `static` and `moving` groups (class names resolved against `class_names`; names not present are skipped).
-2. Find 4-connected components per group (`scipy.ndimage.label`), restricted to pixels inside the corridor.
-3. Keep a component if its in-corridor pixel count is at least `minComponentFraction × grid area`.
-4. For each kept component:
-   - `className`: the majority class.
-   - `bbox`: normalised, from its in-corridor pixels.
-   - `contactY`: (max in-corridor row + 1) / H.
-   - `proximity = clamp((contactY − horizon) / (bottomY − horizon), 0, 1)`.
-   - `bearingDeg` from the mean in-corridor x, then `clock`.
-   - `pan = clamp(sin(bearing), −1, 1)`.
+1. **Walking region:**
+   - Find the majority surface class inside `seedBox` (surface-group classes only; ties → the group with more pixels). No surface pixels → `region = None`.
+   - Region = the 4-connected component, containing seed pixels, of (that group's classes ∪ `surfaces.inside`).
+   - Per grid row, take `left/right` = min/max column of region pixels in that row.
+   - Rows with no pixels are invalid. Smooth `left/right` per row with EMA 0.5 across frames (reset when the surface group changes).
+2. **Horizon:**
+   - Fit lines `x = a·y + b` to the left and right bounds of the lowest 70% of valid region rows (least squares, needs ≥ `minRegionRows`).
+   - The intersection's y is the raw horizon. Accept it if it lies within `horizonValidRange` and the lines converge upward (left slope < 0 < right slope, in x-per-y terms with y downward); otherwise use `horizon_default`.
+   - EMA with `horizonEma`. `horizonEstimated` = whether the raw estimate was accepted this frame.
+3. **Items:**
+   - 4-connected components of each class group (static / moving / feature) over the whole grid below the horizon, with in-image pixel count ≥ `minComponentFraction` × grid area.
+   - **Contact point** = the bottom-most row of the component (static/moving). For features, use the bottom-most row *inside the danger lane* if any, else the bottom-most row.
+   - Compute `distanceM`, `lateralM` (at the contact point; lateral from the column of the contact row's pixels nearest to x = 0.5), `bearingDeg`, `clock`, `pan`.
+   - Drop items with `distanceM > maxRangeM` or `None`.
+4. **Tracking:**
+   - Greedy matching within the same group and label. A pair matches if `iou(bbox) ≥ iouMatch` **or** the ground gate holds: `|Δlateral| ≤ groundGateLateralM` and `|Δdistance − expected| ≤ groundGateDistanceFrac × distance`, where `expected = −closing·dt` (0 if unknown).
+   - Score = IoU, plus 0.5 if the ground gate holds. Highest score first.
+   - Tracks survive `maxMissedSeconds`. Keep `(t, distanceM)` over `historySeconds`. `closingMps` = −slope (least squares, ≥ 3 points), else `None`.
+5. **Ego:**
+   - **Cadence:** from `motion` (the nearest motion sample to `t`).
+   - **Speed:** the median `closingMps` over **static**-group tracks with `closingMps` in [0, speedMaxMps] (≥ `speedMinTracks`), then EMA `speedEma`. None if there are no tracks yet.
+   - **Step length:** `settings.step_length_m` if set; else `speed / cadence` clamped to `stepLengthRangeM` when both are known (EMA-smoothed); else `defaultStepLengthM`.
+   - **Heading:** integrate `−dx × hfov_deg` over motion samples (degrees, + = turned right).
+6. **Steps:**
+   - If `closingMps ≥ 0.3` and cadence is known: `stepsTo = distanceM / closingMps × cadenceHz`.
+   - Otherwise `stepsTo = distanceM / stepLengthM`.
+   - Round to an integer for speech; keep 1 decimal in JSON.
+7. **Moving vs parked:** only for moving-group tracks with known ego speed and `closingMps`. `groundSpeed = closingMps − egoSpeed` (toward the user = positive).
+   - `|groundSpeed| < stationaryMps` → `moving = false`; the item is treated as **static** from here, and its label comes from `parkedLabels`.
+   - `groundSpeed > approachingMps` → approaching.
+   - If unknown: `moving = null`; treat it as moving.
+8. **Roles** (one per item):
+   - **danger:**
+     - A static (or parked) item with any pixel of its component inside the walking region (dilated by `boundaryMarginPx`) at a row where its `|lateralM| ≤ laneHalfWidthM`, and `stepsTo ≤ dangerSteps`.
+     - A moving item whose contact point is within the region's row span and within `laneHalfWidthM + 1.0` m laterally, and either approaching or with `|lateralM| ≤ laneHalfWidthM`, and `stepsTo ≤ dangerSteps`.
+   - **feature:** a feature-class item whose component overlaps the danger lane and that has `stepsTo ≤ featureSteps`.
+   - **context:** a static/parked item that touches the dilated region boundary but isn't danger, with `distanceM ≤ contextMaxDistanceM`.
+   - **none:** everything else.
+   - `urgency` = `final` if danger and `stepsTo ≤ finalSteps`, `danger` if danger, else `none`.
+9. **Path change** → clear the context memory:
+   - |heading − reference| > `headingDeg` sustained for `sustainSeconds`. The reference follows the heading with time constant `referenceTauSeconds`, and is reset to the heading on a path change.
+   - Or (if `onSurfaceChange`) a debounced surface-group change.
 
-**Tracking:**
-- Greedy IoU matching on `bbox`, same group only, threshold `iouMatch` (same approach as `src/track.py`).
-- A track survives `maxMissedSeconds` without a match.
-- **TTC:** take the slope `dp/dt` of a linear fit of (t, proximity) over the last `approachWindowSeconds`. If the slope > 0, `ttc = (1 − proximity) / slope`; otherwise `null`.
+**Speech** (at most one phrase per frame; this is "less is more"):
+- **Candidates, in priority order:**
+  1. **final:** a danger track crossing ≤ `finalSteps` for the first time. Spoken once per track; it ignores the global gap.
+  2. **danger:** a danger track not yet announced. Use the `approach` template for approaching movers, else `danger`. Once per track.
+  3. **feature:** a feature track not yet announced. Once per track; also suppressed if the same label was announced < 5 s ago.
+  4. **surface:** a debounced surface change (including the first surface of the run).
+  5. **context:** a `(label, side)` pair not in memory. `side` = `left` if clock ∈ {9, 10}, `ahead` if {11, 12, 1}, `right` if {2, 3}. A pair stays in memory while seen within `forgetAfterSeconds`; it is cleared on path change.
+- A candidate that can't be spoken because of `globalMinGapSeconds` stays pending, except that context older than `contextMaxDelaySeconds` is dropped.
+- Context and surface are held back while any danger track is active.
+- Danger/feature tracks are marked announced only when actually spoken. If a danger track is already within `finalSteps` when first announced, speak only the final call.
 
-**Urgency** is the highest level whose rule fires for the track's group (§6), else `none`.
-
-**Speech events:**
-- A track triggers speech when its urgency first reaches `caution`, or rises to a higher level than it last spoke at.
-- Speech is suppressed if the same track spoke less than `trackCooldownSeconds` ago, unless the new level is `imminent`.
-- Speech is dropped (not delayed) if any speech happened less than `globalMinGapSeconds` ago, again unless the new level is `imminent`.
-- If several hazards qualify in the same frame, only the most urgent one speaks; ties go to the higher proximity.
-- Text: `template.format(label=spokenLabel, clock=clock)`.
-
-**Tone events:**
-- **Only one beep stream, so it never turns into noise.** In each frame interval `[t_i, t_{i+1})`, the most urgent hazard (ties → higher proximity) at `caution` or above emits beeps.
-- Beeps follow that hazard's urgency interval and keep their phase across frames: the next beep is due `interval` after the previous one, whichever hazard it came from.
-- The last frame's interval is `1/fps`, taken from the median frame spacing.
+**Tones:** only while a danger track is active.
+- The single danger track with the smallest `stepsTo` drives one phase-continuous beep stream, as in v26.1.0.
+- Interval and frequency are linearly interpolated from `tones.bySteps` by `stepsTo` (clamped to the table ends). Pan comes from that track's bearing.
 
 **`hazards.json`:**
 ```jsonc
-{"version": "v26.1.0", "settings": {"corridor": {...}, "hfovDeg": 118, "mount": "chest"},
- "gridW": 240, "gridH": 135,
- "frames": [{"index": 0, "t": 60.0, "hazards": [
-   {"trackId": 3, "className": "pole", "group": "static", "label": "pole",
-    "bbox": [0.48, 0.52, 0.55, 0.81], "contactY": 0.81, "proximity": 0.65,
-    "bearingDeg": 4.1, "clock": 12, "pan": 0.07, "ttc": 2.4, "urgency": "warning", "areaFrac": 0.012}
- ]}]}
+{"version": "v26.1.1",
+ "settings": {"mount": "chest", "hfovDeg": 118, "cameraHeightM": 1.3, "stepLengthM": null, "laneHalfWidthM": 0.6},
+ "gridW": 240, "gridH": 135, "egoAvailable": true,
+ "frames": [{
+   "index": 0, "t": 60.0,
+   "horizonY": 0.452, "horizonEstimated": true,
+   "region": {"surface": "bikeLane", "label": "bike lane",
+              "rows": [[0.70, 0.21, 0.83], [0.73, 0.18, 0.86], ...]},   // [y, left, right], every 4th grid row, bottom→top
+   "lane": [[0.41, 1.0], [0.59, 1.0], [0.53, 0.58], [0.47, 0.58]],    // danger-lane polygon (normalised), near→far at dangerSteps
+   "ego": {"speedMps": 1.32, "cadenceHz": 1.85, "stepLengthM": 0.71, "headingDeg": -3.2,
+           "estimated": {"speed": true, "cadence": true, "stepLength": true}},
+   "pathChange": false,
+   "hazards": [
+     {"trackId": 3, "className": "pole", "group": "static", "label": "pole", "role": "danger", "moving": false,
+      "bbox": [0.48, 0.52, 0.55, 0.81], "contactY": 0.81, "bearingDeg": 4.1, "clock": 12, "pan": 0.07,
+      "distanceM": 5.6, "lateralM": 0.21, "stepsTo": 7.9, "closingMps": 1.3, "urgency": "danger", "areaFrac": 0.012}
+   ]}]}
 ```
+- `region` is null when there is no surface.
+- `lane` is computed from the geometry: half-width in px at row y = `laneHalfWidthM · (y − horizon)·grid_h / H` (converted to normalised x). It runs from y = 1.0 up to the row at `dangerSteps × stepLengthM`.
+- Items with role `none` are still listed (the UI greys them).
+
 **`events.json`:** sorted by `t`.
 ```jsonc
-{"version": "v26.1.0", "events": [
-  {"t": 61.2, "type": "speech", "text": "pole, 12 o'clock", "trackId": 3, "urgency": "caution", "clock": 12, "pan": 0.07},
-  {"t": 61.2, "type": "tone", "trackId": 3, "urgency": "caution", "pan": 0.07, "frequencyHz": 660, "durationSeconds": 0.08}
+{"version": "v26.1.1", "events": [
+  {"t": 61.2, "type": "speech", "role": "context", "text": "wall at 1 o'clock", "trackId": 5, "urgency": "none", "clock": 1, "pan": 0.48},
+  {"t": 64.0, "type": "speech", "role": "danger", "text": "pole, 12 o'clock, 8 steps", "trackId": 3, "urgency": "danger", "clock": 12, "pan": 0.07},
+  {"t": 64.0, "type": "tone", "role": "danger", "trackId": 3, "urgency": "danger", "pan": 0.07, "frequencyHz": 690, "durationSeconds": 0.08}
 ]}
 ```
-`mount` in `hazards.json.settings` is passed through by the caller (`server.py`).
+- The `role` of a speech event is one of `context | surface | feature | danger | final`.
+- Surface events have `trackId: null` and `clock: null`.
 
 ## 8. REST API  (`lab/server.py`, FastAPI)
 
@@ -234,51 +370,43 @@ def run_collision(grids, times, class_names, config, settings) -> tuple[dict, di
 | `GET /` | | `lab/static/index.html` (static files at `/static/*`) |
 | `GET /api/recordings` | | `[Recording]` (§3) |
 | `POST /api/recordings/{id}/proxy` | | `{"status": ...}`; starts a build if missing/error |
-| `GET /media/{id}.mp4` | | the proxy file, with HTTP Range support (FileResponse); 404 if not ready |
-| `GET /api/recordings/{id}/settings` | | Settings (§4), with defaults resolved: `{"mount", "hfovDeg", "corridor", "resolved": {"corridor": {...}, "hfovDeg": ...}}` |
+| `GET /media/{id}.mp4` | | the proxy file, with HTTP Range support; 404 if not ready |
+| `GET /api/recordings/{id}/settings` | | Settings (§4) + `"resolved": {"hfovDeg", "cameraHeightM", "stepLengthM" (null = auto), "horizon"}` |
 | `PUT /api/recordings/{id}/settings` | Settings | same as GET |
 | `GET /api/config/collision` | | collision.json contents |
-| `GET /api/models` | | `{"models": [{"path", "name", "default": bool}], "profiles": ["default", "production", "half", "quarter"]}`; default = newest `*HackEye*` by name, currently `Yolo26m-sem-HackEye20261012-544.pt` |
+| `GET /api/models` | | `{"models": [{"path", "name", "default": bool}], "profiles": [...]}` |
 | `POST /api/runs` | run request (§5) | `run.json`; queued, or done if cached |
 | `GET /api/runs?recording=<id>` | | `[run.json]`, newest first |
-| `GET /api/runs/{runId}` | | `run.json` (poll every 1 s while queued/running) |
-| `POST /api/runs/{runId}/collision` | | re-runs §7 from `grids.npz` with the recording's **current** settings (no inference); returns `{"version", "hazards": "/api/runs/<id>/hazards.json", "events": ...}` |
+| `GET /api/runs/{runId}` | | `run.json` |
+| `POST /api/runs/{runId}/collision` | | re-runs §7 from `grids.npz` (+ `motion.npz` if present) with the recording's **current** settings; returns `{"version", "hazards", "events", "elapsedSeconds"}` |
 | `GET /api/runs/{runId}/hazards.json` · `events.json` | | the files |
 | `GET /api/runs/{runId}/frames/{i}/mask.png` | | the mask PNG (`Cache-Control: max-age=86400`) |
 
-Errors return `{"detail": "..."}` with 4xx/5xx status codes (FastAPI default).
+The collision pass calls `collision.resolve_settings(config, mount, hfovDeg, cameraHeightM, stepLengthM)` and `collision.run_collision(grids, times, class_names, config, settings, motion)`.
 
 ## 9. Frontend  (`lab/static/`, vanilla JS, no build step)
 
-**Library:**
-- Lists recordings with duration and proxy state, plus a Build-proxy button with progress.
-- Selecting a recording loads its settings and its past runs.
-- **Range:** a start/end in `mm:ss`, plus "use current player position" buttons.
-
-**Run panel:**
-- Model select, profile select, fps (default 6), mount select (presets from `/api/config/collision`), HFOV.
-- **Analyse:** POST `/api/runs`, then poll and show a progress bar.
-- **Re-run collision:** PUT the settings, then POST `/api/runs/{id}/collision`, then reload hazards/events.
-
-**Player:**
-- `<video>` from `/media/<id>.mp4` with a `<canvas>` overlay of the same displayed size.
-- Driven by `requestVideoFrameCallback` (fall back to `timeupdate` plus rAF).
-- **Each frame:** pick the analysed frame with the largest `t ≤ mediaTime`. Draw only if `mediaTime ∈ [run.start, run.end]`.
-- **Layers, each toggleable:**
-  - Mask PNG at a chosen opacity (default 0.45), drawn over the whole frame. Preload a window of ±20 frames.
-  - The corridor trapezoid.
-  - Hazard bboxes coloured by urgency (caution yellow, warning orange, imminent red) with label `"pole · 12 · 0.65"`.
-- **Controls:** frame step (±1 analysed frame), speed 0.25–2×, and seeking.
-
-**Timeline:**
-- A strip under the video spanning the run range.
-- Speech events are markers, coloured by urgency; clicking one seeks to it.
-- Tone density is shown as a thin heat bar.
-
-**Audio:**
-- Starts muted until the user clicks "Enable audio" (browser autoplay rules).
-- **Speech:** `speechSynthesis.speak(new SpeechSynthesisUtterance(text))` when the playhead crosses `event.t`; cancelled on seek or pause.
-- **Tones:** WebAudio `OscillatorNode → GainNode (short envelope) → StereoPannerNode(pan) → master gain`, scheduled about 0.25 s ahead from `events.json` against `video.currentTime` and `playbackRate`. Rescheduled on seek, pause or rate change.
-- Mute toggles for speech and tones, and a master volume.
-
-**State in the URL hash** (`#rec=4927&run=<id>&t=63.2`), so a view can be reopened or shared on the tailnet.
+Same as v26.1.0, with these differences:
+- **Overlay** (each layer toggleable):
+  - **Mask:** as before.
+  - **Walking region:** an outline polygon from `frame.region.rows` (left edge bottom→top, then right edge top→bottom), in a thin white line, with `region.label` written near its top.
+  - **Danger lane:** the `frame.lane` polygon, semi-transparent red fill.
+  - **Horizon:** a dashed line at `horizonY`, solid if `horizonEstimated`.
+  - **Items**, coloured by role:
+    - danger orange `#ff8c1a`, with a final call in red `#ff2d2d`
+    - feature cyan `#22d3ee`
+    - context light grey `#c9ced6`
+    - none dim grey `#6b7280`, drawn thin, label hidden unless "show all" is on
+  - **Labels:** `"<label> · <clock> · <stepsTo>st"`; context labels show only `"<label> · <clock>"`.
+  - The v26.1.0 corridor trapezoid layer is removed.
+- **HUD** in the player's top-left corner:
+  - speed in m/s and km/h
+  - cadence in steps/min (`cadenceHz × 60`)
+  - step length in m
+  - heading
+  
+  Show "—" for unknown values, and mark estimated vs default values (e.g. `0.70 m (default)`).
+- **Settings panel:** mount, HFOV, camera height (m), step length (m). Empty = auto/default, with the resolved default value as placeholder.
+- **Event list and timeline:** role filter chips (context, surface, feature, danger, final), all on by default. Timeline ticks are coloured by role.
+- **Audio:** as v26.1.0 (tones come only from danger events). Final calls pre-empt any phrase currently being spoken.
+- **Old runs** (no `region`/`ego` in hazards): draw what's present, and the HUD shows "no ego data (re-analyse)".

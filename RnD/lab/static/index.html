@@ -46,7 +46,12 @@
       <summary>Collision settings</summary>
       <div class="form">
         <label>Mount <select id="mountSel"></select></label>
-        <label>HFOV (deg) <input id="hfovInput" type="number" min="30" max="180" step="1" placeholder="default"></label>
+        <label>HFOV (deg) <input id="hfovInput" type="number" min="10" max="179" step="1" placeholder="default"></label>
+        <div class="two">
+          <label>Camera height (m) <input id="camHeightInput" type="number" min="0.5" max="2.5" step="0.05" placeholder="preset"></label>
+          <label>Step length (m) <input id="stepLenInput" type="number" min="0.3" max="2" step="0.05" placeholder="auto"></label>
+        </div>
+        <p class="hint">Empty = preset / estimated from the footage.</p>
         <button type="button" id="rerunBtn" disabled>Re-run collision</button>
         <p id="rerunInfo" class="hint"></p>
       </div>
@@ -62,6 +67,7 @@
     <div id="stage">
       <video id="video" playsinline webkit-playsinline preload="auto" muted></video>
       <canvas id="overlay"></canvas>
+      <div id="hud" class="mono" hidden></div>
       <div id="stageMsg">Select a recording</div>
     </div>
 
@@ -91,15 +97,18 @@
         <legend>Overlay</legend>
         <label class="inline"><input type="checkbox" id="maskChk" checked> Mask</label>
         <label class="inline">Opacity <input id="maskOpacity" type="range" min="0" max="1" step="0.05" value="0.45"></label>
-        <label class="inline"><input type="checkbox" id="corridorChk" checked> Corridor</label>
-        <label class="inline"><input type="checkbox" id="hazardChk" checked> Hazards</label>
+        <label class="inline"><input type="checkbox" id="regionChk" checked> Region</label>
+        <label class="inline"><input type="checkbox" id="laneChk" checked> Lane</label>
+        <label class="inline"><input type="checkbox" id="horizonChk" checked> Horizon</label>
+        <label class="inline"><input type="checkbox" id="hazardChk" checked> Items</label>
+        <label class="inline"><input type="checkbox" id="showAllChk"> Show all (labels of ignored items)</label>
       </fieldset>
     </div>
 
     <canvas id="timeline" aria-label="Run timeline"></canvas>
+    <div id="roleChips" class="chips" role="group" aria-label="Show roles"></div>
     <div class="legend">
-      <i style="background:#f5c518"></i>caution <i style="background:#ff8c1a"></i>warning <i style="background:#ff2d2d"></i>imminent
-      <span class="muted">&middot; ticks = speech, orange bar = beep density</span>
+      <span class="muted">ticks = speech by role, orange bar = beep density</span>
     </div>
 
     <h2>Speech events <span id="eventCount" class="muted"></span></h2>

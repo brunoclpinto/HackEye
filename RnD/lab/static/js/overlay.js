@@ -1,5 +1,5 @@
-// Canvas overlay: mask PNG, corridor trapezoid, hazard boxes. Frame-synchronised to the <video>.
-import { URGENCY_COLOR, CORRIDOR_COLOR, lastAtOrBefore } from "./util.js";
+// Canvas overlay: mask PNG, walking region, danger lane, horizon, role-coloured item boxes, ego HUD. Frame-synchronised to the <video>.
+import { ROLE_COLOR, lastAtOrBefore } from "./util.js";
 
 const PRELOAD = 20;          // frames each side of the playhead
 const CACHE_MAX = 160;       // LRU size (> 2*PRELOAD+1)
@@ -10,11 +10,11 @@ export class Overlay {
     this.video = video;
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-    this.layers = { mask: true, corridor: true, hazards: true };
+    this.layers = { mask: true, region: true, lane: true, horizon: true, hazards: true, showAll: false };
+    this.hudEl = null;        // set by app: element receiving the HUD lines
     this.maskOpacity = 0.45;
     this.run = null;
     this.frames = [];
-    this.corridor = null;
     this.cache = new Map();   // key -> {img, ready}; Map order = LRU order
     this.mt = null;           // last mediaTime reported by requestVideoFrameCallback
     this.lastK = -2;
@@ -46,7 +46,7 @@ export class Overlay {
   setRun(run, hazards) {
     this.run = run;
     this.frames = hazards?.frames ?? [];
-    this.corridor = hazards?.settings?.corridor ?? null;
+    this.fixedStep = hazards?.settings?.stepLengthM ?? null; // user-set step length, if any
     this.cache.clear();
     this.lastK = -2;
     this.redraw();
@@ -86,17 +86,56 @@ export class Overlay {
     if (!cw) return;
     ctx.clearRect(0, 0, cw, ch);
     const run = this.run;
-    if (!run || !this.frames.length) return;
+    if (!run || !this.frames.length) { this.updateHud(null); return; }
     // Only inside the analysed range, and only once the first analysed frame is reached.
-    if (t < run.request.start || t > run.request.end) return;
+    if (t < run.request.start || t > run.request.end) { this.updateHud(null); return; }
     const k = lastAtOrBefore(this.frames, t);
-    if (k < 0) return;
+    if (k < 0) { this.updateHud(null); return; }
     if (k !== this.lastK) { this.lastK = k; this.preload(k); }
     const f = this.frames[k];
 
     if (this.layers.mask) this.drawMask(k, t);
-    if (this.layers.corridor && this.corridor) this.drawCorridor(this.corridor);
-    if (this.layers.hazards) for (const h of f.hazards) this.drawHazard(h);
+    if (this.layers.lane && f.lane?.length) this.drawLane(f.lane);
+    if (this.layers.region && f.region?.rows?.length) this.drawRegion(f.region);
+    if (this.layers.horizon && f.horizonY != null) this.drawHorizon(f.horizonY, !!f.horizonEstimated);
+    if (this.layers.hazards) {
+      // Dim items first so danger / final end up on top.
+      const hs = f.hazards ?? [];
+      for (const h of hs) if (h.role === "none") this.drawHazard(h);
+      for (const h of hs) if (h.role !== "none") this.drawHazard(h);
+    }
+    this.updateHud(f);
+  }
+
+  // ---- HUD ----------------------------------------------------------------
+  updateHud(f) {
+    const el = this.hudEl;
+    if (!el) return;
+    let lines = null;
+    if (f) {
+      const e = f.ego;
+      if (!e) lines = ["no ego data (re-analyse)"];
+      else {
+        const est = e.estimated ?? {};
+        const num = (v, d) => (v == null || !Number.isFinite(v) ? null : v.toFixed(d));
+        const mark = (v, on, off) => (v == null ? "" : on ? ` (${on})` : off ? ` (${off})` : "");
+        const sp = num(e.speedMps, 2);
+        const cad = e.cadenceHz == null ? null : (e.cadenceHz * 60).toFixed(0);
+        const sl = num(e.stepLengthM, 2);
+        const hd = num(e.headingDeg, 1);
+        lines = [
+          `speed  ${sp ? `${sp} m/s · ${(e.speedMps * 3.6).toFixed(1)} km/h` : "—"}${mark(e.speedMps, est.speed ? "est" : "")}`,
+          `cadence  ${cad ? `${cad} steps/min` : "—"}${mark(e.cadenceHz, est.cadence ? "est" : "")}`,
+          `step  ${sl ? `${sl} m` : "—"}${mark(e.stepLengthM, est.stepLength ? "est" : this.fixedStep != null ? "set" : "default")}`,
+          `heading  ${hd ? `${hd > 0 ? "+" : ""}${hd}°` : "—"}`,
+        ];
+      }
+    }
+    const text = lines ? lines.join("\n") : "";
+    if (el.dataset.txt === text) return;
+    el.dataset.txt = text;
+    el.textContent = text;
+    el.hidden = !text;
   }
 
   // ---- mask images ------------------------------------------------------
@@ -142,53 +181,91 @@ export class Overlay {
   }
 
   // ---- vector layers ----------------------------------------------------
-  drawCorridor(c) {
+  drawLane(pts) {
     const { ctx, cw, ch } = this;
-    const yT = c.horizon * ch, yB = c.bottomY * ch;
-    const xs = (w) => [(c.centerX - w / 2) * cw, (c.centerX + w / 2) * cw];
-    const [tl, tr] = xs(c.topWidth), [bl, br] = xs(c.bottomWidth);
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(tl, yT); ctx.lineTo(tr, yT); ctx.lineTo(br, yB); ctx.lineTo(bl, yB); ctx.closePath();
-    ctx.fillStyle = "rgba(34,211,238,0.08)";
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * cw, y * ch) : ctx.moveTo(x * cw, y * ch)));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,45,45,0.22)";
     ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = CORRIDOR_COLOR;
-    ctx.setLineDash([8, 5]);
+    ctx.restore();
+  }
+
+  drawRegion(reg) {
+    const { ctx, cw, ch } = this;
+    const rows = reg.rows; // [y, left, right], bottom -> top
+    ctx.save();
+    ctx.beginPath();
+    rows.forEach(([y, l], i) => (i ? ctx.lineTo(l * cw, y * ch) : ctx.moveTo(l * cw, y * ch)));
+    for (let i = rows.length - 1; i >= 0; i--) ctx.lineTo(rows[i][2] * cw, rows[i][0] * ch);
+    ctx.closePath();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.stroke();
+    if (reg.label) {
+      const [ty, tl, tr] = rows[rows.length - 1];
+      ctx.font = "600 12px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      const x = ((tl + tr) / 2) * cw, y = Math.max(14, ty * ch - 3);
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.strokeText(reg.label, x, y);
+      ctx.fillStyle = "#fff"; ctx.fillText(reg.label, x, y);
+    }
+    ctx.restore();
+  }
+
+  drawHorizon(y, estimated) {
+    const { ctx, cw, ch } = this;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(0, y * ch); ctx.lineTo(cw, y * ch);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(250,204,21,0.85)";
+    ctx.setLineDash(estimated ? [] : [8, 6]); // solid = estimated this frame, dashed = preset fallback
     ctx.stroke();
     ctx.restore();
   }
 
   drawHazard(h) {
     const { ctx, cw, ch } = this;
-    const col = URGENCY_COLOR[h.urgency] ?? URGENCY_COLOR.none;
+    const legacy = h.role === undefined; // v26.1.0 run
+    const role = h.role ?? "danger";
+    const col = legacy ? (h.urgency === "imminent" ? ROLE_COLOR.final : ROLE_COLOR.danger)
+      : role === "danger" && h.urgency === "final" ? ROLE_COLOR.final : ROLE_COLOR[role] ?? ROLE_COLOR.none;
+    const dim = role === "none";
     const [x0, y0, x1, y1] = h.bbox;
     const X = x0 * cw, Y = y0 * ch, W = (x1 - x0) * cw, H = (y1 - y0) * ch;
     ctx.save();
-    ctx.lineWidth = 3;
+    ctx.lineWidth = dim ? 1 : 3;
     ctx.strokeStyle = col;
     ctx.strokeRect(X, Y, W, H);
 
-    const text = `${h.label} · ${h.clock} · ${Number(h.proximity).toFixed(2)}`;
-    ctx.font = "600 13px system-ui, sans-serif";
-    ctx.textBaseline = "middle";
-    const pad = 4, th = 18, tw = ctx.measureText(text).width + pad * 2;
-    let lx = Math.min(Math.max(0, X - 1.5), Math.max(0, cw - tw));
-    let ly = Y - th - 1.5;
-    if (ly < 0) ly = Y + 1.5; // no room above: put the label inside the box
-    ctx.fillStyle = col;
-    ctx.fillRect(lx, ly, tw, th);
-    ctx.fillStyle = "#111";
-    ctx.fillText(text, lx + pad, ly + th / 2 + 0.5);
+    if (!dim || this.layers.showAll) {
+      let text = `${h.label} · ${h.clock}`;
+      if (legacy) text += ` · ${Number(h.proximity).toFixed(2)}`;
+      else if (role !== "context" && h.stepsTo != null) text += ` · ${Math.round(h.stepsTo)}st`;
+      ctx.font = `${dim ? 500 : 600} ${dim ? 11 : 13}px system-ui, sans-serif`;
+      ctx.textBaseline = "middle";
+      const pad = 4, th = dim ? 15 : 18, tw = ctx.measureText(text).width + pad * 2;
+      const lx = Math.min(Math.max(0, X - 1.5), Math.max(0, cw - tw));
+      let ly = Y - th - 1.5;
+      if (ly < 0) ly = Y + 1.5; // no room above: put the label inside the box
+      ctx.fillStyle = col;
+      ctx.fillRect(lx, ly, tw, th);
+      ctx.fillStyle = "#111";
+      ctx.fillText(text, lx + pad, ly + th / 2 + 0.5);
+    }
 
-    // Contact point: where the obstacle meets the ground.
-    ctx.beginPath();
-    ctx.arc(((x0 + x1) / 2) * cw, h.contactY * ch, 5, 0, Math.PI * 2);
-    ctx.fillStyle = col;
-    ctx.fill();
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "#000";
-    ctx.stroke();
+    if (!dim) { // contact point: where the obstacle meets the ground
+      ctx.beginPath();
+      ctx.arc(((x0 + x1) / 2) * cw, h.contactY * ch, 5, 0, Math.PI * 2);
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#000";
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }

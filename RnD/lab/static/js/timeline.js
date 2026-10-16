@@ -1,5 +1,5 @@
-// Timeline strip: speech ticks (urgency colours), tone-density heat row, playhead; click/drag to seek.
-import { URGENCY_COLOR, URGENCY_RANK, fmtTime, clamp } from "./util.js";
+// Timeline strip: speech ticks (role colours, filterable), tone-density heat row, playhead; click/drag to seek.
+import { eventColor, eventRole, URGENCY_RANK, fmtTime, clamp } from "./util.js";
 
 export class Timeline {
   constructor(canvas, onSeek) {
@@ -7,7 +7,8 @@ export class Timeline {
     this.ctx = canvas.getContext("2d");
     this.onSeek = onSeek;
     this.start = 0; this.end = 0;
-    this.speech = []; this.tones = [];
+    this.allSpeech = []; this.speech = []; this.tones = [];
+    this.roles = null;       // Set of visible roles, null = all
     this.playhead = null;
     this.heat = null;
     this.down = false;
@@ -22,11 +23,18 @@ export class Timeline {
   set(run, events) {
     this.start = run ? run.request.start : 0;
     this.end = run ? run.request.end : 0;
-    this.speech = events.filter((e) => e.type === "speech");
+    this.allSpeech = events.filter((e) => e.type === "speech");
+    this.applyRoles();
     this.tones = events.filter((e) => e.type === "tone");
     this.heat = null;
     this.draw();
   }
+
+  applyRoles() {
+    this.speech = this.roles ? this.allSpeech.filter((e) => this.roles.has(eventRole(e))) : this.allSpeech;
+  }
+
+  setRoles(roles) { this.roles = roles; this.applyRoles(); this.draw(); }
 
   setPlayhead(t) {
     if (t === this.playhead) return;
@@ -88,7 +96,7 @@ export class Timeline {
     ctx.lineWidth = 3;
     for (const s of this.speech) {
       const x = Math.round(this.xOf(s.t, w));
-      ctx.strokeStyle = URGENCY_COLOR[s.urgency] ?? URGENCY_COLOR.none;
+      ctx.strokeStyle = eventColor(s);
       ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, tickH); ctx.stroke();
     }
     // tone-density heat row
