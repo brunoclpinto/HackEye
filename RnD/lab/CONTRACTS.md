@@ -92,7 +92,10 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   "cameraHeightM": null,       // null = the mount preset's cameraHeightM
   "stepLengthM": null,         // null = the prior step length (collision.json ego.priorStepLengthM, 0.70 m)
   "projection": "auto",        // lens model for bearings/clocks and the depth focal: auto | rectilinear | fisheye (auto = fisheye when HFOV >= 100°)
-  "distanceSource": "depth"    // ground | depth (§7.3a); without depth.npz depth behaves as ground
+  "distanceSource": "depth",   // ground | depth (§7.3a); without depth.npz depth behaves as ground
+  "userHeightM": null,         // the user's full height; null = collision.json body.defaultUserHeightM (1.70)
+  "cameraLocation": null,      // waist | chest | eye | head (body.cameraLocations); null = the legacy `mount` preset
+  "cameraSide": "center"       // left | center | right
 }
 ```
 
@@ -102,7 +105,9 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   - `hfovDeg` null or a number in [10, 180)
   - `cameraHeightM` null or a number in [0.5, 2.5]
   - `stepLengthM` null or a number in [0.3, 2.0]
+  - `userHeightM` null or a number in [1.0, 2.3]; `cameraLocation` null or a key of `body.cameraLocations`; `cameraSide` one of `left | center | right` (missing = `center`)
   - `projection` one of `auto | rectilinear | fisheye` (missing = `auto`); `distanceSource` one of `ground | depth` (missing = `depth`)
+- **Body settings** (production asks the user once; camera, mounting height and angle are unknown): with a `cameraLocation`, camera height = `heightRatio × userHeightM + heightOffsetM` (waist 0.58, chest 0.72, eye 0.94, head 1.0 + 0.05 m), step length = `stepLengthRatio` (0.415) `× userHeightM`, horizon default from the location, and the side gives a lateral offset (`sideOffsetM`: 0.15 m waist/chest, 0.07 m eye/head; left −, right +). `cameraHeightM` / `stepLengthM` stay as explicit overrides. Without a location the legacy `mount` preset applies (offset 0). The Lab saves these on change.
 - Step length is **never estimated from the footage**: steps are `distance / stepLength`, where the length is the stored
   value or the prior (§7.7).
 - The Lab saves the settings before starting an analysis and before every collision re-run, so the post-inference collision pass always uses the stored settings.
@@ -150,7 +155,7 @@ crossing chapter boundaries; the stored `t` is the exact time of the source fram
   | Variant | Model | Units | Call |
   |---|---|---|---|
   | `da3-small`, `da3-base` | Depth Anything 3 Small / Base (Apache-2.0) | `relative` z-depth (larger = farther, one unknown scale); anchor `per-frame` | `model.inference([rgb], process_res=504)` (280×504 for 16:9) |
-  | `da2-metric-outdoor-small` (**default**) | Depth Anything V2 Metric Outdoor Small (Apache-2.0; Virtual KITTI 2) | `metric` m, but biased (~2.2×) and very stable: anchor `initial` | transformers `AutoModelForDepthEstimation`, `post_process_depth_estimation` to the frame size |
+  | `da2-metric-outdoor-small` (**default**) | Depth Anything V2 Metric Outdoor Small (Apache-2.0; Virtual KITTI 2) | `metric` m, but biased (~2.2×) and very stable: anchor `plane` | transformers `AutoModelForDepthEstimation`, `post_process_depth_estimation` to the frame size |
   | `unidepth-v2-s` | UniDepth v2 ViT-S (CC BY-NC 4.0) | `metric` m; anchor `none` | `UniDepthV2.infer(rgb)` **without intrinsics**: it estimates the camera itself (production cameras are unknown); the estimate is logged once per run |
 
   Weights in host `~/models/{depth-anything,unidepth}/…`, mounted at `/base-models` (root overridable with `HACKEYE_DEPTH_MODEL_ROOT`); one variant cached, loaded on first use, released with the segmentation model. Metric Large is no longer offered.
@@ -395,15 +400,17 @@ Frames are processed in order; every state below carries over from frame to fram
 
 ### 7.3a Distance source  (`distanceSource`; experiment)
 - **Bearings** (clock, pan) use the resolved `projection`; lane, lateral and ground distance stay the pinhole model.
+- **Side offset:** an item's lateral relative to the body = camera lateral + `lateralOffsetM` (right-mounted +). The body lateral drives the lane mask, the drawn lane, lane hits, world memory and `lateralM`; bearings, clock and pan stay camera-based (the effect is under a quarter beyond ~1.3 m). The lane's offset is decided in one place (`_walking_axis_offset_m`), so that eye and head mounts — whose camera turns with the head — can later switch to a body (IMU) heading.
 - **Anchor mode** (`analysis.DEPTH_ANCHOR` per variant, stored as `anchor` in `depth.npz`; precedence npz > variant > units default — `per-frame` for relative, `none` for metric):
   - `per-frame`: the ground anchor below, re-measured every frame.
-  - `initial` (`_InitialAnchor`, DA2): the same per-frame ground ratio is collected over the first valid frames; usable as the running median from `distance.initialAnchorMinFrames` (3) valid frames, **frozen** at `distance.initialAnchorFrames` (6). Before 3 valid frames depth is unusable (ground fallback). `distance.recalibrateOnPathChange` (default false) restarts the collection after a path change.
+  - `plane` (`_PlaneAnchor`, **DA2 default**): per frame, the walking-region cells (below the anchor horizon + `motionMinRowsBelowHorizon`) are back-projected with the depth z and the pixel ray (HFOV + projection; fisheye equidistant `f = W / hfov_rad`), and a plane `Y/Z = c/Z + a·X/Z + b` is fitted (deterministic RANSAC start, then least squares with 2.5× MAD rejection; valid: ≥ `anchorMinCells` inliers, inlier fraction ≥ 0.6, normal within 35° of down, plane below the camera). Camera height in depth units `h_d = c/√(1+a²+b²)`, pitch `asin(−b/√(1+a²+b²))` (+ = looking down). Scale `s = cameraHeightM / h_d`: running median from 3 valid frames, frozen at 6 (`recalibrateOnPathChange` resets). **No gait level** (`levelModeByAnchor.plane = none`); the gait estimator runs as a check only (`depthGaitCheck`: ≈ 1 when camera height and walking agree).
+  - `initial` (`_InitialAnchor`, older DA2 runs' stored mode, superseded by `plane` for DA2 via `analysis.SUPERSEDED_ANCHORS`): the same per-frame ground ratio is collected over the first valid frames; usable as the running median from `distance.initialAnchorMinFrames` (3) valid frames, **frozen** at `distance.initialAnchorFrames` (6). Before 3 valid frames depth is unusable (ground fallback). `distance.recalibrateOnPathChange` (default false) restarts the collection after a path change.
   - `none`: metric metres as given (UniDepth, old Metric Large runs): `c × a = 1`.
 - **Depth → metres** = `c × a × z` (single-image relative depth is right *within* a frame up to one scale — ~4 % vs Metric Large on 4929 — but that scale drifts frame to frame, median 7 %, p90 ~20 % per 1.7 s, so it is re-anchored every frame):
   - **Per-frame ground anchor `a_t`** (class `_DepthAnchor`): over walking-region cells ≥ `motionMinRowsBelowHorizon` rows below the anchor horizon, `a_t = median(g / rel)`, with `g = H·f / (row − horizon·gh)` the flat-ground z-distance at the **uncalibrated** camera height; needs ≥ `distance.anchorMinCells` (150) cells; log-EMA `distance.anchorEmaSeconds` (0.4 s ≈ 2–3 frames); held `anchorHoldSeconds` (2 s) when a frame has none, then depth is unusable (`depthM` null, depth mode falls back to ground). **Anchor horizon** `distance.anchorHorizon`: `"fixed"` (default: the mount preset's horizon row, no estimation jitter; it is only wrong while turning/pitching, which is accepted), `"estimated"` (the frame's smoothed horizon) or a row fraction.
   - **Level `c`** (class `_DepthScale`, dimensionless, gait-calibrated): depth witnesses are the pole-like static items of the ground speed witnesses (bbox height ≥ 3× width, not clipped, not along the path) within ±`distance.depthWitnessMaxBearingDeg` (40°). A static object's **z-depth** falls at exactly our speed `v = cadence × step length` (v ≥ 0.5 m/s) whatever its bearing, so each frame's sample is the median of `v / r`, `r` = the negative slope of the witness's *anchored* depth history (same ≥ 3 points / ≥ `motionMinSeconds` / latest-point rule). Estimator as `_Scale` (median over `calibrationWindowSeconds`, ≥ `distance.depthLevelMinSamples` (30), first estimate at once, log-EMA, slew ≤ `scaleMaxChangePerSecond`), clamped to `distance.depthLevelRange` [0.3, 5]. Before its first estimate `c` = the applied ground scale `k`, so depth is usable from the start.
   - Track depth histories hold anchored depth; `c` is applied at use (no feedback through `c`). Metric depth (older runs) uses `c × a_t = 1`. The ground scale and its witnesses never see depth.
-  - ego: `depthAnchor` (`a`, the frozen one in `initial` mode, or null), `depthAnchorMode`, `depthScale` (`c × a`, metres per depth unit, or null), `depthScaleSource` ∈ `gait | ground | metric | none`.
+  - ego: `depthAnchor` (`a`, the frozen one in `initial`/`plane` mode, or null), `depthAnchorMode`, `depthPitchDeg`, `depthCameraHeightUnits`, `depthGaitCheck` (plane mode; null otherwise), `depthLevel` / `depthLevelSource` (`prior | ground | gait | frozen`; the `initial` anchor freezes `c` at its first estimate, `distance.depthLevelPrior` default `ground`, no camera prior), `depthScale` (`c × a`, metres per depth unit, or null), `depthScaleSource` ∈ `gait | ground | prior | plane | metric | none`.
 - With depth, each item gets `depthM` = `s ×` median depth over its component pixels in the lowest `distance.depthLowestRowsFrac` (0.25) of its rows, mapped onto the 120×68 grid (null if none). It is reported in every mode.
 - `ground`: §7.3 unchanged; output equals no-depth output apart from `depthM`.
 - `depth` (**Lab default**): distance = `depthM` (metres via `s`: the ground scale `k` is **not** applied); lateral = the ground lateral × depth/ground; steps = depth / step length. Items without `depthM` fall back to ground.
@@ -569,7 +576,7 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 | `GET /api/recordings` | | `[Recording]` (§3) |
 | `POST /api/recordings/{id}/proxy` | | proxy status; starts a build if missing/error |
 | `GET` / `HEAD /media/{id}.mp4` | | the proxy file (Range requests); 404 if not ready |
-| `GET /api/recordings/{id}/settings` | | Settings (§4) + `"resolved": {"hfovDeg", "cameraHeightM", "stepLengthM" (null = prior), "horizon", "projection"}` |
+| `GET /api/recordings/{id}/settings` | | Settings (§4) + `"resolved": {"hfovDeg", "projection", "cameraHeightM", "stepLengthM" (null = prior), "horizon", "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM"}` (from `collision.resolve_settings`) |
 | `PUT /api/recordings/{id}/settings` | Settings | same as GET; 422 on invalid |
 | `GET /api/config/collision` | | the contents of collision.json |
 | `GET /api/models` | | `{"models": [{"path","name","default"}], "profiles": ["544p", ..., "736p"], "depthModels": ["none", "da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s"]}` (the resolutions the UI offers; legacy names are accepted by `POST /api/runs` but not listed) |

@@ -417,3 +417,30 @@ Against review 3:
 - **Usable from 0.3 s:** DA2 is usable almost at once (frozen anchor 0.208).
 - **Closest to the reference:** of the mobile options, DA2 is the closest to the Metric Large reference in level and in what it actually announces (24 / 3 against 26 / 3), with the same step stability.
 - **Drift:** over the first minute it is higher (p90 52%) while `c` settles from the ground scale to its gait estimate. DA3 Small drifts less in this window but reads further off and jumps more.
+
+### v26.1.10 follow-up 4 — the DA2 first-minute drift: body-based plane calibration
+**The problem:** the DA2 first-minute drift came from the gait level `c`, not the anchor. `c` borrowed the uncalibrated ground scale (1.0 → 0.8), got its first estimate at ~35 s, then kept climbing (1.2 → 2.4 by 145 s), so the level went 0.44 → 1.09× Large.
+
+**Step 1, freeze the level:** `c` is frozen at its first estimate (`levelModeByAnchor.initial = freeze`), with `depthLevelPrior` default `"ground"`. That stopped the wander, holding 0.51–0.68× after 40 s, but the first 40 s stayed uncalibrated and the frozen level was only as good as that first estimate.
+
+**Step 2, no camera priors.** The user's requirement: production cameras, mounting heights and angles are unknown. Production will instead ask once for the user's **height** and the camera **location** (waist / chest / eye / head) and **side** (left / center / right).
+- **New body settings** (editable in the Lab): camera height = ratio × height (chest 0.72), step length = 0.415 × height, a lane offset from the side, and a per-location horizon default.
+- **DA2 anchor `plane`:** a per-frame ground-plane fit in back-projected DA2 depth gives the camera height in depth units and the pitch. Scale = body-derived camera height / fitted height, frozen after 6 valid frames. The gait estimator is only a cross-check (`depthGaitCheck`).
+- **Head mounts:** the user will record head-mounted footage when a GoPro head mount or Meta / Samsung glasses arrive. The lane heading is isolated (`_walking_axis_offset_m`) for a later IMU body heading.
+- **The user's footage:** 1.78 m, GoPro chest, center → camera 1.28 m, step 0.74 m. Set on 4929.
+
+**4929 0–300 s:**
+
+| Distance | Speech | Beeps | Step jumps | Closing \|Δ\| median / p90 | Level vs Large | Drift median / p90 (whole window) | Usable from |
+|---|---|---|---|---|---|---|---|
+| ground (body settings) | 34 | 10 | 0.4% | 0.24 / 0.80 | — | — | — |
+| **DA2 + plane** | 34 | **4** | 0.6% | **0.11 / 0.47** | 0.63 | **3% / 9%** | 3.7 s |
+| DA2 + initial + frozen gait | 34 | 4 | 0.7% | 0.12 / 0.47 | 0.65 | 4% / 27% | 0.3 s |
+| Metric Large (reference) | 26 | 3 | 0.6% | 0.10 / 0.42 | 1.00 | — | 0 s |
+
+- **The first-minute drift is gone:** 3% / 9% over the whole window, including the first minute.
+- **Estimated pitch:** 2.9° down.
+- **Absolute level is still unresolved:** the plane level is 0.63× Large, while the walking cross-check is **1.40** (walking says distances read ~40% short).
+  - If the walking check is right, the true level is ≈ 0.88× Large, and the body-derived camera height or the fisheye back-projection near the bottom edge is off.
+  - If the camera height is right, the step length (0.74 m) is too long.
+  - The two absolute references disagree. The bottom-edge fisheye geometry is the first suspect, and a non-fisheye camera (iPhone, glasses) should settle it.

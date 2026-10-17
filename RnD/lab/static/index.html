@@ -48,7 +48,14 @@
     <details open id="secSettings">
       <summary>Collision settings</summary>
       <div class="form">
-        <label>Mount <select id="mountSel"></select></label>
+        <div class="two">
+          <label>Your height (m) <input id="userHeightInput" type="number" min="1" max="2.3" step="0.01" placeholder="default"></label>
+          <label>Camera side <select id="sideSel">
+            <option value="left">Left</option><option value="center" selected>Center</option><option value="right">Right</option></select></label>
+        </div>
+        <label>Camera location <select id="locSel"></select></label>
+        <p id="bodyHint" class="hint"></p>
+        <label id="mountLbl">Mount <select id="mountSel"></select></label>
         <label>HFOV (deg) <input id="hfovInput" type="number" min="10" max="179" step="1" placeholder="default"></label>
         <div class="two">
           <label>Camera height (m) <input id="camHeightInput" type="number" min="0.5" max="2.5" step="0.05" placeholder="preset"></label>

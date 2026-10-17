@@ -173,18 +173,34 @@ function fillMountSelect() {
   const presets = S.config?.mountPresets ?? {};
   for (const [k, v] of Object.entries(presets)) sel.add(new Option(v.label ?? k, k));
   if (S.config?.defaultMount) sel.value = S.config.defaultMount;
+  const loc = $("#locSel");
+  loc.replaceChildren(new Option("Legacy mount", ""));
+  for (const [k, v] of Object.entries(S.config?.body?.cameraLocations ?? {})) loc.add(new Option(v.label ?? k, k));
+  const dh = S.config?.body?.defaultUserHeightM;
+  $("#userHeightInput").placeholder = dh != null ? `${dh} (default)` : "default";
   if (S.config?.defaultHfovDeg) $("#hfovInput").placeholder = `${S.config.defaultHfovDeg} (default)`;
   updateSettingPlaceholders();
 }
 
-/** Placeholders show what an empty field resolves to; camera height follows the selected mount. */
+/** Placeholders show what an empty field resolves to. With a camera location set, the body-derived values
+ *  (from the server's resolved block, or this form's current location/height as a fallback) replace the mount preset. */
 function updateSettingPlaceholders() {
   const r = S.settings?.resolved;
+  const located = $("#locSel").value !== "";
+  $("#mountLbl").hidden = located;
+  const fmt = (v) => (v == null ? null : Math.round(v * 1000) / 1000);
+  const derived = located && r?.cameraLocation === $("#locSel").value;
   const preset = S.config?.mountPresets?.[$("#mountSel").value];
-  const h = preset?.cameraHeightM ?? r?.cameraHeightM;
-  $("#camHeightInput").placeholder = h != null ? `${h} (preset)` : "preset";
+  const h = derived ? r.cameraHeightM : (located ? null : (preset?.cameraHeightM ?? r?.cameraHeightM));
+  $("#camHeightInput").placeholder = h != null ? `${located ? "auto" : ""} ${fmt(h)}${located ? "" : " (preset)"}`.trim() : (located ? "auto" : "preset");
   const dflt = S.config?.geometry?.defaultStepLengthM;
-  $("#stepLenInput").placeholder = dflt != null ? `auto (default ${dflt})` : "auto";
+  const step = derived ? r.stepLengthM : null;
+  $("#stepLenInput").placeholder = step != null ? `auto ${fmt(step)}` : dflt != null ? `auto (default ${dflt})` : "auto";
+  const hint = $("#bodyHint");
+  hint.hidden = !located;
+  hint.textContent = derived
+    ? `Camera ${fmt(r.cameraHeightM)} m high, step ${fmt(r.stepLengthM)} m, horizon ${fmt(r.horizon)}, side offset ${fmt(r.lateralOffsetM)} m (save to refresh).`
+    : "Save to see the derived camera height, step length and side offset.";
   const hf = r?.hfovDeg ?? S.config?.defaultHfovDeg;
   if (hf != null) $("#hfovInput").placeholder = `${hf} (default)`;
   const auto = $("#projSel").querySelector('option[value="auto"]');
@@ -199,6 +215,9 @@ function applySettingsToForm() {
   const s = S.settings;
   if (!s) return;
   $("#mountSel").value = s.mount;
+  $("#userHeightInput").value = s.userHeightM ?? "";
+  $("#locSel").value = s.cameraLocation ?? "";
+  $("#sideSel").value = s.cameraSide ?? "center";
   $("#hfovInput").value = s.hfovDeg ?? "";
   $("#camHeightInput").value = s.cameraHeightM ?? "";
   $("#stepLenInput").value = s.stepLengthM ?? "";
@@ -210,6 +229,9 @@ function settingsFromForm() {
   const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
   return {
     mount: $("#mountSel").value,
+    userHeightM: num("#userHeightInput"),
+    cameraLocation: $("#locSel").value || null,
+    cameraSide: $("#sideSel").value,
     hfovDeg: num("#hfovInput"),
     cameraHeightM: num("#camHeightInput"),
     stepLengthM: num("#stepLenInput"),
@@ -630,6 +652,15 @@ function wire() {
     overlay.redraw();
   });
   $("#mountSel").addEventListener("change", updateSettingPlaceholders);
+  const geometryChanged = () => { // body settings change the collision geometry: offer the re-run like Distance does
+    updateSettingPlaceholders();
+    if (S.rec) putSettings().catch(() => {}); // save now so the derived hints refresh
+    if (!S.run) return;
+    $("#rerunBtn").classList.add("primary");
+    $("#rerunInfo").textContent = "Body settings changed: click Re-run collision to compare.";
+  };
+  for (const id of ["#locSel", "#sideSel"]) $(id).addEventListener("change", geometryChanged);
+  $("#userHeightInput").addEventListener("change", geometryChanged);
   $("#distSel").addEventListener("change", () => { // A/B in one click: the re-run button lights up for runs with depth maps
     if (!S.run || !runDepth(S.run)) return;
     $("#rerunBtn").classList.add("primary");

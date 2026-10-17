@@ -249,11 +249,13 @@ def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth
 
 def test_variant_anchor_table():
     assert analysis.DEPTH_ANCHOR == {"da3-small": "per-frame", "da3-base": "per-frame",
-                                     "da2-metric-outdoor-small": "initial", "unidepth-v2-s": "none"}
+                                     "da2-metric-outdoor-small": "plane", "unidepth-v2-s": "none"}
 
 
 @pytest.mark.parametrize("variant,units,npz_anchor,expect", [
-    ("da2-metric-outdoor-small", "metric", None, "initial"),      # older run: from the request's variant
+    ("da2-metric-outdoor-small", "metric", None, "plane"),        # older run: from the request's variant
+    ("da2-metric-outdoor-small", "metric", "initial", "plane"),   # superseded stored anchor: the variant table wins
+    ("da2-metric-outdoor-small", "metric", "per-frame", "per-frame"),
     ("da3-small", "relative", None, "per-frame"),
     ("unidepth-v2-s", "metric", None, "none"),
     (None, "relative", None, "per-frame"),                        # no variant: default rule by units

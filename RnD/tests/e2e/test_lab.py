@@ -875,3 +875,31 @@ def test_depth_run_toggle_and_image(page):
         assert page.input_value("#depthSel") == "da3-small"
     finally:
         _rm_run(run_id)
+
+
+# ---- body settings: height / camera location / side ----------------------------------------------------------
+
+def test_body_settings_controls_persist_and_hint(page):
+    open_lab(page, SHORT_REC)
+    before = api(f"/api/recordings/{SHORT_REC}/settings")
+    try:
+        for sel in ("#userHeightInput", "#locSel", "#sideSel"):
+            assert page.is_visible(sel)
+        labels = page.eval_on_selector_all("#locSel option", "os => os.map(o => o.value)")
+        assert labels[0] == "" and {"waist", "chest", "eye", "head"} <= set(labels)
+        page.fill("#userHeightInput", "1.78")
+        page.select_option("#locSel", "chest")
+        page.select_option("#sideSel", "center")
+        page.wait_for_function("() => document.querySelector('#camHeightInput').placeholder.startsWith('auto 1.28')")
+        assert not page.is_visible("#mountSel")
+        saved = api(f"/api/recordings/{SHORT_REC}/settings")
+        assert (saved["userHeightM"], saved["cameraLocation"], saved["cameraSide"]) == (1.78, "chest", "center")
+        assert abs(saved["resolved"]["cameraHeightM"] - 1.28) < 0.01
+        page.reload()
+        page.wait_for_function("() => document.querySelector('#locSel').value === 'chest'")
+        assert page.input_value("#userHeightInput") == "1.78"
+        assert "1.28" in page.get_attribute("#camHeightInput", "placeholder")
+    finally:
+        api(f"/api/recordings/{SHORT_REC}/settings", "PUT",
+            {k: before[k] for k in ("mount", "hfovDeg", "cameraHeightM", "stepLengthM", "projection", "distanceSource",
+                                    "userHeightM", "cameraLocation", "cameraSide")})

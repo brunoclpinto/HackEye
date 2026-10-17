@@ -174,6 +174,11 @@ class CollisionSettings:
     horizon_default: float
     projection: str = "rectilinear"    # resolved lens model: "rectilinear" (pinhole) or "fisheye" (equidistant)
     distance_source: str = "ground"    # "ground" | "depth" (v26.1.10 depth experiment)
+    depth_level_prior: float | str | None = None   # mount override of distance.depthLevelPrior (number | "ground")
+    user_height_m: float | None = None             # body mode (None = legacy mount mode)
+    camera_location: str | None = None             # "waist" | "chest" | "eye" | "head"
+    camera_side: str | None = None                 # "left" | "center" | "right"
+    lateral_offset_m: float = 0.0                  # camera centre relative to the body centre (+ = camera right of body)
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -193,11 +198,19 @@ def resolve_projection(projection: str | None, hfov_deg: float) -> str:
     return "fisheye" if hfov_deg >= AUTO_FISHEYE_HFOV_DEG else "rectilinear"
 
 
+SIDE_SIGN = {"left": -1.0, "center": 0.0, "right": 1.0}
+
+
 def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | None = None,
                      camera_height_m: float | None = None,
                      step_length_m: float | None = None, projection: str | None = None,
-                     distance_source: str = "ground") -> CollisionSettings:
-    """Explicit values win over the mount preset; None falls back to defaults."""
+                     distance_source: str = "ground", user_height_m: float | None = None,
+                     camera_location: str | None = None, camera_side: str | None = None) -> CollisionSettings:
+    """Explicit values win over the mount preset / body geometry; None falls back to defaults.
+
+    Body mode (``camera_location`` or ``user_height_m`` given, ``config["body"]``): camera height =
+    heightRatio x height + heightOffsetM, step length = stepLengthRatio x height, horizon from the location,
+    lateral offset = side sign x sideOffsetM. Otherwise the legacy mount preset (lateral offset 0)."""
     mount = mount or config["defaultMount"]
     if mount not in config["mountPresets"]:
         _warn_once(f"unknown mount '{mount}', using '{config['defaultMount']}'")
@@ -207,13 +220,41 @@ def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | N
     if distance_source not in DISTANCE_SOURCES:
         _warn_once(f"unknown distance source '{distance_source}', using 'ground'")
         distance_source = "ground"
+    body = config.get("body")
+    body_h = loc = side = None
+    lat_off = 0.0
+    cam_h = float(preset["cameraHeightM"])
+    horizon = float(preset["horizon"])
+    step = None
+    if body and (camera_location is not None or user_height_m is not None):
+        locs = body["cameraLocations"]
+        loc = camera_location or body.get("defaultCameraLocation", "chest")
+        if loc not in locs:
+            _warn_once(f"unknown camera location '{loc}', using '{body.get('defaultCameraLocation', 'chest')}'")
+            loc = body.get("defaultCameraLocation", "chest")
+        spec = locs[loc]
+        body_h = float(user_height_m if user_height_m is not None else body["defaultUserHeightM"])
+        side = camera_side or "center"
+        if side not in SIDE_SIGN:
+            _warn_once(f"unknown camera side '{side}', using 'center'")
+            side = "center"
+        cam_h = float(spec["heightRatio"]) * body_h + float(spec.get("heightOffsetM", 0.0))
+        step = float(body["stepLengthRatio"]) * body_h
+        horizon = float(spec["horizon"])
+        lat_off = SIDE_SIGN[side] * float(spec.get("sideOffsetM", 0.0))
+    if camera_height_m is not None:
+        cam_h = float(camera_height_m)
+    if step_length_m is not None:
+        step = float(step_length_m)
     return CollisionSettings(
         mount=mount,
         hfov_deg=hfov,
-        camera_height_m=float(preset["cameraHeightM"] if camera_height_m is None else camera_height_m),
-        step_length_m=None if step_length_m is None else float(step_length_m),
-        horizon_default=float(preset["horizon"]),
-        projection=resolve_projection(projection, hfov), distance_source=distance_source)
+        camera_height_m=cam_h,
+        step_length_m=step,
+        horizon_default=horizon,
+        projection=resolve_projection(projection, hfov), distance_source=distance_source,
+        depth_level_prior=preset.get("depthLevelPrior"),
+        user_height_m=body_h, camera_location=loc, camera_side=side, lateral_offset_m=lat_off)
 
 
 # --------------------------------------------------------------------------
@@ -591,17 +632,34 @@ class _FrameGeo:
     lane_region: np.ndarray                   # lane within the dilated walking region
     region_dilated: np.ndarray                # (H, W)
     floor_below: np.ndarray                   # (H, W) True where the pixel below is walking region
+    lateral_offset_m: float = 0.0             # walking axis relative to the camera axis (+ = right), see _walking_axis_offset_m
+
+
+def _walking_axis_offset_m(settings: "CollisionSettings", heading_deg: float | None = None) -> float:
+    """Lateral position (m, + = right) of the camera relative to the body centre line that the danger lane,
+    the collision-course test and the reported laterals are centred on.
+
+    The ONE place the lane's direction is decided. Today the lane runs straight along the camera's optical axis,
+    shifted by the mounting side offset. With head or glasses mounting the camera heading differs from the
+    walking direction when the head turns; a body heading (IMU) is meant to replace this (``heading_deg`` is the
+    future hook: the body-vs-camera yaw), and only this function has to change."""
+    return float(getattr(settings, "lateral_offset_m", 0.0))
 
 
 def _frame_geometry(gh: int, gw: int, horizon: float, camera_height_m: float, f: float, hfov_deg: float,
                     lane_half_m: float, region: Region | None, margin_px: int,
-                    projection: str = "rectilinear") -> _FrameGeo:
+                    projection: str = "rectilinear", lateral_offset_m: float = 0.0) -> _FrameGeo:
     rows_bottom = (np.arange(gh) + 1.0) / gh
     below = rows_bottom > horizon + 1e-9
     # half width of the lane in px at each row = lane_half * f / distance
     half_px = np.where(below, lane_half_m * (rows_bottom - horizon) * gh / camera_height_m, -1.0)
     col_c = np.arange(gw) + 0.5 - gw / 2.0
-    lane = np.abs(col_c)[None, :] <= half_px[:, None]
+    if lateral_offset_m:
+        # body lateral = camera lateral + offset; lane = |body lateral| <= half: its centre sits -offset*f/d px from the axis
+        shift_px = np.where(below, lateral_offset_m * (rows_bottom - horizon) * gh / camera_height_m, 0.0)
+        lane = np.abs(col_c[None, :] + shift_px[:, None]) <= half_px[:, None]
+    else:
+        lane = np.abs(col_c)[None, :] <= half_px[:, None]
     if region is not None:
         dil = ndimage.binary_dilation(region.mask, structure=ndimage.generate_binary_structure(2, 1),
                                       iterations=max(1, margin_px)) if margin_px > 0 else region.mask
@@ -610,7 +668,8 @@ def _frame_geometry(gh: int, gw: int, horizon: float, camera_height_m: float, f:
     floor = np.zeros((gh, gw), dtype=bool)
     if region is not None:
         floor[:-1] = region.mask[1:]
-    return _FrameGeo(gh, gw, f, horizon, camera_height_m, hfov_deg, projection, below, lane, lane & dil, dil, floor)
+    return _FrameGeo(gh, gw, f, horizon, camera_height_m, hfov_deg, projection, below, lane, lane & dil, dil, floor,
+                     lateral_offset_m)
 
 
 @dataclass
@@ -745,7 +804,7 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                 items.append(_Item(
                     group=group, class_name=ids.names[cid],
                     bbox=[cc.min() / gw, rr.min() / gh, (cc.max() + 1) / gw, (rr.max() + 1) / gh],
-                    contact_y=contact_y, distance_m=dist, lateral_m=lateral_m(x, dist, gw, geo.f),
+                    contact_y=contact_y, distance_m=dist, lateral_m=lateral_m(x, dist, gw, geo.f) + geo.lateral_offset_m,
                     bearing=bearing, clock=clock_from_bearing(bearing),
                     clock_q=(cq := clock_quarter(bearing)), clock_text=clock_text(cq), pan=_pan_from_bearing(bearing),
                     area_frac=rr.size / (gh * gw), clipped=bool(rr.max() == gh - 1),
@@ -1067,6 +1126,142 @@ def _ground_anchor(region: Region | None, dmap: np.ndarray, horizon: float, came
     return float(np.median(g / rel[ok])), int(ok.sum())
 
 
+@dataclass
+class _PlaneFit:
+    height_units: float                       # camera height above the fitted plane, in depth units
+    pitch_deg: float                          # + = looking down
+    inliers: int
+    fraction: float
+
+
+def _plane_fit(region: Region | None, dmap: np.ndarray, horizon: float, gh: int, gw: int, f: float,
+               min_rows: float, hfov_deg: float, projection: str, dist_cfg: dict) -> _PlaneFit | None:
+    """Ground plane through the walking-region cells, from the z-depth map and the pixel rays (None = invalid frame).
+
+    Cells: region cells >= ``min_rows`` below the anchor horizon with finite depth > 0, back-projected to camera
+    coordinates (X right, Y down, Z forward): rectilinear X = (u-0.5)W/f z, Y = (v-0.5)H/f z; fisheye (equidistant,
+    f = W / hfov rad) ray = (sin t cos p, sin t sin p, cos t), t = r/f, scaled so its Z equals z.
+    Fit in normalised form ``Y/Z = c/Z + a X/Z + b`` (plane Y = c + aX + bZ; linear, residuals are image-like and
+    independent of range): deterministic RANSAC (3-point, fixed seed) for a clutter-proof start, then least
+    squares on the inliers with 3 rounds rejecting residuals > 2.5x the median absolute residual.
+    Valid: >= ``anchorMinCells`` inliers, inlier fraction >= ``planeMinInlierFraction`` (0.6), normal within
+    ``planeMaxNormalDeg`` (35) of the camera's down axis and the plane below the camera.
+    Height h = c / sqrt(1+a^2+b^2); pitch = asin(-b / sqrt(1+a^2+b^2)) (+ = looking down)."""
+    if region is None:
+        return None
+    rr, cc = np.nonzero(region.mask)
+    keep = rr + 0.5 - horizon * gh >= min_rows
+    rr, cc = rr[keep], cc[keep]
+    if rr.size == 0:
+        return None
+    dh, dw = dmap.shape
+    z = dmap[np.minimum(dh - 1, ((rr + 0.5) / gh * dh).astype(int)),
+             np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(float)
+    ok = np.isfinite(z) & (z > 0.0)
+    min_cells = int(dist_cfg.get("anchorMinCells", 150))
+    if ok.sum() < min_cells:
+        return None
+    z, px, py = z[ok], cc[ok] + 0.5 - gw / 2.0, rr[ok] + 0.5 - gh / 2.0
+    if projection == "fisheye":
+        f_eq = gw / math.radians(hfov_deg)
+        r = np.hypot(px, py)
+        theta = r / f_eq
+        c_t = np.cos(theta)
+        if np.any(c_t <= 1e-3):
+            m = c_t > 1e-3
+            z, px, py, r, theta, c_t = z[m], px[m], py[m], r[m], theta[m], c_t[m]
+        sin_over_r = np.where(r > 0, np.sin(theta) / np.maximum(r, 1e-12), 0.0)
+        xn = sin_over_r * px / c_t                    # X/Z, Y/Z of the ray
+        yn = sin_over_r * py / c_t
+    else:
+        xn, yn = px / f, py / f
+    n = z.size
+    if n < min_cells:
+        return None
+    w = 1.0 / z
+    A = np.stack([w, xn, np.ones(n)], axis=1)         # y_n = c w + a x_n + b
+    # --- RANSAC start (deterministic)
+    rng = np.random.RandomState(12345)
+    tau = float(dist_cfg.get("planeRansacTol", 0.02))
+    best, best_cnt = None, -1
+    for _ in range(int(dist_cfg.get("planeRansacTrials", 60))):
+        idx = rng.choice(n, 3, replace=False)
+        try:
+            sol = np.linalg.solve(A[idx], yn[idx])
+        except np.linalg.LinAlgError:
+            continue
+        cnt = int(np.count_nonzero(np.abs(A @ sol - yn) <= tau))
+        if cnt > best_cnt:
+            best, best_cnt = sol, cnt
+    if best is None:
+        return None
+    inl = np.abs(A @ best - yn) <= tau
+    sol = best
+    for _ in range(3):
+        if inl.sum() < 3:
+            return None
+        sol = np.linalg.lstsq(A[inl], yn[inl], rcond=None)[0]
+        res = np.abs(A @ sol - yn)
+        thr = max(2.5 * float(np.median(res[inl])), 1e-3)
+        new = res <= thr
+        if np.array_equal(new, inl):
+            break
+        inl = new
+    n_in = int(inl.sum())
+    if n_in < min_cells or n_in / n < float(dist_cfg.get("planeMinInlierFraction", 0.6)):
+        return None
+    c, a, b = (float(v) for v in sol)
+    norm = math.sqrt(1.0 + a * a + b * b)
+    if c <= 0 or math.degrees(math.atan(math.hypot(a, b))) > float(dist_cfg.get("planeMaxNormalDeg", 35.0)):
+        return None
+    return _PlaneFit(c / norm, math.degrees(math.asin(max(-1.0, min(1.0, -b / norm)))), n_in, n_in / n)
+
+
+class _PlaneAnchor:
+    """One-shot plane anchor (``anchor: "plane"``, DA2 metric): scale = camera height / fitted camera height.
+
+    Each valid plane fit gives s_t = camera_height_m / h_d. The running median is usable from
+    ``initialAnchorMinFrames`` (3) valid frames and frozen at ``initialAnchorFrames`` (6); invalid frames do not
+    count. ``reset()`` restarts the collection. Also keeps the median pitch and camera height (depth units)."""
+
+    def __init__(self, dist_cfg: dict, camera_height_m: float):
+        self.camera_height_m = float(camera_height_m)
+        self.n_freeze = int(dist_cfg.get("initialAnchorFrames", 6))
+        self.n_min = min(int(dist_cfg.get("initialAnchorMinFrames", 3)), self.n_freeze)
+        self.reset()
+
+    def reset(self) -> None:
+        self.scales: list[float] = []
+        self.pitches: list[float] = []
+        self.heights: list[float] = []
+        self.frozen = False
+        self.fit: _PlaneFit | None = None
+
+    def update(self, fit: _PlaneFit | None) -> None:
+        self.fit = fit
+        if self.frozen or fit is None or not fit.height_units > 0:
+            return
+        self.scales.append(self.camera_height_m / fit.height_units)
+        self.pitches.append(fit.pitch_deg)
+        self.heights.append(fit.height_units)
+        self.frozen = len(self.scales) >= self.n_freeze
+
+    def _med(self, v: list[float]) -> float | None:
+        return float(np.median(v)) if len(v) >= self.n_min else None
+
+    @property
+    def value(self) -> float | None:
+        return self._med(self.scales)
+
+    @property
+    def pitch_deg(self) -> float | None:
+        return self._med(self.pitches)
+
+    @property
+    def height_units(self) -> float | None:
+        return self._med(self.heights)
+
+
 class _DepthScale:
     """Absolute level ``c`` of the anchored depth (``a_t * rel``, ground-metre units): a dimensionless
     correction, gait calibrated.
@@ -1091,6 +1286,7 @@ class _DepthScale:
         self.lo, self.hi = dist_cfg.get("depthLevelRange", [0.3, 5.0])
         self.max_bearing = float(dist_cfg.get("depthWitnessMaxBearingDeg", 40.0))
         self.min_speed = float(dist_cfg.get("depthWitnessMinEgoSpeed", 0.5))
+        self.freeze = False                       # "freeze" level mode: first estimate is held for the run
         self.age_s = 0.0
         self.samples: list[tuple[float, float]] = []
         self.target: float | None = None
@@ -1104,14 +1300,19 @@ class _DepthScale:
                 if r > 0 and abs(b) <= self.max_bearing]
         return float(np.median(vals)) if vals else None
 
-    def update(self, t: float, sample: float | None, dt: float) -> None:
+    def update(self, t: float, sample: float | None, dt: float, start: float | None = None) -> None:
+        """``start`` (freeze mode): the level in use before the first estimate; ``applied`` then ramps from it
+        to the frozen target at the slew limit and the target never changes again."""
+        if self.freeze and self.target is not None:
+            sample = None                           # frozen: no further estimates
         if sample is not None and math.isfinite(sample) and sample > 0:
             self.samples.append((t, sample))
         self.samples = [x for x in self.samples if x[0] >= t - self.window_s - 1e-9]
-        if len(self.samples) >= self.min_samples:
+        if len(self.samples) >= self.min_samples and not (self.freeze and self.target is not None):
             inst = min(self.hi, max(self.lo, float(np.median([x[1] for x in self.samples]))))
             if self.target is None:
-                self.target = self.applied = inst
+                self.target = inst
+                self.applied = start if (self.freeze and start is not None and start > 0) else inst
             else:
                 self.age_s += max(dt, 0.0)
                 tau = min(self.tau_s, max(self.tau_min_s, self.age_s))
@@ -1125,6 +1326,11 @@ class _DepthScale:
     @property
     def value(self) -> float | None:
         return self.applied
+
+    @property
+    def holding(self) -> bool:
+        """Freeze mode and the ramp to the frozen level is done."""
+        return self.freeze and self.target is not None and math.isclose(self.applied, self.target, rel_tol=1e-9)
 
 
 class _SurfaceTracker:
@@ -1862,14 +2068,17 @@ def _lane_polygon(geo: _FrameGeo, lane_half_m: float, far_distance_m: float) -> 
     def half(y: float) -> float:
         return lane_half_m * (y - geo.horizon) * geo.gh / geo.camera_height_m / geo.gw
 
+    def mid(y: float) -> float:
+        return 0.5 - geo.lateral_offset_m * (y - geo.horizon) * geo.gh / geo.camera_height_m / geo.gw
+
     y_far = min(1.0, geo.horizon + geo.camera_height_m * geo.f / (far_distance_m * geo.gh))
     y_far = max(y_far, geo.horizon)
 
     def cl(x: float) -> float:
         return round(min(1.0, max(0.0, x)), 4)
 
-    return [[cl(0.5 - half(1.0)), 1.0], [cl(0.5 + half(1.0)), 1.0],
-            [cl(0.5 + half(y_far)), round(y_far, 4)], [cl(0.5 - half(y_far)), round(y_far, 4)]]
+    return [[cl(mid(1.0) - half(1.0)), 1.0], [cl(mid(1.0) + half(1.0)), 1.0],
+            [cl(mid(y_far) + half(y_far)), round(y_far, 4)], [cl(mid(y_far) - half(y_far)), round(y_far, 4)]]
 
 
 def _region_rows(region: Region | None, step: int = 4) -> list[list[float]]:
@@ -2042,6 +2251,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     labels = config.get("spokenLabels", {})
     parked_labels = config.get("parkedLabels", {})
     default_step = geo_cfg["defaultStepLengthM"]
+    lat_off = _walking_axis_offset_m(settings)
     ego_cfg = config["ego"]
     # steps and the gait calibration use this step length: the per-recording value overrides the prior
     step_len = settings.step_length_m if settings.step_length_m is not None else float(
@@ -2058,12 +2268,25 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     anchor_mode = None
     if depth is not None:
         anchor_mode = depth.get("anchor") or ("per-frame" if depth.get("units", "metric") == "relative" else "none")
-        if anchor_mode not in ("per-frame", "initial", "none"):
+        if anchor_mode not in ("per-frame", "initial", "plane", "none"):
             anchor_mode = "none"
-    relative = anchor_mode in ("per-frame", "initial")      # anchored on the ground (else plain metric metres)
+    relative = anchor_mode in ("per-frame", "initial", "plane")      # anchored on the ground (else plain metric metres)
+    plane = anchor_mode == "plane"           # scale from the ground plane + camera height; no gait level (gait is a check)
     dscale = _DepthScale(ego_cfg, dist_cfg) if relative else None
-    anchor = (_InitialAnchor(dist_cfg) if anchor_mode == "initial" else _DepthAnchor(dist_cfg)) if relative else None
-    recalibrate = anchor_mode == "initial" and bool(dist_cfg.get("recalibrateOnPathChange", False))
+    gait_check = _DepthScale(ego_cfg, dist_cfg) if plane else None
+    anchor = (_PlaneAnchor(dist_cfg, settings.camera_height_m) if plane else
+              _InitialAnchor(dist_cfg) if anchor_mode == "initial" else _DepthAnchor(dist_cfg)) if relative else None
+    # level c (``_DepthScale``): mode "continuous" | "freeze", and the prior used before its first estimate.
+    # The prior (number | "ground") only applies to the initial anchor; per-frame depth borrows the ground k.
+    level_mode = dist_cfg.get("depthLevelMode") or dist_cfg.get("levelModeByAnchor", {}).get(
+        anchor_mode, "freeze" if anchor_mode == "initial" else "continuous")
+    level_prior = "ground"
+    if anchor_mode == "initial":
+        level_prior = settings.depth_level_prior if getattr(settings, "depth_level_prior", None) is not None \
+            else dist_cfg.get("depthLevelPrior", "ground")
+    if dscale is not None:
+        dscale.freeze = level_mode == "freeze"
+    recalibrate = anchor_mode in ("initial", "plane") and bool(dist_cfg.get("recalibrateOnPathChange", False))
     anchor_rows = float(trk["motionMinRowsBelowHorizon"])
     if depth is not None and len(depth["t"]):
         depth_t = np.asarray(depth["t"], dtype=float)
@@ -2139,7 +2362,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         # 3. items
         k = scale.value                            # gait scale from the frames so far: metres are real-world
         geo = _frame_geometry(gh, gw, horizon, settings.camera_height_m * k, f, settings.hfov_deg, lane_half,
-                              region, roles["boundaryMarginPx"], projection)
+                              region, roles["boundaryMarginPx"], projection, lat_off)
         items = detect_items(grid, ids, geo, config)
         if depth_maps is not None:
             j = int(np.clip(np.searchsorted(depth_t, t), 0, len(depth_t) - 1))
@@ -2148,8 +2371,12 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             dmap = np.asarray(depth_maps[j])
             if relative:
                 a_hz = anchor_horizon if anchor_horizon is not None else horizon   # fixed: no horizon jitter
-                a_raw, a_cells = _ground_anchor(region, dmap, a_hz, settings.camera_height_m, gh, gw, f, anchor_rows)
-                anchor.update(t, dt, a_raw, a_cells)
+                if plane:
+                    anchor.update(_plane_fit(region, dmap, a_hz, gh, gw, f, anchor_rows, settings.hfov_deg,
+                                             projection, dist_cfg))
+                else:
+                    a_raw, a_cells = _ground_anchor(region, dmap, a_hz, settings.camera_height_m, gh, gw, f, anchor_rows)
+                    anchor.update(t, dt, a_raw, a_cells)
             for it in items:
                 it.depth_on = True
                 it.depth_raw = _item_depth_m(it, dmap, gh, gw, depth_rows_frac)
@@ -2183,7 +2410,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 tr.contact_s = it.contact_y if tr.contact_s is None else a_c * it.contact_y + (1 - a_c) * tr.contact_s
                 d_s = ground_distance_m(tr.contact_s, horizon, settings.camera_height_m * k, gh, f)
                 if d_s is not None and it.distance_m > 0:
-                    it.lateral_m *= d_s / it.distance_m
+                    it.lateral_m = (it.lateral_m - lat_off) * (d_s / it.distance_m) + lat_off
                     it.distance_m = d_s
             if relative:                               # anchored ground metres (before the level c)
                 a_t = anchor.value
@@ -2203,15 +2430,27 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                     r = _depth_closing(tracks[it.track_id].dhist, t, trk["motionMinSeconds"])
                     if r is not None:
                         wit.append((it.bearing, r))
-            dscale.update(t, dscale.sample(cadence * step_len if cadence else None, wit), dt)
-            level = dscale.value
-            c_source = "gait" if level is not None else "ground"
-            if level is None:
-                level = scale.value
+            prior_c = level_prior if isinstance(level_prior, (int, float)) else scale.value
+            if plane:
+                # the plane scale is final; the gait only checks it (~1 = camera height and walking agree)
+                gait_check.update(t, gait_check.sample(cadence * step_len if cadence else None, wit), dt)
+                level, c_source, depth_scale_source = 1.0, "plane", "plane"
+            else:
+                dscale.update(t, dscale.sample(cadence * step_len if cadence else None, wit), dt, start=prior_c)
+                level = dscale.value
+            if plane:
+                pass
+            elif level is not None:
+                c_source = "frozen" if dscale.holding else "gait"
+                depth_scale_source = "gait"
+            else:
+                level = prior_c
+                c_source = "prior" if isinstance(level_prior, (int, float)) else "ground"
+                depth_scale_source = "ground" if c_source == "ground" else "prior"
             a_now = anchor.value
             ds = None if a_now is None else level
         else:
-            ds, a_now, c_source = 1.0, None, "metric"
+            ds, a_now, c_source, depth_scale_source, level = 1.0, None, "metric", "metric", None
         for it in items:
             if it.depth_raw is None or ds is None:
                 continue
@@ -2220,7 +2459,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             if source == "depth":
                 # metric now: no ground scale. Lateral keeps its bearing at the new distance.
                 if it.distance_m > 0:
-                    it.lateral_m *= it.depth_m / it.distance_m
+                    it.lateral_m = (it.lateral_m - lat_off) * (it.depth_m / it.distance_m) + lat_off
                 it.distance_m, it.from_depth = it.depth_m, True
                 raw_c = _depth_closing(tr.dhist, t, trk["motionMinSeconds"])
                 tr.closing = None if raw_c is None else ds * raw_c
@@ -2299,6 +2538,11 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             policy.clear_context(t)
             if recalibrate:
                 anchor.reset()
+                if plane:
+                    gait_check = _DepthScale(ego_cfg, dist_cfg)
+                elif dscale.freeze:
+                    dscale = _DepthScale(ego_cfg, dist_cfg)
+                    dscale.freeze = True
             _log(f"t={t:.1f}s path change ({'turn' if turned else 'surface'}); context memory cleared")
         policy.observe_context(t, {it.family or it.label for it in items
                                    if it.role in ("context", "danger") and _is_static_like(it)})
@@ -2329,8 +2573,13 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                     "headingDeg": _r(heading, 1),
                     "depthAnchor": _r(a_now, 4),
                     "depthAnchorMode": anchor_mode,
+                    "depthPitchDeg": _r(anchor.pitch_deg, 1) if plane else None,
+                    "depthCameraHeightUnits": _r(anchor.height_units, 4) if plane else None,
+                    "depthGaitCheck": _r(gait_check.value, 3) if plane else None,
                     "depthScale": (None if depth_maps is None or ds is None else _r(ds * a_now, 4) if relative else ds),
-                    "depthScaleSource": "none" if depth_maps is None or ds is None else c_source,
+                    "depthScaleSource": "none" if depth_maps is None or ds is None else depth_scale_source,
+                    "depthLevel": None if not relative or ds is None else _r(ds, 4),
+                    "depthLevelSource": None if not relative or ds is None else c_source,
                     "scale": round(scale.value, 3), "scaleSource": "gait" if scale.from_gait else "prior" if scale.k is not None else "none",
                     "estimated": {"speed": speed_known, "cadence": cadence is not None,
                                   "stepLength": False}},
@@ -2348,7 +2597,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         "projection": projection, "distanceSource": source,
         "settings": {"mount": settings.mount, "hfovDeg": settings.hfov_deg,
                      "cameraHeightM": settings.camera_height_m, "stepLengthM": settings.step_length_m,
-                     "laneHalfWidthM": lane_half, "priorStepLengthM": step_len},
+                     "laneHalfWidthM": lane_half, "priorStepLengthM": step_len,
+                     "userHeightM": settings.user_height_m, "cameraLocation": settings.camera_location,
+                     "cameraSide": settings.camera_side, "lateralOffsetM": lat_off},
         "gridW": gw, "gridH": gh, "egoAvailable": mser is not None, "frames": frames_out,
     }
     return hazards_doc, {"version": version, "events": events}

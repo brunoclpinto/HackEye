@@ -7,6 +7,15 @@
     "head":     {"label": "Head / helmet", "horizon": 0.40, "cameraHeightM": 1.65},
     "handheld": {"label": "Handheld",      "horizon": 0.50, "cameraHeightM": 1.10}
   },
+  "body": {
+    "defaultUserHeightM": 1.70, "stepLengthRatio": 0.415, "defaultCameraLocation": "chest",
+    "cameraLocations": {
+      "waist": {"label": "Waist",         "heightRatio": 0.58, "heightOffsetM": 0.0,  "horizon": 0.45, "sideOffsetM": 0.15},
+      "chest": {"label": "Chest",         "heightRatio": 0.72, "heightOffsetM": 0.0,  "horizon": 0.45, "sideOffsetM": 0.15},
+      "eye":   {"label": "Eye (glasses)", "heightRatio": 0.94, "heightOffsetM": 0.0,  "horizon": 0.50, "sideOffsetM": 0.07},
+      "head":  {"label": "Head",          "heightRatio": 1.0,  "heightOffsetM": 0.05, "horizon": 0.48, "sideOffsetM": 0.07}
+    }
+  },
   "geometry": {
     "defaultStepLengthM": 0.70,
     "laneHalfWidthM": 0.60,
@@ -96,7 +105,8 @@
   },
   "distance": {"depthLowestRowsFrac": 0.25, "depthWitnessMaxBearingDeg": 40,
                "depthLevelRange": [0.3, 5.0], "depthLevelMinSamples": 30, "anchorMinCells": 150, "anchorEmaSeconds": 0.4, "anchorHoldSeconds": 2.0, "anchorHorizon": "fixed",
-               "initialAnchorFrames": 6, "initialAnchorMinFrames": 3, "recalibrateOnPathChange": false},
+               "initialAnchorFrames": 6, "initialAnchorMinFrames": 3, "recalibrateOnPathChange": false,
+               "depthLevelPrior": "ground", "levelModeByAnchor": {"plane": "none", "initial": "freeze", "per-frame": "continuous", "none": "continuous"}},
   "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
                "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2,
                "motionMinRowsBelowHorizon": 8, "motionMinSeconds": 0.75, "contactEma": 0.5},

@@ -150,6 +150,18 @@ def _opt_number(body: dict, key: str, lo: float, hi: float, hi_inclusive: bool =
 
 PROJECTIONS = ("auto", "rectilinear", "fisheye")
 DISTANCE_SOURCES = ("ground", "depth")
+CAMERA_SIDES = ("left", "center", "right")
+
+
+def _location(body: dict, config: dict):
+    """cameraLocation: null (legacy mount) or a key of collision.json body.cameraLocations."""
+    v = body.get("cameraLocation")
+    if v is None:
+        return None
+    options = list((config.get("body") or {}).get("cameraLocations", {}))
+    if v not in options:
+        raise HTTPException(422, f"cameraLocation must be null or one of {options}")
+    return v
 
 
 def _choice(body: dict, key: str, options: tuple, default: str) -> str:
@@ -171,21 +183,31 @@ def _validated_settings(body: dict, config: dict) -> dict:
             "cameraHeightM": _opt_number(body, "cameraHeightM", 0.5, 2.5),
             "stepLengthM": _opt_number(body, "stepLengthM", 0.3, 2.0),
             "projection": _choice(body, "projection", PROJECTIONS, "auto"),
-            "distanceSource": _choice(body, "distanceSource", DISTANCE_SOURCES, "depth")}
+            "distanceSource": _choice(body, "distanceSource", DISTANCE_SOURCES, "depth"),
+            "userHeightM": _opt_number(body, "userHeightM", 1.0, 2.3),
+            "cameraLocation": _location(body, config),
+            "cameraSide": _choice(body, "cameraSide", CAMERA_SIDES, "center")}
 
 
 def _settings_response(rec_id: str) -> dict:
     collision = _collision()
     config = collision.load_config()
     stored = recordings.get_settings(rec_id, config["defaultMount"])
-    preset = config["mountPresets"][stored["mount"]]
-    hfov = stored["hfovDeg"] if stored["hfovDeg"] is not None else config["defaultHfovDeg"]
+    rs = collision.resolve_settings(
+        config, stored["mount"], stored["hfovDeg"], stored["cameraHeightM"], stored["stepLengthM"],
+        projection=stored["projection"], distance_source=stored["distanceSource"],
+        user_height_m=stored["userHeightM"], camera_location=stored["cameraLocation"],
+        camera_side=stored["cameraSide"])
     resolved = {
-        "hfovDeg": hfov,
-        "projection": collision.resolve_projection(stored["projection"], hfov),
-        "cameraHeightM": stored["cameraHeightM"] if stored["cameraHeightM"] is not None else preset.get("cameraHeightM"),
-        "stepLengthM": stored["stepLengthM"],  # null = auto
-        "horizon": preset.get("horizon"),
+        "hfovDeg": rs.hfov_deg,
+        "projection": rs.projection,
+        "cameraHeightM": rs.camera_height_m,
+        "stepLengthM": rs.step_length_m,  # null = auto
+        "horizon": rs.horizon_default,
+        "userHeightM": rs.user_height_m,
+        "cameraLocation": rs.camera_location,
+        "cameraSide": rs.camera_side,
+        "lateralOffsetM": rs.lateral_offset_m,
     }
     return {**stored, "resolved": resolved}
 

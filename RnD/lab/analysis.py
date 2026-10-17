@@ -49,7 +49,11 @@ RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 DEPTH_MODELS = ("none", "da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s")
 # anchor mode of each depth variant (collision.run_collision depth["anchor"])
 DEPTH_ANCHOR = {"da3-small": "per-frame", "da3-base": "per-frame",
-                "da2-metric-outdoor-small": "initial", "unidepth-v2-s": "none"}
+                "da2-metric-outdoor-small": "plane", "unidepth-v2-s": "none"}
+# One-off: DA2 runs analysed before the default became "plane" stored anchor "initial" in depth.npz.
+# The npz value normally beats the variant table, but these superseded values are ignored so a
+# collision re-run of an old DA2 run uses the current default.
+SUPERSEDED_ANCHORS = {"da2-metric-outdoor-small": {"initial"}}
 DEPTH_W, DEPTH_H = 120, 68          # stored depth map size (CONTRACTS depth.npz)
 DEPTH_MIN_REL = 1e-3             # floor for relative depth (non-finite / <= 0 become nan)
 DEPTH_MIN_M, DEPTH_MAX_M = 0.1, 200.0   # clip range for metric depth (metres)
@@ -755,7 +759,10 @@ def collision_pass(run_id: str) -> dict | None:
     settings = collision.resolve_settings(config, stored["mount"], stored["hfovDeg"],
                                           stored["cameraHeightM"], stored["stepLengthM"],
                                           projection=stored["projection"],
-                                          distance_source=stored["distanceSource"])
+                                          distance_source=stored["distanceSource"],
+                                          user_height_m=stored["userHeightM"],
+                                          camera_location=stored["cameraLocation"],
+                                          camera_side=stored["cameraSide"])
     out = run_dir(run_id)
     with np.load(out / "grids.npz") as z:
         grids, times = z["grids"], z["t"]
@@ -768,8 +775,11 @@ def collision_pass(run_id: str) -> dict | None:
         with np.load(out / "depth.npz") as z:
             units = str(z["units"]) if "units" in z.files else "metric"   # pre-v26.2.x runs are metric
             anchor = str(z["anchor"]) if "anchor" in z.files else ""
-            if anchor not in ("per-frame", "initial", "none"):     # npz field > variant table > default rule
-                anchor = DEPTH_ANCHOR.get(doc["request"].get("depth") or doc.get("depth") or "")
+            variant = doc["request"].get("depth") or doc.get("depth") or ""
+            if anchor in SUPERSEDED_ANCHORS.get(variant, ()):
+                anchor = ""
+            if anchor not in ("per-frame", "initial", "plane", "none"):  # npz field > variant table > default rule
+                anchor = DEPTH_ANCHOR.get(variant)
             if anchor is None:
                 anchor = "per-frame" if units == "relative" else "none"
             depth = {"t": z["t"], "depth": z["depth"], "units": units, "anchor": anchor}
