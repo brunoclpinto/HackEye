@@ -148,8 +148,14 @@ def plane_settings(projection, **kw):
     return dataclasses.replace(SETTINGS, camera_height_m=HC_REAL, projection=projection, distance_source="depth", **kw)
 
 
+LENS_RAYS = copy.deepcopy(CONFIG)
+LENS_RAYS["distance"]["depthRayModel"] = "lens"      # back-project with the real lens (synthetic maps hold true geometry)
+PINHOLE_RAYS = copy.deepcopy(CONFIG)
+PINHOLE_RAYS["distance"]["depthRayModel"] = "pinhole"
+
+
 def plane_run(doc, frames, projection, mot=None, **kw):
-    return col.run_collision(np.stack(frames), np.arange(len(frames)) / FPS, NAMES, kw.pop("config", CONFIG),
+    return col.run_collision(np.stack(frames), np.arange(len(frames)) / FPS, NAMES, kw.pop("config", LENS_RAYS),
                              plane_settings(projection, **kw), mot, doc)
 
 
@@ -273,3 +279,18 @@ def test_other_anchor_modes_report_no_plane_keys():
     doc, _ = plane_run(d, frames, "rectilinear")
     e = doc["frames"][-1]["ego"]
     assert e["depthAnchorMode"] == "initial" and e["depthPitchDeg"] is None and e["depthGaitCheck"] is None
+
+
+def test_pinhole_depth_rays_option_for_a_fisheye_lens():
+    """``depthRayModel: pinhole`` back-projects depth with pinhole rays whatever the lens: a fisheye-lens recording whose
+    depth map follows pinhole geometry is anchored correctly; the default ``lens`` reads it with the fisheye model."""
+    assert CONFIG["distance"]["depthRayModel"] == "lens"                 # default: the real lens (measured better on 4929)
+    n = 10
+    frames = static_frames(n)
+    doc_map = plane_doc(n, "rectilinear", noise=0.0)                     # pinhole-geometry depth
+    pin, _ = plane_run(doc_map, frames, "fisheye", config=PINHOLE_RAYS)
+    lens, _ = plane_run(doc_map, frames, "fisheye", config=CONFIG)
+    e = pin["frames"][-1]["ego"]
+    assert e["depthAnchor"] == pytest.approx(1 / 2.2, rel=0.03) and e["depthPitchDeg"] == pytest.approx(10.0, abs=1.0)
+    el = lens["frames"][-1]["ego"]
+    assert el["depthAnchor"] is None or abs(el["depthPitchDeg"] - 10.0) > 1.0 or abs(el["depthAnchor"] * 2.2 - 1) > 0.03

@@ -2264,6 +2264,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     depth_rows_frac = float(dist_cfg.get("depthLowestRowsFrac", 0.25))
     source = getattr(settings, "distance_source", "ground")
     projection = getattr(settings, "projection", "rectilinear")
+    # Rays for back-projecting depth-model output in the plane fit: "lens" (default, the resolved projection) or
+    # "pinhole". Depth models are trained on pinhole images; on 4929 pinhole rays nevertheless fitted worse (level
+    # further from the reference, gait check 1.87 vs 1.40), so "lens" stays the default -- see DECISIONS v26.1.10 f-up 5.
+    depth_rays = "rectilinear" if dist_cfg.get("depthRayModel", "lens") == "pinhole" else projection
     depth_t = depth_maps = None
     anchor_mode = None
     if depth is not None:
@@ -2373,7 +2377,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 a_hz = anchor_horizon if anchor_horizon is not None else horizon   # fixed: no horizon jitter
                 if plane:
                     anchor.update(_plane_fit(region, dmap, a_hz, gh, gw, f, anchor_rows, settings.hfov_deg,
-                                             projection, dist_cfg))
+                                             depth_rays, dist_cfg))
                 else:
                     a_raw, a_cells = _ground_anchor(region, dmap, a_hz, settings.camera_height_m, gh, gw, f, anchor_rows)
                     anchor.update(t, dt, a_raw, a_cells)

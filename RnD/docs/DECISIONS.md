@@ -444,3 +444,25 @@ Against review 3:
   - If the walking check is right, the true level is ≈ 0.88× Large, and the body-derived camera height or the fisheye back-projection near the bottom edge is off.
   - If the camera height is right, the step length (0.74 m) is too long.
   - The two absolute references disagree. The bottom-edge fisheye geometry is the first suspect, and a non-fisheye camera (iPhone, glasses) should settle it.
+
+### v26.1.10 follow-up 5 — fisheye level investigation: pinhole rays for depth
+**Investigation** (4929 0–300 s, flat walking-region ground, no ground truth). The geometric z (camera 1.28 m, pitch, lens model) was compared with both models' z, by distance and by column.
+- **The models read the fisheye as pinhole.** With the equidistant fisheye rays, DA2's ratio (geometric / model) fell from 0.22 at 1–2 m to 0.13 at 8–12 m, and Large showed the same. A search over the lens family `r = (f/k)·tan(kθ)` and pitch made both models agree with the geometry across 1–12 m (std of the log ratio 0.6–0.8%) at **k ≈ 0.95–1.0 (pinhole)** and pitch ≈ −4° (slightly up). DA2 and DA3 are trained on pinhole images and read any frame as pinhole.
+- **The near-ground scale barely changes** (0.98×), so the fisheye is *not* the cause of the 1.40 gait-check gap.
+- **The Metric Large reference was inflated.** Its metric conversion used the equidistant focal, which under the pinhole reading inflates it ×1.62. Corrected, the DA2 plane level is ≈ 1.02× Large: the camera-height calibration and Large agree.
+- **The walking-speed estimate is the outlier:** cadence × step reads 1.4–1.8× fast, and the stride-vs-step harmonic choice is the suspect.
+
+**Decisions (user):**
+- **Fix 1:** pinhole rays for depth-model back-projection, implemented as `distance.depthRayModel` (`"lens"` | `"pinhole"`).
+  - **Measured on 4929 0–300 s:** pinhole rays made the full plane fit *worse*:
+
+    | Rays | Pitch | Level vs Large (corrected) | Gait check | Speech / beeps |
+    |---|---|---|---|---|
+    | lens | 2.9° | 0.63 (1.02) | 1.40 | 34 / 4 |
+    | pinhole | 3.4° | 0.47 (0.76) | 1.87 | 43 / 10 |
+
+    Drift was 3% / 9% either way, and pinhole made depth usable from 0.3 s instead of 3.7 s.
+  - **Why the offline test misled:** it fixed the camera height and only scored near-to-far flatness. The real fit also solves height and pitch, and does not reproduce the −4° solution.
+  - **Default:** `"lens"`, so behaviour is unchanged. `"pinhole"` stays available for normal-lens cameras: in production iOS delivers distortion-corrected frames and per-frame intrinsics, so there pinhole is the true model.
+- **Fix 2 is parked:** correcting the Metric Large reference conversion.
+- **Fix 3 won't happen:** cadence verification. The gait estimate stays a check only (`depthGaitCheck`), known to read high on this footage; it never changes distances.
