@@ -152,3 +152,20 @@ speed up as a collision gets closer).
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): the per-version decision log, covering user feedback, decisions, deviations, limitations and results.
 - [`docs/plans/`](docs/plans/): the approved plan for each version.
 - [`tests/fixtures/`](tests/fixtures/): the user's Lab reviews, kept as regression ground truth.
+
+## Depth model
+
+The Lab can estimate metric depth per frame with Depth Anything 3 Metric Large
+(Apache-2.0; `depth: "da3-metric-large"` in `POST /api/runs`). The weights are not
+in the repo; download them once to the shared models dir (mounted read-only in
+the containers as `/base-models`, override with `HACKEYE_DEPTH_MODEL_DIR`):
+
+```bash
+d=~/models/depth-anything/DA3METRIC-LARGE; mkdir -p $d && for f in config.json model.safetensors README.md; do curl -L -o $d/$f https://huggingface.co/depth-anything/DA3METRIC-LARGE/resolve/main/$f; done
+```
+
+The package is pinned in the `Dockerfile` (installed `--no-deps`; see the comments
+there and in `requirements.txt`). Metric depth = `focal_px * net_output / 300`, with the
+focal computed from the recording's HFOV + projection settings at DA3's processed width.
+The model is loaded on the first run that asks for depth and released with the
+segmentation model when the worker goes idle.

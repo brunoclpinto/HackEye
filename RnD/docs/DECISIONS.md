@@ -273,3 +273,49 @@ Against review 3:
 **Also noted:**
 - The app's `yolo26s-semINT8512x896.mlpackage` is FP16, not INT8 (its metadata says `int8: False`).
 - The iPhone feeds CoreML true RGB, so after this fix the Lab and the app see the same input.
+
+## v26.1.10 — review auto-scroll, quarter clocks, metric depth (plan [`plans/v26.1.10.md`](plans/v26.1.10.md))
+**Requests:**
+- The speech review panel should follow the playhead.
+- Clock positions in quarters ("person at 12:15 in 10"), because positioning matters for navigation.
+- Would an ML model give better distance and collision results than the rules, using the mask boundaries? Something like V-JEPA, open-source and local.
+- Mid-planning: make `Yolo26m-sem-HackEye20261011.pt` and 736p the Lab defaults.
+
+**Review 4 (wiped by this bump, not saved as a fixture):** one ⊘ at 150.65 s, "crosswalk at 12 in 12": "Already referenced before. need to improve object tracking". The user said it is in line with this work and will review the next version in depth.
+
+**ML recommendation (agreed):**
+- **No end-to-end learned collision model yet.** There is no labelled data (the reviews are its start), and the rules stay explainable and reviewable.
+- **Depth model:** fuse a learned *metric depth* model with the mask boundaries. Distance was the weakest link: ground contact, horizon jitter, camera height.
+- **V-JEPA 2 / 2.1** (Meta, open, 1.2B): not viable on an iPhone 12. It is a later Lab-only candidate, as the feature extractor of a hazard model trained on review labels.
+- **Depth Anything 3 Metric Large** (ByteDance, **Apache-2.0**, 0.35B) is used in the Lab. DA3-Small and DA3-Base (also Apache-2.0, with CoreML ports) are the production path. The Large any-view and Giant models are CC-BY-NC, so they are avoided.
+
+**Implementation** (three Sonnet workers on disjoint files, reviewed):
+- **Auto-scroll:** at ≥ 1200 px the list isn't the scroll container (`#reviewPanel` is), so the old `list.scrollTop` did nothing. Rows are now revealed in the nearest ancestor that actually scrolls, never the window.
+- **Quarter clocks:** `clock_quarter` (7.5° steps) and `clock_text` ("12", "12:15", "11:45", "1:30"). `clockText` is added to hazards and to speech and beeps events, and the integer `clock` is kept.
+- **Lens projection** (`projection` setting, auto = fisheye at HFOV ≥ 100°): it matters at quarter precision (pinhole and equidistant differ by ~10° at x = 0.75 for 118°). It applies only to bearings and the depth focal; lane, lateral and ground math are unchanged.
+- **Depth pass** (`depth: "da3-metric-large"` run option):
+  - DA3 runs on the un-letterboxed RGB frame at process_res 504, with metric = focal·net/300 (README).
+  - Output goes to `depth.npz` at 120×68.
+  - DA3 is installed from a pinned commit with `--no-deps` plus its import-time deps. Its metadata asks for numpy < 2, but it works on numpy 2.2.
+- **Distance source** (`distanceSource`: ground / depth / fused): re-scored with "Re-run collision", without new inference. Tracking still matches on ground distances, and the gait calibration stays ground-based.
+- **Lab UI:** a Depth select, a Depth overlay (turbo, near = red), Lens and Distance settings, and labels showing `ground X m · depth Y m`.
+- **Defaults:** model `Yolo26m-sem-HackEye20261011.pt` (`HACKEYE_LAB_DEFAULT_MODEL`), resolution 736p, and — the user's decision after the A/B — **depth on and `distanceSource: depth`**. The API defaults for a missing `depth`/`profile` stay `none`/`default`.
+
+**Results** (4929 full, 20261011 @ 736p + depth, 72 ms/frame of which depth 45.5):
+
+| Source | Speech | Beeps | Step jumps > 30 % | Closing |Δ| median / p90 |
+|---|---|---|---|---|
+| ground | 234 | 63 | 0.4 % | 0.22 / 0.83 m/s |
+| **depth** | **159** | **24** | 0.9 % | **0.11 / 0.46** |
+| fused | 209 | 39 | 6.3 % | 0.17 / 0.89 |
+
+- 61 % of phrases land on a quarter.
+- Depth reads a median **1.44×** farther than the gait-calibrated ground distance (p10 0.97, p90 2.54), so fewer items fall within 10 steps.
+- **Scale check (no ground truth):** the closing speed of static poles divided by the walking speed should be a bit under 1 (lateral offset). It is 0.87 with depth (IQR 0.42–1.21) and 0.75 with ground (0.39–1.34), so depth's scale looks right and the ground distances still read short.
+
+**Known limitations:**
+- **fused** switches source frame to frame, so step counts jump. It needs per-track hysteresis before use.
+- **Lens model:** DA3 assumes a pinhole camera, but the footage is fisheye (equidistant focal used).
+- **Portrait recordings:** their depth maps are stretched to 120×68.
+- **Validation:** fewer calls is not yet validated: the next review is the baseline.
+- **Fixture matching:** the regression fixtures match clocks with a ±2-quarter tolerance (fisheye bearings shift).

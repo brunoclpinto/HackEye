@@ -148,6 +148,19 @@ def _opt_number(body: dict, key: str, lo: float, hi: float, hi_inclusive: bool =
     return v
 
 
+PROJECTIONS = ("auto", "rectilinear", "fisheye")
+DISTANCE_SOURCES = ("ground", "depth", "fused")
+
+
+def _choice(body: dict, key: str, options: tuple, default: str) -> str:
+    v = body.get(key)
+    if v is None:
+        return default
+    if v not in options:
+        raise HTTPException(422, f"{key} must be one of {list(options)}")
+    return v
+
+
 def _validated_settings(body: dict, config: dict) -> dict:
     """Validate a settings body (§4). A legacy `corridor` key is ignored."""
     mount = body.get("mount") or config["defaultMount"]
@@ -156,7 +169,9 @@ def _validated_settings(body: dict, config: dict) -> dict:
     return {"mount": mount,
             "hfovDeg": _opt_number(body, "hfovDeg", 10, 180, hi_inclusive=False),
             "cameraHeightM": _opt_number(body, "cameraHeightM", 0.5, 2.5),
-            "stepLengthM": _opt_number(body, "stepLengthM", 0.3, 2.0)}
+            "stepLengthM": _opt_number(body, "stepLengthM", 0.3, 2.0),
+            "projection": _choice(body, "projection", PROJECTIONS, "auto"),
+            "distanceSource": _choice(body, "distanceSource", DISTANCE_SOURCES, "depth")}
 
 
 def _settings_response(rec_id: str) -> dict:
@@ -164,8 +179,10 @@ def _settings_response(rec_id: str) -> dict:
     config = collision.load_config()
     stored = recordings.get_settings(rec_id, config["defaultMount"])
     preset = config["mountPresets"][stored["mount"]]
+    hfov = stored["hfovDeg"] if stored["hfovDeg"] is not None else config["defaultHfovDeg"]
     resolved = {
-        "hfovDeg": stored["hfovDeg"] if stored["hfovDeg"] is not None else config["defaultHfovDeg"],
+        "hfovDeg": hfov,
+        "projection": collision.resolve_projection(stored["projection"], hfov),
         "cameraHeightM": stored["cameraHeightM"] if stored["cameraHeightM"] is not None else preset.get("cameraHeightM"),
         "stepLengthM": stored["stepLengthM"],  # null = auto
         "horizon": preset.get("horizon"),
@@ -196,7 +213,8 @@ def get_collision_config() -> dict:
 
 @app.get("/api/models")
 def get_models() -> dict:
-    return {"models": analysis.list_models(), "profiles": analysis.RESOLUTIONS}
+    return {"models": analysis.list_models(), "profiles": analysis.RESOLUTIONS,
+            "depthModels": list(analysis.DEPTH_MODELS)}
 
 
 @app.post("/api/runs")
@@ -375,6 +393,56 @@ def get_classes_png(run_id: str, index: int) -> Response:
     if not ok:
         raise HTTPException(500, "PNG encode failed")
     return Response(buf.tobytes(), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+# --- metric depth maps (view-only) --------------------------------------------------------------------
+# depth.npz holds (N,68,120) float16 metres; one small LRU like the class grids.
+
+DEPTH_VIS_MIN_M, DEPTH_VIS_MAX_M = 0.5, 30.0
+_DEPTH_CACHE_RUNS = 2
+_depth_cache: "OrderedDict[str, tuple]" = OrderedDict()   # run_id -> (mtime_ns, depth (N,H,W) float16)
+_depth_lock = threading.Lock()
+
+
+def _run_depth(run_id: str) -> np.ndarray:
+    _run(run_id)
+    path = analysis.run_dir(run_id) / "depth.npz"
+    try:
+        mtime = path.stat().st_mtime_ns
+    except FileNotFoundError:
+        raise HTTPException(404, "Run has no depth") from None
+    with _depth_lock:
+        ent = _depth_cache.get(run_id)
+        if ent is None or ent[0] != mtime:
+            with np.load(path) as z:
+                ent = (mtime, z["depth"])
+            _depth_cache[run_id] = ent
+        _depth_cache.move_to_end(run_id)
+        while len(_depth_cache) > _DEPTH_CACHE_RUNS:
+            _depth_cache.popitem(last=False)
+        return ent[1]
+
+
+def depth_to_png(depth: np.ndarray) -> bytes:
+    """8-bit turbo PNG of a metric depth map: log scale over 0.5-30 m, near = warm (red), far = cool (blue)."""
+    lo, hi = math.log(DEPTH_VIS_MIN_M), math.log(DEPTH_VIS_MAX_M)
+    d = np.clip(np.nan_to_num(depth.astype(np.float32), nan=DEPTH_VIS_MAX_M, posinf=DEPTH_VIS_MAX_M),
+                DEPTH_VIS_MIN_M, DEPTH_VIS_MAX_M)
+    norm = (np.log(d) - lo) / (hi - lo)                       # 0 = near, 1 = far
+    idx = np.round((1.0 - norm) * 255).astype(np.uint8)       # turbo: 255 = red, 0 = blue
+    ok, buf = cv2.imencode(".png", cv2.applyColorMap(idx, cv2.COLORMAP_TURBO))
+    if not ok:
+        raise HTTPException(500, "PNG encode failed")
+    return buf.tobytes()
+
+
+@app.get("/api/runs/{run_id}/depth/{index}.png")
+def get_depth_png(run_id: str, index: int) -> Response:
+    depth = _run_depth(run_id)
+    if index < 0 or index >= len(depth):
+        raise HTTPException(404, "No such frame")
+    return Response(depth_to_png(depth[index]), media_type="image/png",
+                    headers={"Cache-Control": "max-age=86400"})
 
 
 @app.get("/api/runs/{run_id}/classes")

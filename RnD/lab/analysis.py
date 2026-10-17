@@ -46,6 +46,10 @@ PROFILES = ["default", "production", "half", "quarter"]  # legacy names, still a
 RESOLUTIONS = [f"{n}p" for n in profiles.SHORT_SIDE_OPTIONS]  # what the UI offers
 IDLE_SECONDS = float(os.environ.get("HACKEYE_LAB_IDLE_SECONDS", "300"))
 RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+DEPTH_MODELS = ("none", "da3-metric-large")
+DEPTH_W, DEPTH_H = 120, 68          # stored depth map size (CONTRACTS depth.npz)
+DEPTH_RANGE_M = (0.1, 200.0)
+DEFAULT_MODEL = os.environ.get("HACKEYE_LAB_DEFAULT_MODEL", "Yolo26m-sem-HackEye20261011.pt")
 MODEL_DIRS = [(Path(os.environ.get("HACKEYE_MODELS_DIR", "/models")), "*.pt"),
               (Path(os.environ.get("HACKEYE_RELEASES_DIR", "/hackeye-models")), "*HackEye*.pt")]
 
@@ -86,7 +90,10 @@ def list_models() -> list[dict]:
         m = re.search(r"HackEye(\d{8})", p.name)
         return (m.group(1) if m else "", p.name)
 
-    default = max(releases, key=release_key) if releases else None
+    # Pinned default (by file name); without that file, the newest release.
+    default = next((p for p in releases if p.name == DEFAULT_MODEL), None)
+    if default is None and releases:
+        default = max(releases, key=release_key)
     return [{"path": str(p), "name": p.name, "default": p == default} for p in paths]
 
 
@@ -175,8 +182,14 @@ def _normalise_request(req: dict) -> dict:
     model = req.get("model")
     if model not in {m["path"] for m in list_models()}:
         raise RunError(f"Unknown model: {model!r}")
-    return {"recording": rec["id"], "start": start, "end": end,
-            "model": model, "profile": profile, "fps": fps}
+    depth = req.get("depth") or "none"
+    if depth not in DEPTH_MODELS:
+        raise RunError(f"depth must be one of {list(DEPTH_MODELS)}")
+    request = {"recording": rec["id"], "start": start, "end": end,
+               "model": model, "profile": profile, "fps": fps}
+    if depth != "none":  # omitted for "none" so ids of depth-less requests stay stable
+        request["depth"] = depth
+    return request
 
 
 def _run_id(request: dict) -> str:
@@ -233,6 +246,7 @@ def submit_run(req: dict) -> dict:
         "frameCount": 0, "motionFrames": 0, "gridW": GRID_W, "gridH": 0, "srcW": 0, "srcH": 0,
         "inputSpec": None, "modelName": Path(request["model"]).name, "classNames": [],
         "msPerFrame": None, "collisionVersion": None,
+        "depth": request.get("depth", "none"), "depthMsPerFrame": None,
     }
     run_dir(run_id).mkdir(parents=True, exist_ok=True)
     with _state_lock:
@@ -249,7 +263,7 @@ def submit_run(req: dict) -> dict:
     return dict(doc)
 
 
-_PARTIAL_OUTPUTS = ("grids.npz", "motion.npz", "hazards.json", "events.json")
+_PARTIAL_OUTPUTS = ("grids.npz", "motion.npz", "depth.npz", "hazards.json", "events.json")
 
 
 def _remove_partial_outputs(run_id: str) -> None:
@@ -355,6 +369,7 @@ class _ModelCache:
         self.path: str | None = None
         self.model = None
         self.class_names: list[str] = []
+        self.depth_model = None
         self.last_used = 0.0
 
     def get(self, path: str):
@@ -374,18 +389,31 @@ class _ModelCache:
         self.last_used = time.monotonic()
         return self.model
 
+    def get_depth(self):
+        """The depth model, loaded on first use (only runs that ask for depth pay for it)."""
+        if self.depth_model is None:
+            import gpu_guard
+            from depth import DepthModel
+
+            t0 = time.perf_counter()
+            self.depth_model = DepthModel(gpu_guard.assert_torch_cuda())
+            _log(f"depth model loaded ({time.perf_counter() - t0:.1f}s)")
+        self.last_used = time.monotonic()
+        return self.depth_model
+
     def release(self) -> None:
-        if self.model is None:
+        if self.model is None and self.depth_model is None:
             return
         import torch
 
-        name = Path(self.path).name
-        self.model, self.path = None, None
+        name = Path(self.path).name if self.path else None
+        had_depth = self.depth_model is not None
+        self.model, self.path, self.depth_model = None, None, None
         import gc
 
         gc.collect()
         torch.cuda.empty_cache()
-        _log(f"model released: {name}")
+        _log(f"model released: {name}{' + depth' if had_depth else ''}")
 
 
 def _ensure_worker() -> None:
@@ -405,7 +433,7 @@ def _worker_loop() -> None:
         try:
             run_id = _jobs.get(timeout=1.0)
         except queue.Empty:
-            if cache.model is not None and time.monotonic() - cache.last_used > IDLE_SECONDS:
+            if (cache.model is not None or cache.depth_model is not None) and time.monotonic() - cache.last_used > IDLE_SECONDS:
                 cache.release()
             continue
         with _state_lock:
@@ -614,6 +642,16 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                 inputSpec={"w": spec.dst_w, "h": spec.dst_h, "description": spec.description},
                 classNames=cache.class_names)
 
+    depth_model = depth_focal = None
+    if req.get("depth", "none") != "none":
+        depth_model, hfov, projection = cache.get_depth(), *_depth_geometry(req["recording"])
+        from depth import focal_px
+
+        _log(f"run {run_id}: depth {req['depth']}, hfov {hfov:g} deg, {projection}")
+        depth_focal = lambda w: focal_px(w, hfov, projection)  # noqa: E731
+    depth_maps: list[np.ndarray] = []
+    depth_seconds = 0.0
+
     reader = _FrameReader(rec, motion_end=end)
     grids: list[np.ndarray] = []
     times: list[float] = []
@@ -626,6 +664,12 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                 break
             frame_t, bgr = got
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            if depth_model is not None:
+                td = time.perf_counter()
+                metric = depth_model.predict_metric(rgb, depth_focal(rgb.shape[1]))
+                small_d = cv2.resize(metric, (DEPTH_W, DEPTH_H), interpolation=cv2.INTER_AREA)
+                depth_maps.append(np.clip(small_d, *DEPTH_RANGE_M).astype(np.float16))
+                depth_seconds += time.perf_counter() - td
             letterboxed, meta = letterbox_with_meta(rgb, spec.dst_w, spec.dst_h)
             class_ids = model.predict_class_grid(letterboxed, spec.dst_w, spec.dst_h)
             grid = grid_from_semantic_mask(class_ids, meta).class_ids
@@ -656,6 +700,10 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     elapsed = time.perf_counter() - t_start
     np.savez_compressed(out / "grids.npz", grids=np.stack(grids), t=np.array(times, np.float64),
                         index=np.arange(len(grids), dtype=np.int32))
+    if depth_model is not None:
+        np.savez_compressed(out / "depth.npz", depth=np.stack(depth_maps), t=np.array(times, np.float64))
+        _update_run(run_id, depth=req["depth"],
+                    depthMsPerFrame=round(depth_seconds * 1000 / len(depth_maps), 1))
     motion = reader.motion_track()
     np.savez_compressed(out / "motion.npz", **motion)
     n_motion = len(motion["t"])
@@ -677,6 +725,16 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
 # Collision pass
 # --------------------------------------------------------------------------
 
+def _depth_geometry(rec_id: str) -> tuple[float, str]:
+    """(HFOV in degrees, resolved projection) from the recording's settings, for the depth focal length."""
+    import collision
+
+    config = collision.load_config()
+    stored = recordings.get_settings(rec_id, config["defaultMount"])
+    hfov = stored["hfovDeg"] if stored["hfovDeg"] is not None else config["defaultHfovDeg"]
+    return float(hfov), collision.resolve_projection(stored["projection"], hfov)
+
+
 def collision_pass(run_id: str) -> dict | None:
     """(Re)compute hazards.json / events.json from grids.npz using the
     recording's current settings. Returns {"version": ...}, or None when
@@ -691,7 +749,9 @@ def collision_pass(run_id: str) -> dict | None:
     config = collision.load_config()
     stored = recordings.get_settings(doc["request"]["recording"], config["defaultMount"])
     settings = collision.resolve_settings(config, stored["mount"], stored["hfovDeg"],
-                                          stored["cameraHeightM"], stored["stepLengthM"])
+                                          stored["cameraHeightM"], stored["stepLengthM"],
+                                          projection=stored["projection"],
+                                          distance_source=stored["distanceSource"])
     out = run_dir(run_id)
     with np.load(out / "grids.npz") as z:
         grids, times = z["grids"], z["t"]
@@ -699,8 +759,13 @@ def collision_pass(run_id: str) -> dict | None:
     if (out / "motion.npz").exists():
         with np.load(out / "motion.npz") as z:
             motion = {"t": z["t"], "dx": z["dx"], "dy": z["dy"]}
+    depth = None  # runs without a depth model have no depth.npz
+    if (out / "depth.npz").exists():
+        with np.load(out / "depth.npz") as z:
+            depth = {"t": z["t"], "depth": z["depth"]}
     t0 = time.perf_counter()
-    hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings, motion)
+    hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings, motion,
+                                              depth=depth)
     elapsed = round(time.perf_counter() - t0, 3)
     hazards.setdefault("settings", {})["mount"] = stored["mount"]
     _write_json(out / "hazards.json", hazards)

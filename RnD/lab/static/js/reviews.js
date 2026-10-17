@@ -31,6 +31,24 @@ function el(tag, cls, text) {
   return e;
 }
 
+/** Nearest ancestor of `el` (starting with `el`) that really scrolls vertically; null = none below the document. */
+function scrollParent(el) {
+  for (let n = el; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+    if (n.scrollHeight <= n.clientHeight + 1) continue;
+    if (/^(auto|scroll)$/.test(getComputedStyle(n).overflowY)) return n;
+  }
+  return null;
+}
+
+/** Scroll the nearest scrolling ancestor so `row` is visible (~1/3 from the top); does nothing when it already is. Never scrolls the window. */
+function revealRow(row, start) {
+  const box = scrollParent(start);
+  if (!box) return;
+  const b = box.getBoundingClientRect(), r = row.getBoundingClientRect();
+  if (r.top >= b.top && r.bottom <= b.bottom) return;
+  box.scrollTop += r.top - b.top - box.clientHeight / 3;
+}
+
 export class Reviews {
   /** hooks: {seek(t), getTime(), pause(), isPaused(), getFrame(t) -> Promise<frame|null>, getTemplates(), transport(id), changed()} supplied by app.js */
   constructor(hooks) {
@@ -363,7 +381,7 @@ export class Reviews {
       return;
     }
     const snapshot = {};
-    for (const k of ["t", "text", "role", "trackId", "urgency", "clock", "type", "tEnd", "label", "minSteps"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
+    for (const k of ["t", "text", "role", "trackId", "urgency", "clock", "clockText", "type", "tEnd", "label", "minSteps"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
     const run = this.run, rec = this.rec;
     const draft = this.drafts.get(rk) ?? "";
     this.drafts.delete(rk);
@@ -486,7 +504,7 @@ export class Reviews {
     c.i = (c.i + 1) % c.list.length;
     const it = c.list[c.i];
     let { text, role } = fillFor(it, this.h.getTemplates());
-    if (this._addType() === "beeps") text = `beeps · ${it.label ?? it.className ?? "object"} at ${it.clock ?? "?"}`;
+    if (this._addType() === "beeps") text = `beeps · ${it.label ?? it.className ?? "object"} at ${it.clockText ?? it.clock ?? "?"}`;
     $("#rvAddText").value = text.slice(0, 300);
     $("#rvAddRole").value = role;
     const info = $("#rvAddAutoInfo");
@@ -531,10 +549,7 @@ export class Reviews {
     row.classList.add("cur");
     const a = document.activeElement;
     if (a && this.list.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return; // don't yank while typing
-    const lt = this.list.scrollTop, lh = this.list.clientHeight;
-    if (row.offsetTop < lt || row.offsetTop + row.offsetHeight > lt + lh) {
-      this.list.scrollTop = Math.max(0, row.offsetTop - lh / 3);
-    }
+    revealRow(row, this.list);
   }
 
   // ------------------------------------------------------------ wiring

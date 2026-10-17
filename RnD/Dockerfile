@@ -16,6 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Depth Anything 3 (Apache-2.0), pinned to a commit. --no-deps: its metadata demands numpy<2,
+# xformers, open3d, evo, pycolmap, ... that monocular inference never touches; the imports it
+# does need are in requirements.txt. The release zip has no git metadata, so give hatch-vcs a version.
+ARG DA3_COMMIT=3d835ec1a5802d64a8b8b15f817a1ab54809bfe4
+RUN SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir --no-deps \
+    https://github.com/ByteDance-Seed/Depth-Anything-3/archive/${DA3_COMMIT}.zip
+
 COPY . .
 
 ENTRYPOINT ["python", "cli.py"]

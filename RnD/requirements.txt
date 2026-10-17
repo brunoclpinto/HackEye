@@ -7,3 +7,17 @@ onnxruntime-gpu>=1.19
 fastapi>=0.115
 uvicorn>=0.30
 pytest>=8.0
+# Depth model (Lab): Depth Anything 3 is installed in the Dockerfile with --no-deps
+# (its metadata pins numpy<2 and pulls open3d/evo/pycolmap/xformers, none needed for
+# monocular inference). These are the modules its api import chain needs (the export/pose
+# helpers import them at module level).
+huggingface_hub>=0.24
+safetensors>=0.4
+omegaconf>=2.3
+addict
+einops
+moviepy==1.0.3
+plyfile
+trimesh
+pycolmap
+evo

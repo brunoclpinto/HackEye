@@ -172,6 +172,8 @@ class CollisionSettings:
     camera_height_m: float
     step_length_m: float | None        # None = estimate, fall back to the default
     horizon_default: float
+    projection: str = "rectilinear"    # resolved lens model: "rectilinear" (pinhole) or "fisheye" (equidistant)
+    distance_source: str = "ground"    # "ground" | "depth" | "fused" (v26.1.10 depth experiment)
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -180,29 +182,49 @@ def load_config(path: Path | None = None) -> dict:
         return json.load(f)
 
 
+AUTO_FISHEYE_HFOV_DEG = 100.0
+DISTANCE_SOURCES = ("ground", "depth", "fused")
+
+
+def resolve_projection(projection: str | None, hfov_deg: float) -> str:
+    """"rectilinear" / "fisheye" pass through; None or "auto": fisheye from HFOV 100 deg up (wide action cams)."""
+    if projection in ("rectilinear", "fisheye"):
+        return projection
+    return "fisheye" if hfov_deg >= AUTO_FISHEYE_HFOV_DEG else "rectilinear"
+
+
 def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | None = None,
                      camera_height_m: float | None = None,
-                     step_length_m: float | None = None) -> CollisionSettings:
+                     step_length_m: float | None = None, projection: str | None = None,
+                     distance_source: str = "ground") -> CollisionSettings:
     """Explicit values win over the mount preset; None falls back to defaults."""
     mount = mount or config["defaultMount"]
     if mount not in config["mountPresets"]:
         _warn_once(f"unknown mount '{mount}', using '{config['defaultMount']}'")
         mount = config["defaultMount"]
     preset = config["mountPresets"][mount]
+    hfov = float(config["defaultHfovDeg"] if hfov_deg is None else hfov_deg)
+    if distance_source not in DISTANCE_SOURCES:
+        _warn_once(f"unknown distance source '{distance_source}', using 'ground'")
+        distance_source = "ground"
     return CollisionSettings(
         mount=mount,
-        hfov_deg=float(config["defaultHfovDeg"] if hfov_deg is None else hfov_deg),
+        hfov_deg=hfov,
         camera_height_m=float(preset["cameraHeightM"] if camera_height_m is None else camera_height_m),
         step_length_m=None if step_length_m is None else float(step_length_m),
-        horizon_default=float(preset["horizon"]))
+        horizon_default=float(preset["horizon"]),
+        projection=resolve_projection(projection, hfov), distance_source=distance_source)
 
 
 # --------------------------------------------------------------------------
 # Geometry helpers
 # --------------------------------------------------------------------------
 
-def bearing_deg(x_norm: float, hfov_deg: float) -> float:
-    """Pinhole model: atan((x - 0.5) * 2 * tan(hfov / 2)); positive = right."""
+def bearing_deg(x_norm: float, hfov_deg: float, projection: str = "rectilinear") -> float:
+    """Bearing, positive = right. Rectilinear (pinhole): atan((x - 0.5) * 2 * tan(hfov / 2));
+    fisheye (equidistant): (x - 0.5) * hfov."""
+    if projection == "fisheye":
+        return (x_norm - 0.5) * hfov_deg
     t = math.tan(math.radians(hfov_deg) / 2.0)
     return math.degrees(math.atan((x_norm - 0.5) * 2.0 * t))
 
@@ -214,6 +236,27 @@ def clock_from_bearing(bearing: float) -> int:
     if k == 0:
         return 12
     return 12 + k if k < 0 else k
+
+
+def clock_quarter(bearing: float) -> int:
+    """Quarter-hour clock index: round(bearing / 7.5), half away from zero, clamped to +-12 (+-90 deg)."""
+    v = bearing / 7.5
+    q = int(math.floor(abs(v) + 0.5))
+    q = -q if v < 0 else q
+    return max(-12, min(12, q))
+
+
+def clock_text(q: int) -> str:
+    """Spoken clock position of quarter index ``q`` (0 = "12", 1 = "12:15", -1 = "11:45", 4 = "1", -12 = "9")."""
+    m = (720 + 15 * int(q)) % 720
+    hour = m // 60 or 12
+    minutes = m % 60
+    return f"{hour}" if minutes == 0 else f"{hour}:{minutes:02d}"
+
+
+def _quarter_of_hour(clock: int) -> int:
+    """Quarter index of a whole clock hour (12 -> 0, 1 -> 4, 11 -> -4)."""
+    return 0 if clock == 12 else 4 * clock if clock <= 3 else 4 * (clock - 12)
 
 
 def _pan_from_bearing(bearing: float) -> float:
@@ -542,6 +585,7 @@ class _FrameGeo:
     horizon: float
     camera_height_m: float
     hfov_deg: float
+    projection: str
     below: np.ndarray                         # (H,) rows whose bottom edge is below the horizon
     lane: np.ndarray                          # (H, W) danger lane
     lane_region: np.ndarray                   # lane within the dilated walking region
@@ -550,7 +594,8 @@ class _FrameGeo:
 
 
 def _frame_geometry(gh: int, gw: int, horizon: float, camera_height_m: float, f: float, hfov_deg: float,
-                    lane_half_m: float, region: Region | None, margin_px: int) -> _FrameGeo:
+                    lane_half_m: float, region: Region | None, margin_px: int,
+                    projection: str = "rectilinear") -> _FrameGeo:
     rows_bottom = (np.arange(gh) + 1.0) / gh
     below = rows_bottom > horizon + 1e-9
     # half width of the lane in px at each row = lane_half * f / distance
@@ -565,7 +610,7 @@ def _frame_geometry(gh: int, gw: int, horizon: float, camera_height_m: float, f:
     floor = np.zeros((gh, gw), dtype=bool)
     if region is not None:
         floor[:-1] = region.mask[1:]
-    return _FrameGeo(gh, gw, f, horizon, camera_height_m, hfov_deg, below, lane, lane & dil, dil, floor)
+    return _FrameGeo(gh, gw, f, horizon, camera_height_m, hfov_deg, projection, below, lane, lane & dil, dil, floor)
 
 
 @dataclass
@@ -615,6 +660,17 @@ class _Item:
     mem_named: bool = False                   # ... and it was named (False: only covered by a cluster notice)
     mem_approach: bool = False                # ... and it was announced as "approaching"
     shape: tuple | None = None                # (cropped component mask, col0, row0): source of the outline (v26.1.8)
+    clock_q: int | None = None                # quarter-hour clock index (v26.1.10); derived from ``clock`` if not given
+    clock_text: str = ""                      # spoken clock position, "12", "12:15", "11:45"
+    depth_m: float | None = None              # metric depth under the item's lower rows (experiment), if a depth map exists
+    depth_on: bool = False                    # a depth map exists for this frame (``depthM`` is reported, maybe null)
+    from_depth: bool = False                  # distance_m was taken from the depth map
+
+    def __post_init__(self) -> None:
+        if self.clock_q is None:
+            self.clock_q = _quarter_of_hour(self.clock)
+        if not self.clock_text:
+            self.clock_text = clock_text(self.clock_q)
 
 
 def _bottom_point(rows: np.ndarray, cols: np.ndarray, sel: np.ndarray, gw: int) -> tuple[int, int]:
@@ -684,12 +740,13 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                 if lane_row.any():
                     cover = float(np.count_nonzero((rr == row) & in_lane)) / float(lane_row.sum())
                 x = (col + 0.5) / gw
-                bearing = bearing_deg(x, geo.hfov_deg)
+                bearing = bearing_deg(x, geo.hfov_deg, geo.projection)
                 items.append(_Item(
                     group=group, class_name=ids.names[cid],
                     bbox=[cc.min() / gw, rr.min() / gh, (cc.max() + 1) / gw, (rr.max() + 1) / gh],
                     contact_y=contact_y, distance_m=dist, lateral_m=lateral_m(x, dist, gw, geo.f),
-                    bearing=bearing, clock=clock_from_bearing(bearing), pan=_pan_from_bearing(bearing),
+                    bearing=bearing, clock=clock_from_bearing(bearing),
+                    clock_q=(cq := clock_quarter(bearing)), clock_text=clock_text(cq), pan=_pan_from_bearing(bearing),
                     area_frac=rr.size / (gh * gw), clipped=bool(rr.max() == gh - 1),
                     touches=bool(inreg.any()), lane_hit=lane_hit,
                     along_path=along, lane_cover=cover, contact_y_raw=contact_y,
@@ -731,6 +788,7 @@ class _Track:
     linked_t: float = 0.0                     # when it was matched to it
     under_last: float | None = None           # last time a curb/crosswalk track had its contact under our feet
     under_fired: bool = False
+    dhist: list[tuple[float, float]] = field(default_factory=list)     # (t, depthM) of the depth experiment
 
 
 def _closing_mps(history: list[tuple[float, float]], horizon: float, camera_height_m: float, gh: int, f: float,
@@ -756,6 +814,37 @@ def _closing_mps(history: list[tuple[float, float]], horizon: float, camera_heig
     if denom <= 0:
         return None
     return -float((tc * (d - d.mean())).sum() / denom)
+
+
+def _depth_closing(history: list[tuple[float, float]], t_now: float, min_span_s: float,
+                   min_points: int = 3) -> float | None:
+    """-slope of the metric depth history; needs >= 3 points, >= ``min_span_s`` of history, latest point = now."""
+    if len(history) < min_points or history[-1][0] != t_now or history[-1][0] - history[0][0] < min_span_s:
+        return None
+    t = np.array([h[0] for h in history])
+    d = np.array([h[1] for h in history])
+    tc = t - t.mean()
+    denom = float((tc * tc).sum())
+    return None if denom <= 0 else -float((tc * (d - d.mean())).sum() / denom)
+
+
+def _item_depth_m(it: _Item, dmap: np.ndarray, gh: int, gw: int, lowest_frac: float) -> float | None:
+    """Median metric depth under the lowest ``lowest_frac`` of the item's rows (component pixels, mapped by
+    normalised coordinates onto the depth grid); None without a valid pixel."""
+    mask, c0, r0 = it.shape
+    rr, cc = np.nonzero(mask)
+    if rr.size == 0:
+        return None
+    rr = rr + r0
+    cc = cc + c0
+    h = int(rr.max() - rr.min() + 1)
+    keep = rr >= rr.max() + 1 - max(1, int(math.ceil(lowest_frac * h)))
+    dh, dw = dmap.shape
+    dr = np.minimum(dh - 1, ((rr[keep] + 0.5) / gh * dh).astype(int))
+    dc = np.minimum(dw - 1, ((cc[keep] + 0.5) / gw * dw).astype(int))
+    v = dmap[dr, dc].astype(float)
+    v = v[np.isfinite(v) & (v > 0.0)]
+    return None if v.size == 0 else float(np.median(v))
 
 
 def _match(tracks: dict[int, _Track], items: list[_Item], t: float, trk: dict) -> dict[int, int]:
@@ -1281,12 +1370,9 @@ class SpeechPolicy:
         return max(1, int(round(steps)))
 
     @staticmethod
-    def _clock_order(c: int) -> int:
-        return c + 12 if c <= 3 else c                  # left to right: 9 10 11 12 1 2 3
-
-    @classmethod
-    def _join_clocks(cls, clocks) -> str:
-        cs = [str(c) for c in sorted(set(clocks), key=cls._clock_order)]
+    def _join_clocks(items) -> str:
+        """Distinct clock texts of ``items``, left to right (by quarter index): "1", "12:15 and 1:30"."""
+        cs = [txt for _, txt in sorted({(i.clock_q, i.clock_text) for i in items})]
         return cs[0] if len(cs) == 1 else ", ".join(cs[:-1]) + " and " + cs[-1]
 
     def _steps_txt(self, it: _Item) -> str | None:
@@ -1306,7 +1392,7 @@ class SpeechPolicy:
     def _text(self, template: str, it: _Item | None = None, label: str = "") -> str:
         if it is None:
             return self.cfg["templates"][template].format(label=label)
-        return self._fmt(template, label=it.label, clock=it.clock, steps=self._steps_txt(it))
+        return self._fmt(template, label=it.label, clock=it.clock_text, steps=self._steps_txt(it))
 
     @staticmethod
     def _plural(label: str) -> str:
@@ -1316,16 +1402,16 @@ class SpeechPolicy:
         """One phrase entry for same-label items: "pole at 12 in 6", merged "person at 1 and 2 in 4", "poles at 11 and 1 in 8".
         The steps are those of the nearest item."""
         near = min(group, key=lambda i: i.steps if i.steps is not None and math.isfinite(i.steps) else math.inf)
-        clocks = {i.clock for i in group}
+        clocks = {i.clock_q for i in group}
         steps = self._steps_txt(near)
         if template == "approach":
-            return self._fmt("approach", label=near.label, clock=self._join_clocks(clocks), steps=steps)
+            return self._fmt("approach", label=near.label, clock=self._join_clocks(group), steps=steps)
         if template == "thin":
             label = self._plural(near.label) if len(group) > 1 else near.label
-            return self._fmt("thinNotice", label=label, clocks=self._join_clocks(clocks), steps=steps)
+            return self._fmt("thinNotice", label=label, clocks=self._join_clocks(group), steps=steps)
         if len(clocks) == 1:
             return self._text(template, near)
-        return self._fmt("multi", label=near.label, clocks=self._join_clocks(clocks), steps=steps)
+        return self._fmt("multi", label=near.label, clocks=self._join_clocks(group), steps=steps)
 
     def _feature_allowed(self, t: float, it: _Item) -> bool:
         """The same label is not repeated within featureLabelGapSeconds unless it is a different crossing: its
@@ -1359,7 +1445,8 @@ class SpeechPolicy:
             self.last_prio_t = t
         return {"t": round(t, 4), "type": "speech", "role": role, "text": text,
                 "trackId": None if it is None else it.track_id, "urgency": urgency,
-                "clock": None if it is None else it.clock, "pan": 0.0 if it is None else round(it.pan, 4)}
+                "clock": None if it is None else it.clock,
+                "clockText": None if it is None else it.clock_text, "pan": 0.0 if it is None else round(it.pan, 4)}
 
     def step(self, t: float, items: list[_Item], tracks: dict[int, _Track],
              surface_known: bool = True) -> dict | None:
@@ -1601,8 +1688,9 @@ def _tone_events(frame_collision: list[tuple[_Item | None, bool]], times: np.nda
         steps_txt = f"{hi}\u2192{lo} steps" if hi != lo else f"{lo} steps"
         episodes.append({"t": round(cur[0][0], 4), "tEnd": round(cur[-1][1], 4), "type": "beeps", "role": "danger",
                          "trackId": nearest.track_id, "label": nearest.label, "clock": nearest.clock,
+                         "clockText": nearest.clock_text,
                          "minSteps": round(nearest.steps, 1), "urgency": nearest.urgency,
-                         "text": f"beeps \u00b7 {nearest.label} at {nearest.clock} \u00b7 {steps_txt}"})
+                         "text": f"beeps \u00b7 {nearest.label} at {nearest.clock_text} \u00b7 {steps_txt}"})
 
     for m in marks:
         if cur and (m[2].track_id != cur[-1][2].track_id or m[0] - cur[-1][1] >= gap_s):
@@ -1755,10 +1843,11 @@ def _hazard_dict(it: _Item) -> dict:
     return {"trackId": it.track_id, "className": it.class_name, "group": it.group, "label": it.label,
             "role": it.role, "moving": it.moving if it.group == "moving" else False,
             "bbox": [round(v, 4) for v in it.bbox], "contactY": round(it.contact_y, 4),
-            "bearingDeg": round(it.bearing, 2), "clock": it.clock, "pan": round(it.pan, 4),
+            "bearingDeg": round(it.bearing, 2), "clock": it.clock, "clockText": it.clock_text, "pan": round(it.pan, 4),
             "distanceM": round(it.distance_m, 2), "lateralM": round(it.lateral_m, 2),
             "stepsTo": round(it.steps, 1), "closingMps": _r(it.closing, 2),
-            "urgency": it.urgency, "areaFrac": round(it.area_frac, 5), "collision": bool(it.collision)}
+            "urgency": it.urgency, "areaFrac": round(it.area_frac, 5), "collision": bool(it.collision),
+            **({"depthM": _r(it.depth_m, 2)} if it.depth_on else {})}
 
 
 # --------------------------------------------------------------------------
@@ -1781,8 +1870,12 @@ def _motion_series(motion: dict | None, hfov_deg: float, ego_cfg: dict):
     return mt, cad, np.cumsum(-dx * hfov_deg)
 
 
-def run_collision(grids, times, class_names, config, settings, motion=None) -> tuple[dict, dict]:
-    """Per-frame hazards and the speech/tone event list. ``motion`` = {"t","dx","dy"} arrays or None."""
+def run_collision(grids, times, class_names, config, settings, motion=None, depth=None) -> tuple[dict, dict]:
+    """Per-frame hazards and the speech/tone event list. ``motion`` = {"t","dx","dy"} arrays or None.
+
+    ``depth`` = {"t": (N,), "depth": (N, Dh, Dw) metres} or None: one metric depth map per analysed frame
+    (nearest ``t``). It is always reported as ``depthM``; it drives the distances only when
+    ``settings.distance_source`` is "depth" or "fused"."""
     grids = np.asarray(grids)
     times = np.asarray(times, dtype=float)
     n, gh, gw = grids.shape
@@ -1797,6 +1890,16 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
     # steps and the gait calibration use this step length: the per-recording value overrides the prior
     step_len = settings.step_length_m if settings.step_length_m is not None else float(
         ego_cfg.get("priorStepLengthM", default_step))
+
+    dist_cfg = config.get("distance", {})
+    depth_rows_frac = float(dist_cfg.get("depthLowestRowsFrac", 0.25))
+    fused_rel = float(dist_cfg.get("fusedMaxRelDiff", 0.5))
+    source = getattr(settings, "distance_source", "ground")
+    projection = getattr(settings, "projection", "rectilinear")
+    depth_t = depth_maps = None
+    if depth is not None and len(depth["t"]):
+        depth_t = np.asarray(depth["t"], dtype=float)
+        depth_maps = depth["depth"]
 
     mser = _motion_series(motion, settings.hfov_deg, ego_cfg)
     ego = _Ego()
@@ -1859,8 +1962,16 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
         # 3. items
         k = scale.value                            # gait scale from the frames so far: metres are real-world
         geo = _frame_geometry(gh, gw, horizon, settings.camera_height_m * k, f, settings.hfov_deg, lane_half,
-                              region, roles["boundaryMarginPx"])
+                              region, roles["boundaryMarginPx"], projection)
         items = detect_items(grid, ids, geo, config)
+        if depth_maps is not None:
+            j = int(np.clip(np.searchsorted(depth_t, t), 0, len(depth_t) - 1))
+            if j > 0 and abs(depth_t[j - 1] - t) < abs(depth_t[j] - t):
+                j -= 1
+            dmap = np.asarray(depth_maps[j])
+            for it in items:
+                it.depth_on = True
+                it.depth_m = _item_depth_m(it, dmap, gh, gw, depth_rows_frac)
 
         # 4. tracking
         tracks = {k: v for k, v in tracks.items() if t - v.last_t <= trk["maxMissedSeconds"]}
@@ -1893,6 +2004,18 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
                 if d_s is not None and it.distance_m > 0:
                     it.lateral_m *= d_s / it.distance_m
                     it.distance_m = d_s
+            if it.depth_m is not None:
+                tr.dhist.append((t, it.depth_m))
+                tr.dhist = [h for h in tr.dhist if h[0] >= t - trk["historySeconds"] - 1e-9]
+                use_depth = source == "depth" or (source == "fused" and (
+                    it.clipped or (it.contact_y_raw - horizon) * gh < trk["motionMinRowsBelowHorizon"]
+                    or abs(it.distance_m - it.depth_m) / it.depth_m > fused_rel))
+                if use_depth:
+                    # metric already: no gait scale. Lateral keeps its bearing at the new distance.
+                    if it.distance_m > 0:
+                        it.lateral_m *= it.depth_m / it.distance_m
+                    it.distance_m, it.from_depth = it.depth_m, True
+                    tr.closing = _depth_closing(tr.dhist, t, trk["motionMinSeconds"])
             it.track_id, it.closing_raw, it.closing = tid, raw_closing, tr.closing
             it.present_run = tr.present_run
             it.settled = t - tr.first_t >= MIN_TRACK_AGE_S - 1e-9
@@ -2018,6 +2141,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None) -> t
     version = config["version"]
     hazards_doc = {
         "version": version,
+        "projection": projection, "distanceSource": source,
         "settings": {"mount": settings.mount, "hfovDeg": settings.hfov_deg,
                      "cameraHeightM": settings.camera_height_m, "stepLengthM": settings.step_length_m,
                      "laneHalfWidthM": lane_half, "priorStepLengthM": step_len},

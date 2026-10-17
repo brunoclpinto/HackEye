@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1.9, current rules)
+# HackEye Lab — contracts (v26.1.10, current rules)
 
 History, user feedback and the reasons behind each rule: see `../docs/DECISIONS.md`.
 
@@ -39,6 +39,7 @@ LAB_DIR/
   runs/<runId>/grids.npz         class grids (§5)
   runs/<runId>/motion.npz        ego-motion track at full source fps (§5)
   runs/<runId>/masks/<i>.png     overlay masks, i = 0..frameCount-1 (§5)
+  runs/<runId>/depth.npz         metric depth maps 120×68, only for depth runs (§5)
   runs/<runId>/hazards.json      collision output (§7.15)
   runs/<runId>/events.json       collision output (§7.15)
   reviews/<recId>.json           notification reviews / ground truth (§10)
@@ -89,7 +90,9 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   "mount": "chest",            // key of collision.json mountPresets
   "hfovDeg": null,             // null = collision.json defaultHfovDeg
   "cameraHeightM": null,       // null = the mount preset's cameraHeightM
-  "stepLengthM": null          // null = the prior step length (collision.json ego.priorStepLengthM, 0.70 m)
+  "stepLengthM": null,         // null = the prior step length (collision.json ego.priorStepLengthM, 0.70 m)
+  "projection": "auto",        // lens model for bearings/clocks and the depth focal: auto | rectilinear | fisheye (auto = fisheye when HFOV >= 100°)
+  "distanceSource": "depth"    // ground | depth | fused (§7.3a); without depth.npz every mode is ground
 }
 ```
 
@@ -99,6 +102,7 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   - `hfovDeg` null or a number in [10, 180)
   - `cameraHeightM` null or a number in [0.5, 2.5]
   - `stepLengthM` null or a number in [0.3, 2.0]
+  - `projection` one of `auto | rectilinear | fisheye` (missing = `auto`); `distanceSource` one of `ground | depth | fused` (missing = `depth`, the Lab default since v26.1.10)
 - Step length is **never estimated from the footage**: steps are `distance / stepLength`, where the length is the stored
   value or the prior (§7.7).
 - The Lab saves the settings before starting an analysis and before every collision re-run, so the post-inference collision pass always uses the stored settings.
@@ -121,6 +125,8 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   | 736p | 1280×720 | 1280×736 |
 
   A 1080×1920 portrait source gives the transposed sizes (544p → 544×960).
+- `depth` ∈ `none | da3-metric-large` (missing = `none`, 422 otherwise). Stored in the normalised request (and so in the run id) **only when not `none`**, so ids of depth-less requests are unchanged.
+- **Default model** offered by `GET /api/models`: `Yolo26m-sem-HackEye20261011.pt` (`analysis.DEFAULT_MODEL`, env `HACKEYE_LAB_DEFAULT_MODEL`); if missing, the newest release. The UI's default resolution is `736p`.
 - `end` is clamped to the recording duration (the clamped value is stored and hashed). Must satisfy `0 ≤ start < end` and `0 < fps ≤ 60`. `model` must be one of `GET /api/models`. Violations → 422.
 - **`runId`** = first 12 hex chars of sha1 over the canonical JSON (sorted keys, compact) of the normalised request **plus `"analysisVersion": 2`**, followed by `|<model file mtime>`. A finished run with the same id is reused.
 - **`analysisVersion`** is 2: the run has an ego-motion track (`motion.npz`). `run.json` and the review annotations record it.
@@ -137,6 +143,11 @@ crossing chapter boundaries; the stored `t` is the exact time of the source fram
 2. `SegmentationModel.predict_class_grid(...)` (it hands the RGB array to Ultralytics as BGR via `models.to_ultralytics`, because `predict()` assumes numpy input is BGR), then `grid_from_semantic_mask(class_ids, meta)`.
 3. **Crop the padding:** keep rows `[round(pad_y), round(pad_y + src_h·scale))` and the matching columns. Resize nearest-neighbour to `GRID_W = 240` × `GRID_H = round(240·src_h/src_w)`, `uint8`.
 4. Write `masks/<i>.png`: an RGBA image at grid size; pixel colour = `SAFETY_LEVELS[level]["color"]` with alpha 255; safety level 0 (ignored) is fully transparent.
+
+**Depth pass** (only when the request has `depth`):
+- Model: Depth Anything 3 **Metric Large** (ByteDance, Apache-2.0; `src/depth.py` `DepthModel`), weights in host `~/models/depth-anything/DA3METRIC-LARGE` mounted at `/base-models` (README "Depth model"). Loaded on first use, released with the segmentation model.
+- Per sampled frame, on the **un-letterboxed RGB frame**: `model.inference([rgb], process_res=504)` (longest side 504), metric metres = `focal · net / 300` (DA3's metric convention) with `focal` = `depth.focal_px(W, hfovDeg, projection)` scaled to the processed width — rectilinear `(W/2)/tan(HFOV/2)`, fisheye (equidistant) `(W/2)/(HFOV/2 rad)`; HFOV and projection from the recording's settings.
+- Resized to **120×68** (`INTER_AREA`), clipped to [0.1, 200] m, float16 → `depth.npz` (`depth` (N, 68, 120), `t` (N,)), aligned 1:1 with `grids.npz`. `run.json` gets `"depth"` (model or `"none"`) and `"depthMsPerFrame"` (~45 ms on the 5060 Ti).
 
 **Ego-motion track:**
 - For **every source frame** from the first sampled frame up to (not including) `end` — all ~24 fps, not only the sampled ones — convert to grayscale at 160×90 (`cv2.resize`, `INTER_AREA`, float32).
@@ -165,16 +176,17 @@ crossing chapter boundaries; the stored `t` is the exact time of the source fram
 
 - After inference the runner immediately does a collision pass (§7) with the recording's current settings, then sets `done`. If the collision pass fails, it is logged and the run is still `done` (without hazards/events).
 - `motion` is loaded from `motion.npz` when present, else `None` (then ego estimates and the world memory are unavailable).
-- `POST /api/runs/{id}/collision` re-runs only the collision pass from `grids.npz` + `motion.npz` with the recording's **current** settings and rewrites `hazards.json`, `events.json` and `collisionVersion`.
+- `depth` is loaded from `depth.npz` when present, else `None`.
+- `POST /api/runs/{id}/collision` re-runs only the collision pass from `grids.npz` + `motion.npz` (+ `depth.npz`) with the recording's **current** settings and rewrites `hazards.json`, `events.json` and `collisionVersion`.
 
 **Cancellation:** `POST /api/runs/{id}/cancel`.
-- A queued run is removed from the queue; a running one has a per-run cancel flag that the worker checks between frames. The run ends as `status: "cancelled"` and its partial outputs (`masks/`, `grids.npz`, `motion.npz`, `hazards.json`, `events.json`) are removed; `run.json` stays.
+- A queued run is removed from the queue; a running one has a per-run cancel flag that the worker checks between frames. The run ends as `status: "cancelled"` and its partial outputs (`masks/`, `grids.npz`, `motion.npz`, `depth.npz`, `hazards.json`, `events.json`) are removed; `run.json` stays.
 - The reply waits up to 3 s for the end state and returns the run doc; 409 if the run is not queued/running; 404 if unknown.
 - Cancelled and error runs are listed but cannot be played. Re-POSTing the same request starts it fresh.
 
 **GPU:** one worker thread, FIFO queue, `gpu_guard.assert_torch_cuda()` at job start. One model is cached by path and released after `HACKEYE_LAB_IDLE_SECONDS` (default 300) without work, so the service holds no VRAM while idle.
 
-## 6. Collision config  (`common/config/collision.json`, version `v26.1.9`)
+## 6. Collision config  (`common/config/collision.json`, version `v26.1.10`)
 
 Class names are the 48-class HackEye mapping's (`safety_mapping_hackeye48.json`). Names missing from a model's `class_names` are skipped (logged once). All distances are metres, times seconds, "steps" are walking steps (§7.7).
 
@@ -337,15 +349,20 @@ class CollisionSettings:
     horizon_default: float             # from the mount preset
 
 load_config(path=None) -> dict
-resolve_settings(config, mount=None, hfov_deg=None, camera_height_m=None, step_length_m=None) -> CollisionSettings
-bearing_deg(x_norm, hfov_deg)                 # atan((x-0.5)*2*tan(hfov/2)); + = right
-clock_from_bearing(bearing) -> int            # 12 + round(bearing/30), clamped to ±90°, as 9..12 and 1..3
+resolve_settings(config, mount=None, hfov_deg=None, camera_height_m=None, step_length_m=None,
+                 projection=None, distance_source="ground") -> CollisionSettings
+resolve_projection(projection, hfov_deg) -> "rectilinear" | "fisheye"   # None/"auto": fisheye when hfov >= 100
+bearing_deg(x_norm, hfov_deg, projection)     # rectilinear: atan((x-0.5)*2*tan(hfov/2)); fisheye: (x-0.5)*hfov; + = right
+clock_from_bearing(bearing) -> int            # whole hour: 12 + round(bearing/30), clamped to ±90°, as 9..12 and 1..3 (side logic, back-compat)
+clock_quarter(bearing) -> int                 # q = round(bearing/7.5°) (half away from zero), clamped to ±12
+clock_text(q) -> str                          # m = (720+15q) mod 720; "H" when on the hour, else "H:MM": 12, 12:15, 11:45, 1:30
 focal_px(grid_w, hfov_deg)                    # (grid_w/2) / tan(hfov/2)
 ground_distance_m(y_norm, horizon_y, camera_height_m, grid_h, f_px)   # H*f / ((y-horizon)*grid_h); None if y <= horizon
 lateral_m(x_norm, distance_m, grid_w, f_px)   # (x-0.5)*grid_w*distance/f   (+ = right)
 estimate_cadence(t, dy, window_s, band_hz, min_peak_ratio, dx=None, ...) -> per-sample Hz or nan
 walking_region(grid, ids, config) -> Region | None
-run_collision(grids, times, class_names, config, settings, motion=None) -> (hazards_doc, events_doc)
+run_collision(grids, times, class_names, config, settings, motion=None, depth=None) -> (hazards_doc, events_doc)
+    # depth: {"t", "depth" (N, 68, 120) metres} or None
     # motion: {"t","dx","dy"} arrays or None -> no cadence, heading, ego speed from gait, or world memory
 ```
 
@@ -368,9 +385,17 @@ Frames are processed in order; every state below carries over from frame to fram
 - The raw closing speeds that feed the calibration stay uncalibrated, so there is no feedback loop.
 - **Per-recording `stepLengthM`** replaces `priorStepLengthM` for the calibration and for steps.
 
+### 7.3a Distance source  (`distanceSource`; experiment)
+- **Bearings** (clock, pan) use the resolved `projection`; lane, lateral and ground distance stay the pinhole model.
+- With depth, each item gets `depthM` = median depth over its component pixels in the lowest `distance.depthLowestRowsFrac` (0.25) of its rows, mapped onto the 120×68 grid (null if none). It is reported in every mode.
+- `ground`: §7.3 unchanged; output equals no-depth output apart from `depthM`.
+- `depth` (**Lab default**): distance = `depthM` (already metric: the scale `k` is **not** applied); lateral = the ground lateral × depth/ground; steps = depth / step length. Items without `depthM` fall back to ground.
+- `fused`: `depthM` when the ground contact is unreliable — the item is clipped, its contact is < `motionMinRowsBelowHorizon` rows below the horizon, or `|ground·k − depthM| / depthM > distance.fusedMaxRelDiff` (0.5); otherwise ground·k.
+- Tracking and the ground gate still match on ground distances; depth is substituted after matching. When an item's distance came from depth, its closing speed is the negative slope of the track's own depth history (same ≥ 3 points / ≥ `motionMinSeconds` / latest-point rule). The raw closing speeds that feed the gait calibration stay ground-based.
+
 ### 7.4 Items
 - 4-connected components of **each class** (not each group) of the `static`, `moving` and `feature` groups, only over rows whose bottom edge is below the horizon, with ≥ `minComponentFraction × grid area` pixels. A pole against a wall is two items.
-- **Contact point:** static/moving = the component's lowest pixel (on that row, the column nearest the image centre); feature = its lowest pixel *inside the danger lane* if any, else the lowest pixel. Compute `distanceM`, `lateralM`, `bearingDeg`, `clock`, `pan` (`sin(bearing)`, clamped) there. Drop items with `distanceM > maxRangeM` or no distance.
+- **Contact point:** static/moving = the component's lowest pixel (on that row, the column nearest the image centre); feature = its lowest pixel *inside the danger lane* if any, else the lowest pixel. Compute `distanceM`, `lateralM`, `bearingDeg`, `clock`, `clockQ`/`clockText` (quarters), `pan` (`sin(bearing)`, clamped) there. Drop items with `distanceM > maxRangeM` or no distance.
 - **Danger lane:** half-width at a row = `laneHalfWidthM` in metres projected to pixels at that row's distance. `lane_hit` for static/moving = the component's lowest row itself touches the lane inside the (dilated) walking region (a car beside the path whose roof intrudes does not count); for features = any pixel in the lane. `lane_cover` = share of the lane's width at the contact row that the feature covers.
 - `touches` = any pixel in the walking region dilated by `boundaryMarginPx`. `clipped` = the component touches the bottom image edge (its distance is only a lower bound).
 - **Runs along the path:** look at the component's *base* pixels (those with walking region directly below them). If the base's near/far distance ratio is < `alongPathRatio` (0.5), the item spans a long stretch of path (a wall, median or curb alongside): it is boundary, never danger and never a lane-crossing feature. Also, a static/feature item whose raw closing speed is < 30 % of the raw ego speed (when that is ≥ 0.5 m/s) is treated as running along the path.
@@ -416,7 +441,7 @@ At most **one phrase per frame**. Priority: final > danger/feature/thin notice (
 
 **Gaps:** final ignores the gap. Danger/feature phrases wait for `priorityMinGapSeconds` after the previous danger/feature/final phrase (a context phrase never delays them). Context and surface wait for `globalMinGapSeconds` after any phrase.
 
-**Templates** (`speech.templates`; `{clock}` is 9–12 or 1–3; no "o'clock"):
+**Templates** (`speech.templates`; `{clock}` is the quarter clock text, `clock_text`: `12`, `12:15`, `11:45`, `1:30` … from 9 to 3; no "o'clock"):
 
 | Key | Template |
 |---|---|
@@ -427,7 +452,7 @@ At most **one phrase per frame**. Priority: final > danger/feature/thin notice (
 | `multi` | `{label} at {clocks} in {steps}` |
 | `thinNotice` | `{label} at {clocks} in {steps}` |
 
-`{clocks}` lists the distinct clocks left to right (9 10 11 12 1 2 3): `"1"`, `"1 and 2"`, `"10, 12 and 2"`. Every announced object has a position and (unless the distance is unknown) steps.
+`{clocks}` lists the distinct quarter clocks left to right (by quarter index): `"1"`, `"12:45 and 1:30"`, `"10, 12 and 2"`. Every announced object has a position and (unless the distance is unknown) steps.
 
 1. **Final** — a confirmed, settled danger track with urgency `final` that has not had one yet. Once per track; ignores the global gap; the template is `final`. It is spoken **only if the object is not already in the world memory** (§7.11, any entry, named or not) — something that appeared suddenly close. Otherwise the slot is consumed silently (pacing as if spoken) and the beeps carry the proximity. If a danger track is already within `finalSteps` when first announced, only the final call is made.
 2. **Danger + feature + thin notice in one phrase** (at most `maxEntries` entries; danger first, then features — crosswalks before curbs, then by steps — then the thin notice):
@@ -491,12 +516,13 @@ A **turn**: the heading differs from a slow reference (time constant `referenceT
    "pathChange": false,
    "hazards": [                                                        // all items, nearest first (by steps)
      {"trackId": 3, "className": "pole", "group": "static", "label": "pole", "role": "danger", "moving": false,
-      "bbox": [0.48, 0.52, 0.55, 0.81], "contactY": 0.81, "bearingDeg": 4.1, "clock": 12, "pan": 0.07,
-      "distanceM": 5.6, "lateralM": 0.21, "stepsTo": 8.0, "closingMps": 1.3, "urgency": "danger",
+      "bbox": [0.48, 0.52, 0.55, 0.81], "contactY": 0.81, "bearingDeg": 4.1, "clock": 12, "clockText": "12:15", "pan": 0.07,
+      "distanceM": 5.6, "depthM": 5.9, "lateralM": 0.21, "stepsTo": 8.0, "closingMps": 1.3, "urgency": "danger",
       "areaFrac": 0.012, "collision": true,
       "outline": [[0.48, 0.52], [0.55, 0.52], [0.55, 0.81], [0.48, 0.81]]}
    ]}]}
 ```
+- Top level also has `"projection"` (resolved) and `"distanceSource"`. `depthM` is present only when the run has depth (null for an item without valid depth pixels).
 - `region` is null when there is no surface. `moving` is `true/false/null` for moving-group items (null = unknown), `false` otherwise. `closingMps` is null when unknown. `urgency` ∈ `none | danger | final`.
 - `ego` fields are null when unknown. `estimated.stepLength` is always false.
 - `outline` (items with `role != "none"` only): the outer contour of the item's own connected component, traced on the grid in pixel-corner coordinates (so its extent equals `bbox`), simplified with Douglas–Peucker (epsilon 0.75 grid px, growing ×1.25 until ≤ 32 points), concavities kept, normalised and rounded to 4 decimals. Pure numpy/scipy. Role `none` items carry no outline to keep `hazards.json` small.
@@ -511,8 +537,9 @@ A **turn**: the heading differs from a slow reference (time constant `referenceT
    "urgency": "final", "text": "beeps · pole at 12 · 8→2 steps"}
 ]}
 ```
+- Speech and beeps events carry `clockText` next to `clock` (the whole hour, kept for back-compat).
 - Speech `role` ∈ `context | surface | feature | danger | final`; surface events have `trackId: null`, `clock: null`, `pan: 0`.
-- `tone` events drive the audio; `beeps` events (one per episode) are what the review panel and the timeline use. The `beeps` `text` is `beeps · <label> at <clock> · <first>→<min> steps` (`<n> steps` when equal), with the label/clock of the nearest moment.
+- `tone` events drive the audio; `beeps` events (one per episode) are what the review panel and the timeline use. The `beeps` `text` is `beeps · <label> at <clockText> · <first>→<min> steps` (`<n> steps` when equal), with the label/clock of the nearest moment.
 
 ## 8. REST API  (`lab/server.py`, FastAPI)
 
@@ -525,10 +552,10 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 | `GET /api/recordings` | | `[Recording]` (§3) |
 | `POST /api/recordings/{id}/proxy` | | proxy status; starts a build if missing/error |
 | `GET` / `HEAD /media/{id}.mp4` | | the proxy file (Range requests); 404 if not ready |
-| `GET /api/recordings/{id}/settings` | | Settings (§4) + `"resolved": {"hfovDeg", "cameraHeightM", "stepLengthM" (null = prior), "horizon"}` |
+| `GET /api/recordings/{id}/settings` | | Settings (§4) + `"resolved": {"hfovDeg", "cameraHeightM", "stepLengthM" (null = prior), "horizon", "projection"}` |
 | `PUT /api/recordings/{id}/settings` | Settings | same as GET; 422 on invalid |
 | `GET /api/config/collision` | | the contents of collision.json |
-| `GET /api/models` | | `{"models": [{"path","name","default"}], "profiles": ["544p", ..., "736p"]}` (the resolutions the UI offers; legacy names are accepted by `POST /api/runs` but not listed) |
+| `GET /api/models` | | `{"models": [{"path","name","default"}], "profiles": ["544p", ..., "736p"], "depthModels": ["none", "da3-metric-large"]}` (the resolutions the UI offers; legacy names are accepted by `POST /api/runs` but not listed) |
 | `POST /api/runs` | run request (§5) | `run.json`; queued, or the existing in-flight/done run; 409 / 422 as in §5 |
 | `GET /api/runs?recording=<id>` | | `[run.json]`, newest first (all runs without the query) |
 | `GET /api/runs/{runId}` | | `run.json` |
@@ -539,6 +566,7 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 | `GET /api/runs/{runId}/frame?t=<s>` | | `{"frame": ...}`, the analysed frame with the largest `t ≤ s`; 404 before the first frame or more than 1 s after the last |
 | `GET /api/runs/{runId}/frames/{i}/mask.png` | | the mask PNG (`Cache-Control: max-age=86400`); fallback only |
 | `GET /api/runs/{runId}/frames/{i}/classes.png` | | 8-bit grayscale PNG of `grids[i]` (positional, frame-aligned class ids), `Cache-Control: max-age=86400`; 404 unknown frame, 409 run not done. `grids.npz` cached for 2 runs, keyed by mtime |
+| `GET /api/runs/{runId}/depth/{i}.png` | | 8-bit RGB PNG of `depth.npz[i]` (120×68): turbo colormap on log depth over 0.5–30 m, **near = warm (red)**; `Cache-Control: max-age=86400`; 404 when the run has no depth or `i` is out of range |
 | `GET /api/runs/{runId}/classes` | | `{mapping, classes: [{id, name, level}], levels: [{level, label, color, opacity}]}` from the safety mapping matching the run's `classNames` (`segmentation.find_mapping`, no GPU); default opacity 0 for level 0, else 1; 404 if no `classNames` or no mapping matches |
 | `GET /api/display/{mapping}` | | `{mapping, classes, levels, saved}`: defaults merged with saved overrides, plus the raw saved file |
 | `PUT /api/display/{mapping}/classes` · `/levels` | `{"classes": {...}}` or `{"levels": {...}}` | replaces that section's overrides (values equal to defaults are dropped; the file is deleted when both sections are empty); 404 bad mapping, 422 bad values |
@@ -561,7 +589,7 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 
 **Library and proxy:** each recording shows duration, size, fps, chapter count and a proxy tag; "Build proxy" / "Retry build proxy" starts a build; the list polls every 2 s while a proxy builds. The video is attached once the proxy is ready.
 
-**Analyse panel:** range start/end (seconds, mm:ss or hh:mm:ss; default `0 → recording duration`; "from playhead" buttons; loading a run sets the range to the run's), model (default pre-selected), **Resolution** (`544p`–`736p`, default `544p`; each option reads e.g. `576p · 1024×576` from the recording's `inputSizes`, and options the recording cannot do without upscaling are disabled; loading a run selects the run's resolution), FPS (default 6). The run badge and the past-runs list show the run's input size (`inputSpec`). Analyse saves the settings, then POSTs the run.
+**Analyse panel:** range start/end (seconds, mm:ss or hh:mm:ss; default `0 → recording duration`; "from playhead" buttons; loading a run sets the range to the run's), model (default pre-selected), **Resolution** (`544p`–`736p`, default `736p`; each option reads e.g. `576p · 1024×576` from the recording's `inputSizes`, and options the recording cannot do without upscaling are disabled; loading a run selects the run's resolution), FPS (default 6), **Depth** (`Off` / `DA3 Metric Large`, from `depthModels`, **default DA3 Metric Large**; sent only when not off; loading a run selects its depth). The run badge and the past-runs list show the run's input size (`inputSpec`) and depth model. The recording settings have **Lens** (`projection`, Auto shows the resolved lens) and **Distance** (`distanceSource`); changing Distance on a depth run highlights "Re-run collision" for a one-click A/B. Analyse saves the settings, then POSTs the run.
 - **Progress and cancel:** whenever a recording is selected (or restored from the hash) the UI checks its runs for a `queued`/`running` one — including one started in another tab or on another device — and follows it: shows the progress bar (polling every 1 s), disables **Analyse** (the reason in the tooltip) and shows **Cancel analysis**. On completion it behaves as for a run started on this page (enables Analyse, lists the run, loads it). A 409 from Analyse follows the in-flight run.
 - Past runs: click a done run to load it; cancelled/error runs only show a message; an active one is followed.
 - **Collision settings:** mount, HFOV, camera height (m), step length (m). Empty = default; the placeholders show the resolved values (`118 (default)`, `1.3 (preset)` following the mount, `auto (default 0.7)`). **Re-run collision** saves the settings, re-runs §7 on the loaded run, reloads events and hazards, and reports compute time, speech and beeps counts.
@@ -574,7 +602,8 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 - **Region:** outline polygon from `frame.region.rows` (left edge bottom→top, then right edge top→bottom), thin white line, `region.label` near its top.
 - **Lane:** the `frame.lane` polygon, semi-transparent red.
 - **Horizon:** line at `horizonY`, solid yellow if `horizonEstimated`, dashed if the preset fallback.
-- **Items:** drawn as **outlines** (the item's `outline` polygon, 15% alpha fill) or **boxes** (`bbox`), chosen with the **Shapes** select (default Outlines, remembered in localStorage `hackeye.lab.shapes`); items without an outline always use their box. Each item is coloured by role — danger orange `#ff8c1a` (final urgency red `#ff2d2d`), feature cyan `#22d3ee`, context light grey `#c9ced6`, none dim grey `#6b7280` drawn thin. Label `"<label> · <clock> · <n>st"` (steps rounded; context shows only `"<label> · <clock>"`). `none` labels show only when "Show all" is on. A dot marks the contact point of non-`none` items. Dim items are drawn first so dangers end up on top.
+- **Depth:** a Depth overlay toggle, enabled only for depth runs, draws `depth/{i}.png` at 50% opacity under the mask and items (a frame within 0.5 s is reused while loading; a 404 is skipped). Item labels add `· ground X m · depth Y m` when the item has `depthM`.
+- **Items:** drawn as **outlines** (the item's `outline` polygon, 15% alpha fill) or **boxes** (`bbox`), chosen with the **Shapes** select (default Outlines, remembered in localStorage `hackeye.lab.shapes`); items without an outline always use their box. Each item is coloured by role — danger orange `#ff8c1a` (final urgency red `#ff2d2d`), feature cyan `#22d3ee`, context light grey `#c9ced6`, none dim grey `#6b7280` drawn thin. Label `"<label> · <clockText> · <n>st"` (steps rounded; context shows only `"<label> · <clock>"`). `none` labels show only when "Show all" is on. A dot marks the contact point of non-`none` items. Dim items are drawn first so dangers end up on top.
 - **HUD** (top-left of the player): `speed` (m/s and km/h, `(est)` when estimated), `cadence` (steps/min = `cadenceHz × 60`), `step` (m; `(default)` for the prior, `(set)` for a per-recording value), `heading` (degrees, signed). `—` for unknown values; "no ego data (re-analyse)" when a frame has no `ego`. The gait scale is in `hazards.json` but not shown.
 
 **Transport:** play/pause (Space), previous/next **analysed** frame (← / →; falls back to one video frame without a run), speed 0.25–2× (`[` / `]`), seek bar, `m` mutes all. Keyboard shortcuts are ignored while typing in an input, select or textarea.
@@ -593,7 +622,7 @@ One row per **notification** of the loaded run (a spoken phrase, or a beeps epis
 - **Header:** `N notifications · M beeps`; counts ✓ correct · ✗ incorrect · ⊘ should-not-be-said · + added · unreviewed (= notifications of the loaded run without a matching verdict); an Export link (`/api/reviews/export?recording=…`); mini transport buttons.
 - **Event row:** timestamp `m:ss.s` (click seeks and pauses), role badge (overlay colours), for beeps the 🔔 badge and the duration, the text, and toggles **✓ ✗ ⊘**. Clicking an inactive toggle creates or changes the verdict; clicking the active one deletes it. ⊘ shows the text struck through. A note `<textarea>` shows when a verdict exists or the row is expanded (click its text); until a verdict exists, the note is a local draft. Notes autosave 600 ms after the last keystroke and on blur, with a "saved ✓" indicator.
 - **Added row:** "+ added" badge (and 🔔 for beeps); inline-editable time (with "⟲" set-to-playhead and "▸" seek), for beeps an end time ("⟲" end to playhead), role select, text (≤ 300 chars), note, 🗑 delete (confirm). Moving the start of an added beeps entry keeps its length.
-- **Following playback:** the row nearest before the playhead is highlighted and scrolled into view, except while the user is typing in the list.
+- **Following playback:** the row nearest before the playhead is highlighted and scrolled into view (~⅓ from the top) within the nearest ancestor that actually scrolls — the list itself on narrow layouts, `#reviewPanel` at ≥ 1200 px; never the window — and only when it is out of view, except while the user is typing in the list.
 - **"Other versions (n)":** a collapsed section with verdicts that match no notification of the loaded run (other run/version); read-only apart from 🗑 (confirm).
 - **Keyboard** (ignored in input/textarea/select): `c` / `x` / `r` toggle correct / incorrect / remove on the highlighted event row; `a` opens the add form.
 - **Optimistic updates:** local state changes first; writes go through one serial queue; on failure `api.js` shows a toast with the server's `detail` and the panel reloads from the server.

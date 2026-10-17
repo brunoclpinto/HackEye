@@ -84,7 +84,7 @@ def test_review1_fixture_is_the_documented_one(review1):
         t = npz[f"w{i}_t"]
         assert t[0] >= w["start"] - 0.5 and t[-1] <= w["end"] + 0.5
         assert npz[f"w{i}_grids"].shape == (len(t), meta["gridH"], meta["gridW"])
-    assert CONFIG["version"] == "v26.1.9"
+    assert CONFIG["version"] == "v26.1.10"
 
 
 def test_review1_start_summary_names_building_and_obstacle_within_the_first_1_5_s(review1):
@@ -157,7 +157,7 @@ def test_review1_phrases_use_the_new_wording(review1):
         for e in w["speech"]:
             assert "o'clock" not in e["text"]
             if e["role"] in ("danger", "final"):
-                assert re.fullmatch(r"[a-z ]+ (approaching )?at [0-9, and]+( in \d+( step)?)?(, .+)?", e["text"]), e["text"]
+                assert re.fullmatch(r"[a-z ]+ (approaching )?at [0-9:, and]+( in \d+( step)?)?(, .+)?", e["text"]), e["text"]
             if e["role"] == "context":
                 items = e["text"].split(", ")
                 assert 1 <= len(items) <= CONFIG["speech"]["contextMaxItems"]
@@ -193,9 +193,9 @@ def test_review2_crosswalk_is_announced_as_a_landmark_with_direction_and_steps_n
     """Added annotation at 33.9 s: "crosswalks are important ... add direction and steps". The crosswalk is detected
     at 32.8 s but only as 1-2 frame fragments (three track ids), so it is confirmed at about 35 s."""
     w1 = review2[2][1]
-    hit = [e for e in _near(w1["speech"], 33.9, 2.0) if re.search(r"crosswalk at 12 in \d+", e["text"])]
+    hit = [e for e in _near(w1["speech"], 33.9, 2.0) if re.search(rf"crosswalk at {CLOCK_12} in \d+", e["text"])]
     assert hit, [e["text"] for e in w1["speech"]]
-    steps = int(re.search(r"crosswalk at 12 in (\d+)", hit[0]["text"]).group(1))
+    steps = int(re.search(rf"crosswalk at {CLOCK_12} in (\d+)", hit[0]["text"]).group(1))
     assert 3 <= steps <= CONFIG["roles"]["landmarkSteps"]
     # the crosswalk never beeps (features and context never beep)
     assert not [b for b in w1["beeps"] if "crosswalk" in b["text"] or "curb" in b["text"]]
@@ -212,11 +212,11 @@ def test_review2_curb_ahead_and_poles_named_once_near_38_8_s(review2):
     assert all(h["role"] != "danger" for h in hz if h["className"] == "pole")
     # "less is more" (architect): a label is not repeated within 6 s unless it is a different crossing, so the curb
     # fragments around 38.8 s are covered by the curb at 32.5 s and the crosswalk at 39.2 s is the feature said here
-    curb = [e for e in _near(w1["speech"], 38.8, 2.5) if re.search(r"(curb|crosswalk) at 1?\d in \d+", e["text"])]
+    curb = [e for e in _near(w1["speech"], 38.8, 2.5) if re.search(r"(curb|crosswalk) at \d+(?::\d\d)? in \d+", e["text"])]
     assert curb, [(e["t"], e["text"]) for e in w1["speech"]]
     poles = [e for e in w1["speech"] if re.search(r"\bpoles? at ", e["text"])]
     assert len(poles) == 1 and poles[0]["t"] < 30, [(e["t"], e["text"]) for e in w1["speech"]]
-    assert re.fullmatch(r"pole at 1?\d in \d+", poles[0]["text"])
+    assert re.fullmatch(r"pole at \d+(?::\d\d)? in \d+", poles[0]["text"])
     assert all(e["role"] in ("feature", "danger") for e in curb + poles)
 
 
@@ -225,7 +225,7 @@ def test_review2_obstacle_in_lane_is_named_once_and_beeps_near_35_3_s(review2):
     (context, the first time it is seen) - and not a second time as a danger 0.3 s later: v26.1.7 knows it is the same object.
     The parking-sensor beeps are as before."""
     w1 = review2[2][1]
-    hit = [e for e in _near(w1["speech"], 35.33, 1.0) if re.search(r"obstacle at \d+ in \d+", e["text"])]
+    hit = [e for e in _near(w1["speech"], 35.33, 1.0) if re.search(r"obstacle at \d+(?::\d\d)? in \d+", e["text"])]
     assert len(hit) == 1
     assert len([e for e in _near(w1["speech"], 35.33, 3.0) if "obstacle" in e["text"]]) == 1
     assert [b for b in w1["beeps"] if abs(b["t"] - 35.33) <= 1.0 and "obstacle at 12" in b["text"]]
@@ -238,20 +238,20 @@ def test_review2_person_is_warned_before_49_5_s_and_tracked_as_a_mover(review2):
     persons = [e for e in w2["speech"] if "person" in e["text"] and e["t"] <= 49.5]
     assert persons, [(e["t"], e["text"]) for e in w2["speech"]]
     assert persons[0]["t"] <= 48.5                                 # not later than v26.1.5's obstacle call
-    assert re.search(r"person (approaching )?at [12]", persons[0]["text"])
+    assert re.search(r"person (approaching )?at (?:12:[34]\d|1(?::\d\d)?|2(?::[0-3]\d)?) ", persons[0]["text"])
     # the persons at 1 and 2 are danger hazards (movers in the wide zone) well before they are alongside
     danger_t = [f["t"] for f in w2["doc"]["frames"] for h in f["hazards"]
                 if h["className"] == "person" and h["role"] == "danger" and h["clock"] in (1, 2) and f["t"] <= 49.5]
     assert danger_t and min(danger_t) <= 47.5
     # and the obstacle ahead is still announced near 48.5 s
-    assert [e for e in _near(w2["speech"], 48.5, 1.0) if "obstacle at 12" in e["text"]]
+    assert [e for e in _near(w2["speech"], 48.5, 1.0) if re.search(rf"obstacle at {CLOCK_12} ", e["text"])]
 
 
 def test_review2_person_phrase_near_75_5_s_has_no_oclock_and_names_12(review2):
     """Verdict at 75.49 s ("person approaching, 12 o'clock") -> "person approaching at 12" in the full run. As a cold window
     (no ego speed, so no motion measurement) the person is announced as a danger instead of "approaching"."""
     w3 = review2[2][3]
-    hit = [e for e in _near(w3["speech"], 75.5, 1.5) if "person" in e["text"] and re.search(r"\bat 12\b", e["text"])]
+    hit = [e for e in _near(w3["speech"], 75.5, 1.5) if "person" in e["text"] and re.search(rf"\bat {CLOCK_12}\b", e["text"])]
     assert hit, [(e["t"], e["text"]) for e in w3["speech"]]
     assert "o'clock" not in hit[0]["text"]
 
@@ -286,7 +286,7 @@ def test_review2_no_oclock_in_any_phrase_and_clocks_use_the_new_templates(review
         for w in windows:
             for e in w["speech"]:
                 assert "o'clock" not in e["text"]
-                assert re.fullmatch(r"[a-z ,]+( at [0-9][0-9, and]*)?( in \d+( step)?)?(, [a-z ,0-9]+)*", e["text"]) or \
+                assert re.fullmatch(r"[a-z ,]+( at [0-9][0-9:, and]*)?( in \d+( step)?)?(, [a-z ,0-9:]+)*", e["text"]) or \
                     "approaching" in e["text"] or e["role"] == "surface", e["text"]
             for b in w["beeps"]:
                 assert "o'clock" not in b["text"] and b["text"].startswith("beeps · ")
@@ -365,8 +365,9 @@ def test_review2_context_and_features_do_not_start_before_confirmation_and_ego_s
 # they reproduce only part of what the full 52 minute run said.
 
 WARM_PRIOR = 1.25     # a scale prior stands in for the calibration the full run has at 36 s (its k is 1.16-1.5 there)
+CLOCK_12 = r"(?:11:30|11:45|12|12:15|12:30)"      # a reviewed "12" within half an hour
 THIN_PHRASE = re.compile(r"\b(poles?|traffic lights?|pedestrian lights?|signs?|traffic signs?) at ")
-ENTRY_RE = r"[a-z ]+? (?:approaching )?at \d+(?:, \d+)*(?: and \d+)? in \d+(?: steps?)?"
+ENTRY_RE = r"[a-z ]+? (?:approaching )?at \d+(?::\d\d)?(?:, \d+(?::\d\d)?)*(?: and \d+(?::\d\d)?)? in \d+(?: steps?)?"
 
 
 @pytest.fixture(scope="module")
@@ -392,9 +393,43 @@ def _all(windows, key="speech"):
     return [e for w in windows for e in w[key]]
 
 
+def _q_of(clock: str) -> int:
+    """Quarter index of a spoken clock ("12" -> 0, "1" -> 4, "11:45" -> -1)."""
+    h, _, m = clock.partition(":")
+    mins = (int(h) % 12) * 60 + (int(m) if m else 0)
+    return round((mins - 720 if mins > 360 else mins) / 15)
+
+
 def _norm(text: str) -> tuple:
+    """Entries of a phrase as (label part, clock quarter indices), without steps and "approaching"."""
     text = re.sub(r" in \d+( steps?)?", "", text).replace(" approaching", "")
-    return tuple(sorted(x.strip() for x in text.split(", ")))
+    out = []
+    for x in text.split(", "):
+        m = re.match(r"(.+?) at (\d+(?::\d\d)?(?:(?:,| and) \d+(?::\d\d)?)*)$", x.strip())
+        if m:
+            out.append((m.group(1), tuple(sorted(_q_of(c) for c in re.findall(r"\d+(?::\d\d)?", m.group(2))))))
+        else:
+            out.append((x.strip(), ()))
+    return tuple(sorted(out))
+
+
+QUARTER_TOL = 2     # v26.1.10: a reviewed whole hour matches a quarter text within half an hour (the lens model moves bearings too)
+
+
+def _entry_match(a: tuple, b: tuple) -> bool:
+    (la, qa), (lb, qb) = a, b
+    near = lambda q, qs: any(abs(q - r) <= QUARTER_TOL for r in qs)    # noqa: E731
+    return la == lb and all(near(q, qb) for q in qa) and all(near(q, qa) for q in qb)
+
+
+def _same_norm(a: tuple, b: tuple) -> bool:
+    """Equal entry lists (label and clocks within QUARTER_TOL quarters)."""
+    return len(a) == len(b) and all(_entry_match(x, y) for x, y in zip(a, b))
+
+
+def _sub_norm(a: tuple, b: tuple) -> bool:
+    """Every entry of ``a`` has a matching entry in ``b``."""
+    return all(any(_entry_match(x, y) for y in b) for x in a)
 
 
 def _is_the_annotated_event(ann: dict, e: dict) -> bool:
@@ -410,7 +445,7 @@ def _is_the_annotated_event(ann: dict, e: dict) -> bool:
         return any(THIN_PHRASE.match(x.strip()) for x in e["text"].split(", "))
     if a["role"] == "surface":
         return e["role"] == "surface" and e["text"] == a["text"]
-    return _norm(a["text"]) == _norm(e["text"]) or (a["role"] == "context" and set(_norm(a["text"])) <= set(_norm(e["text"])))
+    return _same_norm(_norm(a["text"]), _norm(e["text"])) or (a["role"] == "context" and _sub_norm(_norm(a["text"]), _norm(e["text"])))
 
 
 def _produced(meta, windows, ann, tol=1.5):
@@ -433,7 +468,7 @@ def test_review3_fixture_is_the_documented_one(review3):
     assert len(ann) == 33 and sum(a["verdict"] == "correct" for a in ann) == 27 and sum(a["verdict"] == "remove" for a in ann) == 6
     assert sorted(round(a["t"], 2) for a in ann if a["verdict"] == "remove") == [7.84, 40.5, 41.17, 59.85, 118.66, 199.16]
     assert len(meta["systemEventsV26_1_6"]) > 0
-    assert CONFIG["version"] == "v26.1.9"
+    assert CONFIG["version"] == "v26.1.10"
 
 
 def test_review3_no_repeat_at_7_84_40_50_59_85_and_118_66(review3, review3_warm, review3_no_memory):
@@ -486,7 +521,7 @@ def test_review3_every_object_phrase_has_a_position_and_a_distance(review3, revi
             assert "o'clock" not in e["text"] and "beware" not in e["text"]
             n += 1
         for b in _all(windows, "beeps"):
-            assert re.fullmatch(r"beeps · [a-z ]+ at \d+ · [\d→]+ steps?", b["text"]), b["text"]
+            assert re.fullmatch(r"beeps · [a-z ]+ at \d+(?::\d\d)? · [\d→]+ steps?", b["text"]), b["text"]
     assert n >= 25
 
 
@@ -541,4 +576,4 @@ def test_review3_speech_with_memory_is_a_subset_of_speech_without_it_apart_from_
     for e in on:
         same = [o for o in off if abs(o["t"] - e["t"]) < 0.01 and o["role"] == e["role"]]
         assert same, (e["t"], e["text"])
-        assert set(_norm(e["text"])) <= set(_norm(same[0]["text"])), (e["text"], same[0]["text"])
+        assert _sub_norm(_norm(e["text"]), _norm(same[0]["text"])), (e["text"], same[0]["text"])

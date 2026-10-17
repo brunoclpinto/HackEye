@@ -11,13 +11,15 @@ export class Overlay {
     this.video = video;
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-    this.layers = { mask: true, region: true, lane: true, horizon: true, hazards: true, showAll: false };
+    this.layers = { mask: true, region: true, lane: true, horizon: true, hazards: true, showAll: false, depth: false };
+    this.hasDepth = false;    // the loaded run has depth maps (set by app)
     this.outlines = true;     // item shapes: true = mask-edge outlines (when present), false = bounding boxes
     this.hudEl = null;        // set by app: element receiving the HUD lines
     this.maskOpacity = 0.45;
     this.run = null;
     this.frames = [];
     this.cache = new Map();   // key -> {img, ready}; Map order = LRU order. Pre-rendered masks/<i>.png (fallback path)
+    this.dcache = new Map();  // key -> {img, ready, failed}: depth/<i>.png
     this.ccache = new Map();  // key -> {img, ready, failed, grid, w, h, canvas, ver}: class grids (classes.png), coloured client-side
     this.style = null;        // MaskStyle (js/classes.js) once the run's class list is known
     this.styleState = "pending"; // "pending" (class list loading: draw no mask yet) | "classes" | "png" (fallback)
@@ -54,6 +56,7 @@ export class Overlay {
     this.fixedStep = null;
     this.cache.clear();
     this.ccache.clear();
+    this.dcache.clear();
     this.style = null;
     this.styleState = run ? "pending" : "png";
     this.lastK = -2;
@@ -119,6 +122,7 @@ export class Overlay {
     if (k !== this.lastK) { this.lastK = k; this.preload(k); }
     const f = this.frames[k];
 
+    if (this.layers.depth && this.hasDepth) this.drawDepth(k);
     if (this.layers.mask) this.drawMask(k, t);
     if (this.layers.lane && f.lane?.length) this.drawLane(f.lane);
     if (this.layers.region && f.region?.rows?.length) this.drawRegion(f.region);
@@ -239,6 +243,27 @@ export class Overlay {
     return e.canvas;
   }
 
+  /** Depth map PNG of frame k (semi-transparent, under the mask and outlines); a missing image (404) is remembered and skipped. */
+  drawDepth(k) {
+    const key = this.key(k);
+    const fresh = !this.dcache.has(key);
+    const e = this.lru(this.dcache, key, () => ({ img: null, ready: false }));
+    if (fresh) {
+      this.loadImage(e, k, `/api/runs/${this.run.id}/depth/${this.frames[k].index}.png`);
+      e.img.onerror = () => { e.failed = true; };
+    }
+    for (let j = k; j >= 0 && this.frames[k].t - this.frames[j].t <= STALE_MASK_S; j--) {
+      const d = this.dcache.get(this.key(j));
+      if (d?.ready) {
+        this.ctx.save();
+        this.ctx.globalAlpha = 0.5;
+        this.ctx.drawImage(d.img, 0, 0, this.cw, this.ch);
+        this.ctx.restore();
+        return;
+      }
+    }
+  }
+
   drawMask(k, t) {
     if (this.styleState === "pending") return;
     // Exact frame if loaded; otherwise the nearest earlier loaded one if < 0.5 s old; else nothing.
@@ -338,9 +363,10 @@ export class Overlay {
     }
 
     if (!dim || this.layers.showAll) {
-      let text = `${h.label} · ${h.clock}`;
+      let text = `${h.label} · ${h.clockText ?? h.clock}`;
       if (legacy) text += ` · ${Number(h.proximity).toFixed(2)}`;
       else if (role !== "context" && h.stepsTo != null) text += ` · ${Math.round(h.stepsTo)}st`;
+      if (h.depthM != null && h.distanceM != null) text += ` · ground ${h.distanceM.toFixed(1)} m · depth ${h.depthM.toFixed(1)} m`;
       ctx.font = `${dim ? 500 : 600} ${dim ? 11 : 13}px system-ui, sans-serif`;
       ctx.textBaseline = "middle";
       const pad = 4, th = dim ? 15 : 18, tw = ctx.measureText(text).width + pad * 2;

@@ -741,6 +741,12 @@ def test_bike_lane_flip_does_not_retrigger_wall():
 # 11. Speech policy: priority, gap, hold
 # --------------------------------------------------------------------------
 
+def _set_clock(it, hour):
+    """Put an item at a whole clock hour (all three clock fields)."""
+    it.clock, it.clock_q = hour, col._quarter_of_hour(hour)
+    it.clock_text = col.clock_text(it.clock_q)
+
+
 def _item(track_id, role, steps, label="thing", group="static", clock=12, dist=None, urgency=None, approaching=False):
     it = col._Item(group=group, class_name=label, bbox=[0.4, 0.5, 0.5, 0.6], contact_y=0.6,
                    distance_m=steps * 0.7 if dist is None else dist, lateral_m=0.0, bearing=0.0, clock=clock, pan=0.0,
@@ -986,15 +992,15 @@ def test_output_documents_are_serializable_and_complete():
     doc, ev = run(approach_frames(seconds=15), mot=motion(15))
     json.dumps(doc)
     json.dumps(ev)
-    assert set(doc) == {"version", "settings", "gridW", "gridH", "egoAvailable", "frames"}
-    assert doc["version"] == "v26.1.9" == ev["version"]
+    assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames"}
+    assert doc["version"] == "v26.1.10" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM"}
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150
     frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards"}
     ego_keys = {"speedMps", "cadenceHz", "stepLengthM", "headingDeg", "estimated", "scale", "scaleSource"}
     hazard_keys = {"trackId", "className", "group", "label", "role", "moving", "bbox", "contactY", "bearingDeg",
-                   "clock", "pan", "distanceM", "lateralM", "stepsTo", "closingMps", "urgency", "areaFrac", "collision"}
+                   "clock", "clockText", "pan", "distanceM", "lateralM", "stepsTo", "closingMps", "urgency", "areaFrac", "collision"}
     seen_hazard = False
     for f in doc["frames"]:
         assert set(f) == frame_keys
@@ -1009,9 +1015,9 @@ def test_output_documents_are_serializable_and_complete():
             assert h["urgency"] in ("none", "danger", "final")
             seen_hazard = True
     assert seen_hazard
-    speech_keys = {"t", "type", "role", "text", "trackId", "urgency", "clock", "pan"}
+    speech_keys = {"t", "type", "role", "text", "trackId", "urgency", "clock", "clockText", "pan"}
     tone_keys = {"t", "type", "role", "trackId", "urgency", "pan", "frequencyHz", "durationSeconds"}
-    beeps_keys = {"t", "tEnd", "type", "role", "trackId", "label", "clock", "minSteps", "urgency", "text"}
+    beeps_keys = {"t", "tEnd", "type", "role", "trackId", "label", "clock", "clockText", "minSteps", "urgency", "text"}
     for e in ev["events"]:
         assert set(e) == {"speech": speech_keys, "tone": tone_keys, "beeps": beeps_keys}[e["type"]]
         assert e["role"] in ("context", "surface", "feature", "danger", "final")
@@ -1165,12 +1171,13 @@ def test_thin_objects_are_announced_once_per_cluster_with_position_and_distance_
     # several poles at different clocks: "poles at 11 and 1 in 8", the steps are those of the nearest
     m = col.SpeechPolicy(CONFIG)
     a, b = _pole(1, 8), _pole(2, 11)
-    a.clock, b.clock = 11, 1
+    _set_clock(a, 11), _set_clock(b, 1)
     assert m.step(0.0, [a, b], _tracks(1, 2))["text"] == "poles at 11 and 1 in 8"
     # a different thin label is its own entry: "pole at 12 in 8, traffic light at 1 in 10"
     n = col.SpeechPolicy(CONFIG)
     pl, tl = _pole(1, 8), _pole(2, 10)
-    tl.label, tl.clock = "traffic light", 1
+    tl.label = "traffic light"
+    _set_clock(tl, 1)
     assert n.step(0.0, [pl, tl], _tracks(1, 2))["text"] == "pole at 12 in 8, traffic light at 1 in 10"
     # a pole that is a danger is spoken as a danger, with no extra thin notice
     tr = _tracks(*range(1, 40))
@@ -1288,7 +1295,7 @@ def test_fragmented_object_is_not_announced_again_and_there_is_no_repeated_final
     1.4 s (a new track after the gap) and v26.1.6 called "pole at 12 in 9" and a final "pole at 12 in 3" for the SAME pole."""
     frames, mot = walk([POLE], 12, hidden=lambda n, t: 5.5 <= t < 6.9)
     doc, ev = run(frames, mot=mot)
-    assert len(speech(ev)) == 1 and re.fullmatch(r"pole at 12 in 1[0-5]", speech(ev)[0]["text"]), _summary(ev)
+    assert len(speech(ev)) == 1 and re.fullmatch(r"pole at 12(?::15)? in 1[0-5]", speech(ev)[0]["text"]), _summary(ev)
     assert len({h["trackId"] for _, h in hz(doc, "pole")}) >= 2            # the fragmentation really happened
     assert any(h["urgency"] == "final" for _, h in hz(doc, "pole"))        # ... and the final range was reached
     # without the world memory (v26.1.6 / no motion data) the repeat is there ...
@@ -1317,7 +1324,7 @@ def test_a_second_object_of_the_same_type_further_on_is_announced():
     frames, mot = walk(poles, 52)
     doc, ev = run(frames, mot=mot)
     sp = speech(ev)
-    assert len(sp) == 2 and all(re.fullmatch(r"pole at 12 in 1[0-5]", e["text"]) for e in sp), _summary(ev)
+    assert len(sp) == 2 and all(re.fullmatch(r"pole at 12(?::15)? in 1[0-5]", e["text"]) for e in sp), _summary(ev)
     assert sp[0]["t"] < 6 and sp[1]["t"] > 35                 # the first when it came into view, the second 46 m further on
 
 
@@ -1457,7 +1464,7 @@ def test_grouped_context_and_thin_cluster_members_are_all_remembered():
     p1, p2 = _pole(3, 8, lat=-1.0), _pole(4, 9, lat=1.5)
     for it, (d, lat) in ((p1, (5.6, -1.0)), (p2, (6.3, 1.5))):
         it.distance_m, it.lateral_m, it.family, it.role = d, lat, "pole", "none"
-    p1.clock, p2.clock = 11, 1
+    _set_clock(p1, 11), _set_clock(p2, 1)
     world.link([a, b, p1, p2], tr, 0.0)
     e = policy.step(0.0, [a, b, p1, p2], tr)
     assert e["text"] == "poles at 11 and 1 in 8"
@@ -1529,7 +1536,7 @@ def test_approaching_after_being_named_standing_is_news_but_only_once():
 
 # -- phrases ----------------------------------------------------------------
 
-ENTRY = r"[a-z ]+? (?:approaching )?at \d+(?:, \d+)*(?: and \d+)? in \d+(?: steps?)?"
+ENTRY = r"[a-z ]+? (?:approaching )?at \d+(?::\d\d)?(?:, \d+(?::\d\d)?)*(?: and \d+(?::\d\d)?)? in \d+(?: steps?)?"
 
 
 def test_every_object_phrase_has_a_position_and_a_distance():

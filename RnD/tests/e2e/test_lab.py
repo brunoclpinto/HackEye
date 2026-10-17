@@ -758,7 +758,7 @@ def test_resolution_select_and_run_badge(page):
     texts = page.eval_on_selector_all("#profileSel option", "os => os.map(o => o.textContent)")
     assert texts == ["544p · 960×544", "576p · 1024×576", "608p · 1056×608", "640p · 1120×640",
                      "672p · 1184×672", "704p · 1248×704", "736p · 1280×736"]
-    assert page.input_value("#profileSel") == "544p"
+    assert page.input_value("#profileSel") == "736p"
     assert page.inner_text("label:has(#profileSel)").startswith("Resolution")
     model = next(m["path"] for m in api("/api/models")["models"] if m["default"])
     known = {r["id"] for r in api("/api/runs")}
@@ -779,3 +779,97 @@ def test_resolution_select_and_run_badge(page):
         path = os.path.join(LAB_DIR_MOUNT, "runs", run_id) if LAB_DIR_MOUNT else ""
         if path and os.path.isdir(path):
             shutil.rmtree(path)
+
+
+# ---- v26.2: panel auto-scroll, quarter clocks, depth ------------------------------------------------------------
+
+def _rm_run(run_id):
+    path = os.path.join(LAB_DIR_MOUNT, "runs", run_id) if LAB_DIR_MOUNT else ""
+    if path and os.path.isdir(path):
+        shutil.rmtree(path)
+
+
+def test_review_panel_follows_playhead_on_desktop(page):
+    """>= 1200 px: #reviewPanel is the scroll container; seeking to a late notification scrolls it so the current row is visible."""
+    evs = [e for e in api(f"/api/runs/{FULL_RUN}/events.json")["events"] if e["type"] in ("speech", "beeps")]
+    evs.sort(key=lambda e: e["t"])
+    if len(evs) < 12:
+        pytest.skip("not enough notifications in the session run to overflow the panel")
+    open_lab(page, LONG_REC, t=0, run=FULL_RUN)
+    page.wait_for_selector("#rvList > li")
+    assert page.evaluate("() => { const p = document.querySelector('#reviewPanel'); return p.scrollHeight > p.clientHeight; }"), "panel does not overflow"
+    assert page.evaluate("document.querySelector('#reviewPanel').scrollTop") == 0
+    seek(page, evs[-1]["t"] + 0.05)
+    page.wait_for_function("() => document.querySelector('#rvList > li.cur')")
+    page.wait_for_function("() => document.querySelector('#reviewPanel').scrollTop > 0")
+    inside = page.evaluate("""() => { const r = document.querySelector('#rvList > li.cur').getBoundingClientRect();
+        const b = document.querySelector('#reviewPanel').getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1; }""")
+    assert inside, "current row is outside the panel viewport"
+    assert page.evaluate("window.scrollY") == 0, "the window must not scroll"
+    seek(page, evs[0]["t"] + 0.05)     # and back up
+    page.wait_for_function("() => document.querySelector('#reviewPanel').scrollTop < 5 || document.querySelector('#rvList > li.cur').getBoundingClientRect().top >= document.querySelector('#reviewPanel').getBoundingClientRect().top")
+
+
+def test_quarter_clock_labels(page):
+    """When the backend emits clockText, phrases and overlay labels use it (never the 'o'clock' wording)."""
+    doc = api(f"/api/runs/{FULL_RUN}/hazards?from=0&to=120")
+    items = [h for f in doc["frames"] for h in f.get("hazards", [])]
+    if not items or not any("clockText" in h for h in items):
+        pytest.skip("backend does not emit clockText yet (restart the lab container)")
+    assert all(isinstance(h["clockText"], str) and re.fullmatch(r"\d{1,2}(:(15|30|45))?", h["clockText"]) for h in items if "clockText" in h)
+    spoken = [e for e in api(f"/api/runs/{FULL_RUN}/events.json")["events"] if e["type"] == "speech"]
+    assert not any("o'clock" in e["text"] for e in spoken)
+    # Overlay label: draw a frame with an item and read what the page would label it with.
+    fr = next(f for f in doc["frames"] if any(h.get("role") in ("danger", "final", "feature") and "clockText" in h for h in f["hazards"]))
+    h = next(h for h in fr["hazards"] if h.get("role") in ("danger", "final", "feature"))
+    open_lab(page, LONG_REC, t=fr["t"] + 0.01, run=FULL_RUN)
+    page.wait_for_timeout(1500)
+    got = page.evaluate("""async (t) => { const m = await import('/static/js/autofill.js');
+        const f = await (await fetch('/api/runs/%s/frame?t=' + t)).json();
+        return f.frame.hazards.map((h) => m.fillFor(h, null).text); }""" % FULL_RUN, fr["t"])
+    assert got and not any("o'clock" in x or " at ? " in x for x in got)
+    assert any(h["clockText"] in x for x in got)
+
+
+def _depth_models():
+    return api("/api/models").get("depthModels") or []
+
+
+def test_depth_toggle_disabled_without_depth(page):
+    open_lab(page, LONG_REC, t=10, run=FULL_RUN)
+    assert page.is_visible("#depthChk")
+    assert page.is_disabled("#depthChk")
+    assert page.evaluate("document.querySelector('#depthSel').value || 'none'") == "none"
+
+
+def test_depth_run_toggle_and_image(page):
+    """A short depth run: Analyse sends depth, the badge/list show it, the Depth toggle fetches depth PNGs (200)."""
+    if "da3-metric-large" not in _depth_models():
+        pytest.skip("/api/models has no depthModels yet (restart the lab container)")
+    open_lab(page, SHORT_REC)
+    labels = page.eval_on_selector_all("#depthSel option", "os => os.map(o => [o.value, o.textContent])")
+    assert labels[0] == ["none", "Off"] and ["da3-metric-large", "DA3 Metric Large"] in labels
+    assert page.input_value("#depthSel") == "da3-metric-large"   # depth on by default (v26.1.10)
+    known = {r["id"] for r in api("/api/runs")}
+    page.fill("#rangeStart", "0")
+    page.fill("#rangeEnd", "6")
+    page.select_option("#depthSel", "da3-metric-large")
+    page.click("#analyseBtn")
+    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('depth')", timeout=300_000)
+    run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
+    try:
+        run = api(f"/api/runs/{run_id}")
+        assert run["request"].get("depth") == "da3-metric-large" or run.get("depth") == "da3-metric-large"
+        assert "depth" in page.inner_text("#runList")
+        assert page.is_enabled("#depthChk")
+        page.uncheck("#depthChk") if page.is_checked("#depthChk") else None
+        seek(page, 2.0)
+        with page.expect_response(lambda r: re.search(r"/depth/\d+\.png", r.url) is not None, timeout=30_000) as info:
+            page.check("#depthChk")
+        assert info.value.status == 200
+        # Loading another (non-depth) run disables the toggle again; reloading this one selects its depth model.
+        page.reload()
+        page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('run ')")
+        assert page.input_value("#depthSel") == "da3-metric-large"
+    finally:
+        _rm_run(run_id)

@@ -2,9 +2,9 @@
 // No DOM access, so they can be unit-tested under node.
 const ROLE_ORDER = { final: 0, danger: 1, feature: 2, context: 3, none: 4 };
 const DEFAULT_TEMPLATES = {
-  context: "{label} at {clock} o'clock", feature: "{label} in {steps} steps",
-  danger: "{label}, {clock} o'clock, {steps} steps", approach: "{label} approaching, {clock} o'clock",
-  final: "{label}, {steps} steps",
+  context: "{label} at {clock} in {steps}", feature: "{label} at {clock} in {steps}",
+  danger: "{label} at {clock} in {steps}", approach: "{label} approaching at {clock} in {steps}",
+  final: "{label} at {clock} in {steps}",
 };
 
 /** Analysed frame with the largest t <= t, or null when t is outside the run (before the first frame or > 1 s past the last). */
@@ -33,7 +33,7 @@ export function fillFor(item, templates) {
   if (key === "danger" && item.moving === true && item.closingMps > 0) key = "approach";
   const vals = {
     label: item.label ?? item.className ?? "object",
-    clock: item.clock ?? "?",
+    clock: item.clockText ?? item.clock ?? "?",
     steps: typeof item.stepsTo === "number" ? Math.round(item.stepsTo) : "?",
   };
   const text = T[key].replace(/\{(label|clock|steps)\}/g, (_, k) => vals[k]);

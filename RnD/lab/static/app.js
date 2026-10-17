@@ -187,6 +187,8 @@ function updateSettingPlaceholders() {
   $("#stepLenInput").placeholder = dflt != null ? `auto (default ${dflt})` : "auto";
   const hf = r?.hfovDeg ?? S.config?.defaultHfovDeg;
   if (hf != null) $("#hfovInput").placeholder = `${hf} (default)`;
+  const auto = $("#projSel").querySelector('option[value="auto"]');
+  auto.textContent = r?.projection ? `Auto (${r.projection})` : "Auto";
 }
 
 async function loadSettings() {
@@ -200,6 +202,8 @@ function applySettingsToForm() {
   $("#hfovInput").value = s.hfovDeg ?? "";
   $("#camHeightInput").value = s.cameraHeightM ?? "";
   $("#stepLenInput").value = s.stepLengthM ?? "";
+  $("#projSel").value = s.projection ?? "auto";
+  $("#distSel").value = s.distanceSource ?? "ground";
   updateSettingPlaceholders();
 }
 function settingsFromForm() {
@@ -209,6 +213,8 @@ function settingsFromForm() {
     hfovDeg: num("#hfovInput"),
     cameraHeightM: num("#camHeightInput"),
     stepLengthM: num("#stepLenInput"),
+    projection: $("#projSel").value,
+    distanceSource: $("#distSel").value,
   };
 }
 async function putSettings() {
@@ -228,6 +234,7 @@ async function rerunCollision() {
     const ms = performance.now() - t0;
     const fmt = (v) => (v < 1000 ? Math.round(v) + " ms" : (v / 1000).toFixed(2) + " s");
     const compute = r.elapsedSeconds != null ? `${fmt(r.elapsedSeconds * 1000)} compute, ` : "";
+    $("#rerunBtn").classList.remove("primary");
     info.textContent = `Collision ${r.version ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events · ${S.events.filter((e) => e.type === "beeps").length} beeps`;
     api(`/api/runs/${S.run.id}`, { quiet: true }).then((run) => { S.run = run; applyRunMeta(); reviews.setRun(run, S.notes); }).catch(() => {});
   } catch { info.textContent = "Failed (see error)"; }
@@ -240,9 +247,17 @@ async function loadRuns() {
   renderRuns();
 }
 
+const DEPTH_LABELS = { "da3-metric-large": "DA3 Metric Large" };
+
+/** The depth model of a run, or null (older runs have no field; "none" counts as none). */
+function runDepth(r) {
+  const d = r?.depth ?? r?.request?.depth;
+  return d && d !== "none" ? d : null;
+}
+
 function runLabel(r) {
   const q = r.request;
-  return `${fmtTime(q.start)} – ${fmtTime(q.end)} · ${q.fps} fps${r.inputSpec ? ` · ${r.inputSpec.w}×${r.inputSpec.h}` : ""}`;
+  return `${fmtTime(q.start)} – ${fmtTime(q.end)} · ${q.fps} fps${r.inputSpec ? ` · ${r.inputSpec.w}×${r.inputSpec.h}` : ""}${runDepth(r) ? ` · ${runDepth(r)}` : ""}`;
 }
 
 // Resolution select: "576p · 1024×576" from the selected recording; options it can't do (would upscale) are disabled.
@@ -269,7 +284,7 @@ function renderRuns() {
     tag.className = `tag ${r.status}`;
     tag.textContent = r.status;
     li.firstChild.append(tag);
-    li.lastChild.textContent = [r.modelName, r.request.profile, r.createdAt?.replace("T", " ").replace("Z", "")].filter(Boolean).join(" · ");
+    li.lastChild.textContent = [r.modelName, r.request.profile, runDepth(r) ? `depth ${runDepth(r)}` : null, r.createdAt?.replace("T", " ").replace("Z", "")].filter(Boolean).join(" · ");
     li.addEventListener("click", () => openRun(r));
     ul.append(li);
   }
@@ -319,6 +334,7 @@ async function startAnalysis() {
   if (!(end > start)) { toast("Range end must be after range start (and within the recording)."); return; }
   const fps = Number($("#fpsInput").value) || 6;
   const body = { recording: S.rec.id, start, end, model: $("#modelSel").value, profile: $("#profileSel").value || "default", fps };
+  if ($("#depthSel").value && $("#depthSel").value !== "none") body.depth = $("#depthSel").value;
   $("#analyseBtn").disabled = true;
   try {
     await putSettings(); // the post-inference collision pass uses the stored settings
@@ -362,6 +378,15 @@ function watchRun(runId) {
   poll();
 }
 
+/** The overlay's Depth toggle only works for runs that have depth maps. */
+function setDepthAvailable(on) {
+  const chk = $("#depthChk");
+  overlay.hasDepth = on;
+  chk.disabled = !on;
+  chk.title = on ? "" : "This run has no depth maps (analyse with a depth model)";
+  if (!on) { chk.checked = false; overlay.layers.depth = false; }
+}
+
 function unloadRun() {
   S.run = null; S.events = []; S.speech = []; S.tones = []; S.notes = [];
   hazards.setRun(null);
@@ -372,6 +397,7 @@ function unloadRun() {
   reviews.setRun(null, []);
   $("#runBadge").textContent = "";
   $("#rerunBtn").disabled = true;
+  setDepthAvailable(false);
 }
 
 async function loadRunData(run, links) {
@@ -386,6 +412,7 @@ async function loadRunData(run, links) {
   hazards.setRun(run);
   overlay.setRun(run);
   classesPanel.setRun(run);
+  setDepthAvailable(!!runDepth(run));
   hazards.update(playheadForRun(run));
   audio.setEvents(S.events);
   refreshAudioEvents();
@@ -423,7 +450,7 @@ function refreshAudioEvents() {
 function applyRunMeta() {
   const r = S.run;
   if (!r) return;
-  $("#runBadge").textContent = `run ${r.id} · ${runLabel(r)} · ${r.frameCount} frames · ${r.modelName ?? ""}${r.msPerFrame ? ` · ${Math.round(r.msPerFrame)} ms/frame` : ""} · collision ${r.collisionVersion ?? "?"}${r.motionFrames ? "" : " · no motion track"}`;
+  $("#runBadge").textContent = `run ${r.id} · ${runLabel(r)} · ${r.frameCount} frames · ${r.modelName ?? ""}${r.msPerFrame ? ` · ${Math.round(r.msPerFrame)} ms/frame` : ""} · collision ${r.collisionVersion ?? "?"}${runDepth(r) ? ` · depth ${runDepth(r)}${r.depthMsPerFrame ? ` ${Math.round(r.depthMsPerFrame)} ms/frame` : ""}` : ""}${r.motionFrames ? "" : " · no motion track"}`;
 }
 
 async function loadRun(runId, { seek = true, t } = {}) {
@@ -443,6 +470,7 @@ async function loadRun(runId, { seek = true, t } = {}) {
   $("#rangeStart").value = fmtTime(run.request.start);
   $("#rangeEnd").value = fmtTime(run.request.end);
   if ([...$("#profileSel").options].some((o) => o.value === run.request.profile)) $("#profileSel").value = run.request.profile;
+  $("#depthSel").value = [...$("#depthSel").options].some((o) => o.value === runDepth(run)) ? runDepth(run) : "none";
   renderRuns();
   if (seek && gen === S.seekGen) seekTo(t ?? run.request.start);
   else hazards.update(video.currentTime || 0);
@@ -591,7 +619,7 @@ function wire() {
 
   // overlay layers
   const layer = (id, key) => $(id).addEventListener("change", (e) => { overlay.layers[key] = e.target.checked; overlay.redraw(); });
-  layer("#maskChk", "mask"); layer("#regionChk", "region"); layer("#laneChk", "lane");
+  layer("#maskChk", "mask"); layer("#depthChk", "depth"); layer("#regionChk", "region"); layer("#laneChk", "lane");
   layer("#horizonChk", "horizon"); layer("#hazardChk", "hazards"); layer("#showAllChk", "showAll");
   const shapeSel = $("#shapeSel");
   try { const v = localStorage.getItem("hackeye.lab.shapes"); if (v === "outlines" || v === "boxes") shapeSel.value = v; } catch { /* storage blocked */ }
@@ -602,6 +630,11 @@ function wire() {
     overlay.redraw();
   });
   $("#mountSel").addEventListener("change", updateSettingPlaceholders);
+  $("#distSel").addEventListener("change", () => { // A/B in one click: the re-run button lights up for runs with depth maps
+    if (!S.run || !runDepth(S.run)) return;
+    $("#rerunBtn").classList.add("primary");
+    $("#rerunInfo").textContent = "Distance source changed: click Re-run collision to compare.";
+  });
   renderRoleChips();
   $("#maskOpacity").addEventListener("input", (e) => { overlay.maskOpacity = Number(e.target.value); overlay.redraw(); });
 
@@ -649,7 +682,14 @@ async function init() {
     const d = models.models.find((m) => m.default);
     if (d) $("#modelSel").value = d.path;
     for (const p of models.profiles) $("#profileSel").add(new Option(p, p));
-    $("#profileSel").value = "544p";
+    $("#profileSel").value = "736p";
+    const dm = models.depthModels ?? [];
+    if (dm.length) {
+      for (const d of dm) $("#depthSel").add(new Option(d === "none" ? "Off" : DEPTH_LABELS[d] ?? d, d));
+      if (!dm.includes("none")) $("#depthSel").add(new Option("Off", "none"), 0);
+      $("#depthSel").value = dm.includes("da3-metric-large") ? "da3-metric-large" : "none";   // depth on by default (v26.1.10)
+      $("#depthLbl").hidden = false;
+    }
   } else $("#profileSel").add(new Option("default", "default"));
   labelResolutions();
 
