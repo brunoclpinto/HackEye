@@ -154,6 +154,7 @@ async function selectRecording(id, { keepRun = false } = {}) {
     $("#rangeStart").value = $("#rangeEnd").value = "";
   }
   renderLibrary();
+  labelResolutions();
   if (rec.proxy?.status === "ready") { if (changed) attachVideo(); } else updateStageMsg();
   $("#analyseBtn").disabled = !!$("#cancelBtn").dataset.run;
   if (changed) {
@@ -241,7 +242,19 @@ async function loadRuns() {
 
 function runLabel(r) {
   const q = r.request;
-  return `${fmtTime(q.start)} – ${fmtTime(q.end)} · ${q.fps} fps`;
+  return `${fmtTime(q.start)} – ${fmtTime(q.end)} · ${q.fps} fps${r.inputSpec ? ` · ${r.inputSpec.w}×${r.inputSpec.h}` : ""}`;
+}
+
+// Resolution select: "576p · 1024×576" from the selected recording; options it can't do (would upscale) are disabled.
+function labelResolutions() {
+  const sizes = S.rec?.inputSizes ?? {};
+  for (const o of $("#profileSel").options) {
+    const sz = sizes[o.value];
+    o.textContent = sz ? `${o.value} · ${sz[0]}×${sz[1]}` : o.value;
+    o.disabled = !!S.rec && !sz;
+  }
+  const sel = $("#profileSel");
+  if (sel.selectedOptions[0]?.disabled) sel.value = Object.keys(sizes)[0] ?? sel.value;
 }
 function renderRuns() {
   const ul = $("#runList");
@@ -429,6 +442,7 @@ async function loadRun(runId, { seek = true, t } = {}) {
   S.rangeTouched = true; // keep the user's run range, don't auto-sync to playhead
   $("#rangeStart").value = fmtTime(run.request.start);
   $("#rangeEnd").value = fmtTime(run.request.end);
+  if ([...$("#profileSel").options].some((o) => o.value === run.request.profile)) $("#profileSel").value = run.request.profile;
   renderRuns();
   if (seek && gen === S.seekGen) seekTo(t ?? run.request.start);
   else hazards.update(video.currentTime || 0);
@@ -635,7 +649,9 @@ async function init() {
     const d = models.models.find((m) => m.default);
     if (d) $("#modelSel").value = d.path;
     for (const p of models.profiles) $("#profileSel").add(new Option(p, p));
+    $("#profileSel").value = "544p";
   } else $("#profileSel").add(new Option("default", "default"));
+  labelResolutions();
 
   // Restore state from the URL hash.
   const h = readHash();

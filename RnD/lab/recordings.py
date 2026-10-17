@@ -25,6 +25,9 @@ from pathlib import Path
 
 import cv2
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import profiles  # noqa: E402
+
 MEDIA_DIR = Path(os.environ.get("HACKEYE_MEDIA_DIR", "/media"))
 LAB_DIR = Path(os.environ.get("HACKEYE_LAB_DIR", "/debug/lab"))
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi"}
@@ -137,8 +140,21 @@ def scan_recordings() -> list[dict]:
             "chapters": chapters,
             "duration": round(t, 3),
             "width": first.width, "height": first.height, "fps": round(first.fps, 3),
+            "inputSizes": _input_sizes(first.width, first.height),
         })
     return recs
+
+
+def _input_sizes(width: int, height: int) -> dict[str, list[int]]:
+    """Model input (w, h) per offered resolution; options that would upscale are omitted."""
+    sizes = {}
+    for n in profiles.SHORT_SIDE_OPTIONS:
+        try:
+            spec = profiles.short_side_spec(width, height, n)
+        except ValueError:
+            continue
+        sizes[f"{n}p"] = [spec.dst_w, spec.dst_h]
+    return sizes
 
 
 def list_recordings() -> list[dict]:

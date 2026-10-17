@@ -987,7 +987,7 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "settings", "gridW", "gridH", "egoAvailable", "frames"}
-    assert doc["version"] == "v26.1.8" == ev["version"]
+    assert doc["version"] == "v26.1.9" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM"}
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150

@@ -36,12 +36,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import profiles  # noqa: E402
 from lab import recordings  # noqa: E402
 
 LAB_DIR = recordings.LAB_DIR
 GRID_W = 240
 ANALYSIS_VERSION = 2  # 2: ego-motion track (motion.npz); v26.1.0 runs are implicitly 1
-PROFILES = ["default", "production", "half", "quarter"]
+PROFILES = ["default", "production", "half", "quarter"]  # legacy names, still accepted
+RESOLUTIONS = [f"{n}p" for n in profiles.SHORT_SIDE_OPTIONS]  # what the UI offers
 IDLE_SECONDS = float(os.environ.get("HACKEYE_LAB_IDLE_SECONDS", "300"))
 RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 MODEL_DIRS = [(Path(os.environ.get("HACKEYE_MODELS_DIR", "/models")), "*.pt"),
@@ -163,8 +165,13 @@ def _normalise_request(req: dict) -> dict:
     if not (0 < fps <= 60):
         raise RunError("fps must be in (0, 60]")
     profile = req.get("profile") or "default"
-    if profile not in PROFILES:
-        raise RunError(f"profile must be one of {PROFILES}")
+    if profile not in RESOLUTIONS + PROFILES:
+        raise RunError(f"profile must be one of {RESOLUTIONS + PROFILES}")
+    if profile in RESOLUTIONS:
+        try:
+            profiles.short_side_spec(rec["width"], rec["height"], int(profile[:-1]))
+        except ValueError as e:
+            raise RunError(str(e)) from None
     model = req.get("model")
     if model not in {m["path"] for m in list_models()}:
         raise RunError(f"Unknown model: {model!r}")

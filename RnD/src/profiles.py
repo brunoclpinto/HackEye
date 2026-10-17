@@ -33,6 +33,35 @@ def _align_up(value: int, stride: int = STRIDE) -> int:
     return ((value + stride - 1) // stride) * stride
 
 
+SHORT_SIDE_OPTIONS = tuple(range(544, 737, 32))  # padded short side of the model input, "Np"
+
+
+def short_side_spec(src_w: int, src_h: int, short: int) -> InputSpec:
+    """Native-aspect input whose padded short side is exactly `short`, never upscaled.
+
+    The long-side content is the largest multiple of STRIDE (<= the source) whose
+    stride-aligned short side still fits in `short`; the short side is then
+    aligned up (the letterbox pads it). Raises ValueError when reaching `short`
+    would need upscaling the source.
+    """
+    landscape = src_w >= src_h
+    long_src, short_src = (src_w, src_h) if landscape else (src_h, src_w)
+    for long_c in range(long_src // STRIDE * STRIDE, 0, -STRIDE):
+        short_c = round(short_src * long_c / long_src)
+        if _align_up(short_c) <= short:
+            break
+    else:
+        raise ValueError(f"{short}p is not possible for a {src_w}x{src_h} source")
+    if short_c > short_src or _align_up(short_c) != short:
+        raise ValueError(
+            f"{short}p would upscale a {src_w}x{src_h} source "
+            f"(the largest native-aspect input without upscaling has a short side of {_align_up(short_c)})")
+    w, h = (long_c, short_c) if landscape else (short_c, long_c)
+    dst_w, dst_h = _align_up(w), _align_up(h)
+    return InputSpec(dst_w, dst_h, is_native_aspect=True,
+                     description=f"{short}p: {w}x{h} content of native {src_w}x{src_h}, input {dst_w}x{dst_h}")
+
+
 def resolve_input_spec(
     src_w: int,
     src_h: int,
@@ -42,6 +71,10 @@ def resolve_input_spec(
 ) -> InputSpec:
     if sum(x is not None for x in (profile, size, aspect)) > 1:
         raise ValueError("Pass at most one of --profile, --size, --aspect")
+
+    if profile is not None and profile.endswith("p") and profile[:-1].isdigit() \
+            and int(profile[:-1]) in SHORT_SIDE_OPTIONS:
+        return short_side_spec(src_w, src_h, int(profile[:-1]))
 
     if profile == "production":
         w, h = PRODUCTION_SIZE
@@ -54,7 +87,8 @@ def resolve_input_spec(
         return InputSpec(w, h, is_native_aspect=True, description=f"{profile} of native, stride-aligned")
 
     if profile is not None and profile != "native":
-        raise ValueError(f"Unknown profile: {profile!r} (expected production, native, half, third, quarter)")
+        opts = ", ".join(f"{n}p" for n in SHORT_SIDE_OPTIONS)
+        raise ValueError(f"Unknown profile: {profile!r} (expected {opts}, production, native, half, third, quarter)")
 
     if size is not None:
         try:

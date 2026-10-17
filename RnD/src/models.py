@@ -20,10 +20,18 @@ from __future__ import annotations
 
 import sys
 
+import numpy as np
 import torch
 from ultralytics import YOLO
 
 import segmentation
+
+
+def to_ultralytics(rgb: np.ndarray) -> np.ndarray:
+    """Ultralytics' predict() treats a numpy image as OpenCV BGR and flips it to
+    RGB itself, so our RGB arrays must be handed over as BGR. Passing RGB straight
+    in made every model see red and blue swapped (fixed in v26.1.9)."""
+    return np.ascontiguousarray(rgb[..., ::-1])
 
 
 def load_detector(path: str, device: torch.device) -> YOLO:
@@ -48,6 +56,6 @@ class SegmentationModel:
     def predict_class_grid(self, letterboxed_rgb, dst_w: int, dst_h: int):
         """Returns a (dst_h, dst_w) numpy array of class ids."""
         results = self.model.predict(
-            source=letterboxed_rgb, imgsz=(dst_h, dst_w), device=self.device, verbose=False,
+            source=to_ultralytics(letterboxed_rgb), imgsz=(dst_h, dst_w), device=self.device, verbose=False,
         )
         return results[0].semantic_mask.data.cpu().numpy()

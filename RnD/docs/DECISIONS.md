@@ -168,7 +168,7 @@ One entry per version: what prompted it (usually the user's review in the Lab), 
 
 **Open / candidates:**
 - A model-level fix for sidewalk-vs-road confusion: fine-tune in HackEye-Models on the user's footage.
-- HFOV / lens mode of the footage, still unconfirmed (likely Linear rather than Wide).
+- ~~HFOV / lens mode of the footage~~: the user confirmed it is **Wide** (2026-10-17), so the 118° default is correct. The low absolute metres come from elsewhere; the gait scale corrects them.
 - Earlier detection (lower confirmation latency) without bringing back one-frame false alarms.
 
 ## Spec consolidation (docs only, after v26.1.7)
@@ -220,3 +220,56 @@ One entry per version: what prompted it (usually the user's review in the Lab), 
 - **Panel controls:** unsaved edits are kept as a local draft with an "unsaved changes" marker and Discard. The Save buttons are enabled only when needed. Reset to defaults is confirmed first.
 
 **Test hygiene fix:** 12 older E2E tests were hard-wired to the user's full-length run `7b9d5ac14e14`, which the v26.1.7 bump wiped. They now create and delete their own run, so version wipes can't break them.
+
+## v26.1.9 — the models now see true RGB (plan [`plans/v26.1.9.md`](plans/v26.1.9.md))
+**Finding:**
+- **The bug:** found while checking the iPhone export. The pipeline converts each frame BGR→RGB for the letterbox, then hands that numpy array to Ultralytics' `predict()`, which assumes numpy input is OpenCV BGR and flips it again. The segmentation model and the bus detector therefore saw **red and blue swapped**, in every Lab run and every review so far (v26.1 – v26.1.8).
+- **Confirmed** against Ultralytics' own file loader on 6 frames of 4929: 14–34% of pixels took a different class, and the fixed path matched the file loader exactly (0 px).
+
+**Fix:**
+- `models.to_ultralytics(rgb)` hands the array over as contiguous BGR. It is used by `SegmentationModel.predict_class_grid` and `BusDetector.detect`.
+- Callers keep passing RGB.
+- New `tests/test_channel_order.py`: a unit test, plus an opt-in GPU parity test against the file loader (`HACKEYE_GPU_TESTS=1`).
+
+**Before / after:**
+
+The class shares (6 frames of 4929) are the main effect:
+
+| Class | Before | After |
+|---|---|---|
+| flat road | 19.5% | 12.9% |
+| flat sidewalk | 1.9% | 13.3% |
+| curb | 0.5% | 1.7% |
+
+Most of the "promenade is road" and sidewalk-vs-road confusion was this bug, not the model.
+
+Full 52-minute run of 4929:
+
+| Output | Before | After |
+|---|---|---|
+| speech | 236 (context 66, feature 74, danger 91, surface 5) | 268 (63 / 100 / 103 / 2) |
+| beeps episodes | 40 | 51 |
+| beep tones | 93 | 113 |
+
+Against review 3:
+- All 6 removals are still gone.
+- 9 of the 27 confirmed calls match as before. Most of the others are still said, just 1–4 s earlier or later or with a different clock or step count. Three "person approaching" calls (76, 107, 201 s) and two beep episodes are gone.
+
+**Decisions with the user:**
+- **The full-run regression test is removed.** It takes too long; the user will ask when a full-run check is needed. Its baseline was the swapped segmentation anyway.
+- The review 1–3 fixtures stay: they freeze grids, so they keep testing the collision logic. They no longer represent current model output.
+- **The next review (on the fixed model) is the new behavioural baseline.** The thresholds tuned in v26.1.5 – v26.1.7 were tuned on swapped colours and may need revisiting from that review.
+
+**Inference-resolution selector (same version):**
+- **Request:** pick the inference resolution per run, for a speed/accuracy race between 544p and 720p at 32 px steps.
+- **Options:** the Lab's Resolution select offers `544p`–`736p`. N is the padded short side of the model input. The aspect stays native, both input dimensions are multiples of 32, and nothing is upscaled (`profiles.short_side_spec`; table in CONTRACTS).
+- **Display:** options show their size (e.g. `576p · 1024×576`), and the run badge and runs list show the input size.
+- **Grid:** the collision grid stays 240 wide, so the race compares segmentation only.
+- **Legacy profiles:** still accepted by the API, not offered.
+- **Measured:** 736p runs at ~29 ms/frame on the 5060 Ti.
+- **Caveat:** the `20261012-544` release was fine-tuned at 544, so higher resolutions run it off its training scale. The 1280-trained `20261011` release is the fairer contender above 544p.
+- **Implementation:** done by a Sonnet worker and reviewed. Deviations: Lab tests went in a new `tests/test_lab_resolution.py`, and a size that can't reach N exactly is also refused (otherwise a 540-high source at 576p would silently give 544).
+
+**Also noted:**
+- The app's `yolo26s-semINT8512x896.mlpackage` is FP16, not INT8 (its metadata says `int8: False`).
+- The iPhone feeds CoreML true RGB, so after this fix the Lab and the app see the same input.

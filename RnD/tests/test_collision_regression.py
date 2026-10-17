@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 import re
 from pathlib import Path
 
@@ -85,7 +84,7 @@ def test_review1_fixture_is_the_documented_one(review1):
         t = npz[f"w{i}_t"]
         assert t[0] >= w["start"] - 0.5 and t[-1] <= w["end"] + 0.5
         assert npz[f"w{i}_grids"].shape == (len(t), meta["gridH"], meta["gridW"])
-    assert CONFIG["version"] == "v26.1.8"
+    assert CONFIG["version"] == "v26.1.9"
 
 
 def test_review1_start_summary_names_building_and_obstacle_within_the_first_1_5_s(review1):
@@ -363,8 +362,7 @@ def test_review2_context_and_features_do_not_start_before_confirmation_and_ego_s
 # --------------------------------------------------------------------------
 #
 # The windows are cold sequences (no calibration at the start: a window's first seconds have k = 1 and no cadence), so
-# they reproduce only part of what the full 52 minute run said. The full run is the stronger check; it is run here when
-# HACKEYE_FULL_RUN=1 and the run directory exists (about 50 s), and its table is in the contract notes of the release.
+# they reproduce only part of what the full 52 minute run said.
 
 WARM_PRIOR = 1.25     # a scale prior stands in for the calibration the full run has at 36 s (its k is 1.16-1.5 there)
 THIN_PHRASE = re.compile(r"\b(poles?|traffic lights?|pedestrian lights?|signs?|traffic signs?) at ")
@@ -435,7 +433,7 @@ def test_review3_fixture_is_the_documented_one(review3):
     assert len(ann) == 33 and sum(a["verdict"] == "correct" for a in ann) == 27 and sum(a["verdict"] == "remove" for a in ann) == 6
     assert sorted(round(a["t"], 2) for a in ann if a["verdict"] == "remove") == [7.84, 40.5, 41.17, 59.85, 118.66, 199.16]
     assert len(meta["systemEventsV26_1_6"]) > 0
-    assert CONFIG["version"] == "v26.1.8"
+    assert CONFIG["version"] == "v26.1.9"
 
 
 def test_review3_no_repeat_at_7_84_40_50_59_85_and_118_66(review3, review3_warm, review3_no_memory):
@@ -544,22 +542,3 @@ def test_review3_speech_with_memory_is_a_subset_of_speech_without_it_apart_from_
         same = [o for o in off if abs(o["t"] - e["t"]) < 0.01 and o["role"] == e["role"]]
         assert same, (e["t"], e["text"])
         assert set(_norm(e["text"])) <= set(_norm(same[0]["text"])), (e["text"], same[0]["text"])
-
-
-FULL_RUN = Path(__file__).resolve().parents[2] / "debug" / "lab" / "runs" / "7b9d5ac14e14"
-
-
-@pytest.mark.skipif(os.environ.get("HACKEYE_FULL_RUN") != "1" or not (FULL_RUN / "grids.npz").exists(),
-                    reason="the 52 minute run is not part of the repository: set HACKEYE_FULL_RUN=1 where debug/lab/runs/7b9d5ac14e14 exists")
-def test_review3_full_run_all_27_ticks_kept_and_all_6_removals_gone():
-    meta, settings = _load("4929_review3")
-    g, mo = np.load(FULL_RUN / "grids.npz"), np.load(FULL_RUN / "motion.npz")
-    run = json.load(open(FULL_RUN / "run.json"))
-    doc, ev = col.run_collision(g["grids"], g["t"], run["classNames"], CONFIG, settings,
-                                {"t": mo["t"], "dx": mo["dx"], "dy": mo["dy"]})
-    window = [{"speech": [e for e in ev["events"] if e["type"] == "speech"], "beeps": [e for e in ev["events"] if e["type"] == "beeps"],
-               "tones": []}]
-    for a in meta["annotations"]:
-        got = _produced(meta, window, a)
-        assert bool(got) == (a["verdict"] == "correct"), (a["t"], a["verdict"], a["event"]["text"], [(e["t"], e["text"]) for e in got])
-    assert len(window[0]["beeps"]) == 40

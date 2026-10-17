@@ -26,6 +26,7 @@ import numpy as np
 
 import config
 from geometry import Box, LetterboxMeta, expand_box
+from models import to_ultralytics
 
 
 @dataclass
@@ -118,7 +119,7 @@ class BusDetector:
     def detect(self, letterboxed_rgb: np.ndarray, meta: LetterboxMeta) -> list[BusDetection]:
         cfg = self.config
         results = self.model.predict(
-            source=letterboxed_rgb,
+            source=to_ultralytics(letterboxed_rgb),
             imgsz=(cfg.detector_h, cfg.detector_w),
             conf=cfg.confidence,
             classes=[cfg.bus_class],

@@ -748,3 +748,34 @@ def test_falls_back_to_prerendered_masks(page, cls_run):
     page.wait_for_function("""() => { const c = document.querySelector('#overlay'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
         for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }""")
     assert not any(u.endswith("classes.png") for u, _ in page.requests)
+
+
+# ---- Resolution select (CONTRACTS 5, Analyse panel) -----------------------------------------------------------
+
+def test_resolution_select_and_run_badge(page):
+    """The Resolution select offers 544p-736p with sizes; a short 576p run shows its 1024x576 input in the run badge."""
+    open_lab(page, SHORT_REC)
+    texts = page.eval_on_selector_all("#profileSel option", "os => os.map(o => o.textContent)")
+    assert texts == ["544p · 960×544", "576p · 1024×576", "608p · 1056×608", "640p · 1120×640",
+                     "672p · 1184×672", "704p · 1248×704", "736p · 1280×736"]
+    assert page.input_value("#profileSel") == "544p"
+    assert page.inner_text("label:has(#profileSel)").startswith("Resolution")
+    model = next(m["path"] for m in api("/api/models")["models"] if m["default"])
+    known = {r["id"] for r in api("/api/runs")}
+    page.select_option("#profileSel", "576p")
+    page.click("#analyseBtn")
+    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('1024×576')", timeout=120_000)
+    run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
+    try:
+        run = api(f"/api/runs/{run_id}")
+        assert run["request"]["profile"] == "576p" and run["inputSpec"]["w"] == 1024 and run["inputSpec"]["h"] == 576
+        assert "1024×576" in page.inner_text("#runList")
+        # Loading the run in a fresh page selects its resolution.
+        page.goto(f"{BASE}/#rec={SHORT_REC}&run={run_id}")
+        page.reload()
+        page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('run ')")
+        assert page.input_value("#profileSel") == "576p"
+    finally:
+        path = os.path.join(LAB_DIR_MOUNT, "runs", run_id) if LAB_DIR_MOUNT else ""
+        if path and os.path.isdir(path):
+            shutil.rmtree(path)

@@ -1,4 +1,4 @@
-# HackEye Lab — contracts (v26.1.8, current rules)
+# HackEye Lab — contracts (v26.1.9, current rules)
 
 History, user feedback and the reasons behind each rule: see `../docs/DECISIONS.md`.
 
@@ -66,6 +66,7 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   "chapters": [{"file": "/media/GOPR4927.MP4", "start": 0.0, "duration": 532.1, "frames": 12760}, ...],
   "duration": 1601.4,                // seconds, sum of chapter durations
   "width": 3840, "height": 2160, "fps": 23.976,      // of the first chapter
+  "inputSizes": {"544p": [960, 544], "576p": [1024, 576], ...},   // model input [w, h] per offered resolution (§ run request); options that would upscale are omitted
   "proxy": {"status": "missing|building|ready|error", "progress": 0.0, "error": null}
 }
 ```
@@ -106,7 +107,20 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
 
 **Request:** `{"recording": "4927", "start": 60.0, "end": 120.0, "model": "/hackeye-models/Yolo26m-sem-HackEye20261012-544.pt", "profile": "default", "fps": 6.0}`
 
-- `profile` ∈ `default | production | half | quarter` (missing = `default`); passed to `profiles.resolve_input_spec(src_w, src_h, profile_or_None, None, None)`, `default` → `None`.
+- `profile` ∈ `544p | 576p | 608p | 640p | 672p | 704p | 736p` (the inference **resolution** the UI offers) or the legacy `default | production | half | quarter` (accepted, not offered; missing = `default`). Stored as given (it is part of the run id). Passed to `profiles.resolve_input_spec(src_w, src_h, profile_or_None, None, None)`, `default` → `None`. The collision grid stays `GRID_W` = 240 wide regardless.
+- **`Np` geometry** (`profiles.short_side_spec`): N is the padded **short side** of the model input; the aspect is the recording's native one and both input dimensions are multiples of 32. Landscape: content width `w` = the largest multiple of 32, `32 ≤ w ≤ src_w`, with `align32(round(src_h·w/src_w)) ≤ N`; content height `h = round(src_h·w/src_w)`; input `(w, align32(h))`. Portrait: the same with the axes swapped. Never upscaled: if N cannot be reached from the source's pixels, the request is a 422 (`RunError` with the reason) and the option is absent from the recording's `inputSizes`. For 1920×1080 (identical for 3840×2160):
+
+  | profile | content | model input |
+  |---|---|---|
+  | 544p | 960×540 | 960×544 |
+  | 576p | 1024×576 | 1024×576 |
+  | 608p | 1056×594 | 1056×608 |
+  | 640p | 1120×630 | 1120×640 |
+  | 672p | 1184×666 | 1184×672 |
+  | 704p | 1248×702 | 1248×704 |
+  | 736p | 1280×720 | 1280×736 |
+
+  A 1080×1920 portrait source gives the transposed sizes (544p → 544×960).
 - `end` is clamped to the recording duration (the clamped value is stored and hashed). Must satisfy `0 ≤ start < end` and `0 < fps ≤ 60`. `model` must be one of `GET /api/models`. Violations → 422.
 - **`runId`** = first 12 hex chars of sha1 over the canonical JSON (sorted keys, compact) of the normalised request **plus `"analysisVersion": 2`**, followed by `|<model file mtime>`. A finished run with the same id is reused.
 - **`analysisVersion`** is 2: the run has an ego-motion track (`motion.npz`). `run.json` and the review annotations record it.
@@ -120,7 +134,7 @@ time). A run.json left `queued/running` by a crashed process (no live entry) is 
 **Per sampled frame** (times `start + k/fps`, `k = 0 … ceil((end − start)·fps) − 1`, i.e. `< end`; decoded sequentially,
 crossing chapter boundaries; the stored `t` is the exact time of the source frame used):
 1. BGR→RGB, then `letterbox_with_meta(rgb, spec.dst_w, spec.dst_h)`.
-2. `SegmentationModel.predict_class_grid(...)`, then `grid_from_semantic_mask(class_ids, meta)`.
+2. `SegmentationModel.predict_class_grid(...)` (it hands the RGB array to Ultralytics as BGR via `models.to_ultralytics`, because `predict()` assumes numpy input is BGR), then `grid_from_semantic_mask(class_ids, meta)`.
 3. **Crop the padding:** keep rows `[round(pad_y), round(pad_y + src_h·scale))` and the matching columns. Resize nearest-neighbour to `GRID_W = 240` × `GRID_H = round(240·src_h/src_w)`, `uint8`.
 4. Write `masks/<i>.png`: an RGBA image at grid size; pixel colour = `SAFETY_LEVELS[level]["color"]` with alpha 255; safety level 0 (ignored) is fully transparent.
 
@@ -160,7 +174,7 @@ crossing chapter boundaries; the stored `t` is the exact time of the source fram
 
 **GPU:** one worker thread, FIFO queue, `gpu_guard.assert_torch_cuda()` at job start. One model is cached by path and released after `HACKEYE_LAB_IDLE_SECONDS` (default 300) without work, so the service holds no VRAM while idle.
 
-## 6. Collision config  (`common/config/collision.json`, version `v26.1.8`)
+## 6. Collision config  (`common/config/collision.json`, version `v26.1.9`)
 
 Class names are the 48-class HackEye mapping's (`safety_mapping_hackeye48.json`). Names missing from a model's `class_names` are skipped (logged once). All distances are metres, times seconds, "steps" are walking steps (§7.7).
 
@@ -514,7 +528,7 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 | `GET /api/recordings/{id}/settings` | | Settings (§4) + `"resolved": {"hfovDeg", "cameraHeightM", "stepLengthM" (null = prior), "horizon"}` |
 | `PUT /api/recordings/{id}/settings` | Settings | same as GET; 422 on invalid |
 | `GET /api/config/collision` | | the contents of collision.json |
-| `GET /api/models` | | `{"models": [{"path","name","default"}], "profiles": [...]}` |
+| `GET /api/models` | | `{"models": [{"path","name","default"}], "profiles": ["544p", ..., "736p"]}` (the resolutions the UI offers; legacy names are accepted by `POST /api/runs` but not listed) |
 | `POST /api/runs` | run request (§5) | `run.json`; queued, or the existing in-flight/done run; 409 / 422 as in §5 |
 | `GET /api/runs?recording=<id>` | | `[run.json]`, newest first (all runs without the query) |
 | `GET /api/runs/{runId}` | | `run.json` |
@@ -547,7 +561,7 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 
 **Library and proxy:** each recording shows duration, size, fps, chapter count and a proxy tag; "Build proxy" / "Retry build proxy" starts a build; the list polls every 2 s while a proxy builds. The video is attached once the proxy is ready.
 
-**Analyse panel:** range start/end (seconds, mm:ss or hh:mm:ss; default `0 → recording duration`; "from playhead" buttons; loading a run sets the range to the run's), model (default pre-selected), profile, FPS (default 6). Analyse saves the settings, then POSTs the run.
+**Analyse panel:** range start/end (seconds, mm:ss or hh:mm:ss; default `0 → recording duration`; "from playhead" buttons; loading a run sets the range to the run's), model (default pre-selected), **Resolution** (`544p`–`736p`, default `544p`; each option reads e.g. `576p · 1024×576` from the recording's `inputSizes`, and options the recording cannot do without upscaling are disabled; loading a run selects the run's resolution), FPS (default 6). The run badge and the past-runs list show the run's input size (`inputSpec`). Analyse saves the settings, then POSTs the run.
 - **Progress and cancel:** whenever a recording is selected (or restored from the hash) the UI checks its runs for a `queued`/`running` one — including one started in another tab or on another device — and follows it: shows the progress bar (polling every 1 s), disables **Analyse** (the reason in the tooltip) and shows **Cancel analysis**. On completion it behaves as for a run started on this page (enables Analyse, lists the run, loads it). A 409 from Analyse follows the in-flight run.
 - Past runs: click a done run to load it; cancelled/error runs only show a message; an active one is followed.
 - **Collision settings:** mount, HFOV, camera height (m), step length (m). Empty = default; the placeholders show the resolved values (`118 (default)`, `1.3 (preset)` following the mount, `auto (default 0.7)`). **Re-run collision** saves the settings, re-runs §7 on the loaded run, reloads events and hazards, and reports compute time, speech and beeps counts.
@@ -683,7 +697,8 @@ The rule: **each new version cleans up the previous version's Lab content, so it
   - beeps are collision tracks only and every tone belongs to exactly one episode; no danger/feature starts before confirmation; the ego scale is reported;
   - with the world memory the speech is a subset of the speech without it (surface aside); beeps and tones are identical with and without it;
   - every annotation the user confirmed (✓) is still produced (same text pattern, ±1.5 s) and none of the "should not be said" ones.
-- **Full run (opt-in):** with `HACKEYE_FULL_RUN=1` and `debug/lab/runs/7b9d5ac14e14/` present (not in the repository; ~50 s), one test runs the whole 52-minute run and asserts that all 27 confirmed notifications are produced, all 6 removed ones are gone, and exactly 40 beeps episodes exist.
+- **Fixture grids are frozen model output.** The review 1–3 fixtures were extracted before the v26.1.9 channel-order fix, so they test the collision logic on that older segmentation, not current model behaviour.
+- **Channel order** (`tests/test_channel_order.py`): `models.to_ultralytics` reverses RGB→BGR contiguously. Opt-in with `HACKEYE_GPU_TESTS=1` in the lab container, `SegmentationModel.predict_class_grid(rgb)` must equal Ultralytics' own file-loader prediction of the same image.
 - Fixtures are extracted from a real run **before** a version bump, as for reviews 1–3; existing reviews' expectations are updated only for deliberate wording changes.
 
 **Browser E2E harness** (`tests/e2e/`, `RnD/tests/e2e/run.sh`)
