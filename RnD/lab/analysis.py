@@ -47,6 +47,9 @@ RESOLUTIONS = [f"{n}p" for n in profiles.SHORT_SIDE_OPTIONS]  # what the UI offe
 IDLE_SECONDS = float(os.environ.get("HACKEYE_LAB_IDLE_SECONDS", "300"))
 RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 DEPTH_MODELS = ("none", "da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s")
+# anchor mode of each depth variant (collision.run_collision depth["anchor"])
+DEPTH_ANCHOR = {"da3-small": "per-frame", "da3-base": "per-frame",
+                "da2-metric-outdoor-small": "initial", "unidepth-v2-s": "none"}
 DEPTH_W, DEPTH_H = 120, 68          # stored depth map size (CONTRACTS depth.npz)
 DEPTH_MIN_REL = 1e-3             # floor for relative depth (non-finite / <= 0 become nan)
 DEPTH_MIN_M, DEPTH_MAX_M = 0.1, 200.0   # clip range for metric depth (metres)
@@ -712,7 +715,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                         index=np.arange(len(grids), dtype=np.int32))
     if depth_model is not None:
         np.savez_compressed(out / "depth.npz", depth=np.stack(depth_maps), t=np.array(times, np.float64),
-                            units=np.array(depth_units))
+                            units=np.array(depth_units), anchor=np.array(DEPTH_ANCHOR.get(req["depth"], "")))
         _update_run(run_id, depth=req["depth"], depthUnits=depth_units,
                     depthMsPerFrame=round(depth_seconds * 1000 / len(depth_maps), 1))
     motion = reader.motion_track()
@@ -764,7 +767,12 @@ def collision_pass(run_id: str) -> dict | None:
     if (out / "depth.npz").exists():
         with np.load(out / "depth.npz") as z:
             units = str(z["units"]) if "units" in z.files else "metric"   # pre-v26.2.x runs are metric
-            depth = {"t": z["t"], "depth": z["depth"], "units": units}
+            anchor = str(z["anchor"]) if "anchor" in z.files else ""
+            if anchor not in ("per-frame", "initial", "none"):     # npz field > variant table > default rule
+                anchor = DEPTH_ANCHOR.get(doc["request"].get("depth") or doc.get("depth") or "")
+            if anchor is None:
+                anchor = "per-frame" if units == "relative" else "none"
+            depth = {"t": z["t"], "depth": z["depth"], "units": units, "anchor": anchor}
     t0 = time.perf_counter()
     hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings, motion,
                                               depth=depth)

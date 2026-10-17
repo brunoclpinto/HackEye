@@ -999,7 +999,7 @@ def test_output_documents_are_serializable_and_complete():
     assert len(doc["frames"]) == 150
     frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards"}
     ego_keys = {"speedMps", "cadenceHz", "stepLengthM", "headingDeg", "estimated", "scale", "scaleSource",
-                "depthAnchor", "depthScale", "depthScaleSource"}
+                "depthAnchor", "depthAnchorMode", "depthScale", "depthScaleSource"}
     hazard_keys = {"trackId", "className", "group", "label", "role", "moving", "bbox", "contactY", "bearingDeg",
                    "clock", "clockText", "pan", "distanceM", "lateralM", "stepsTo", "closingMps", "urgency", "areaFrac", "collision"}
     seen_hazard = False

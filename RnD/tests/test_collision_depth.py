@@ -45,6 +45,7 @@ def strip(doc: dict) -> dict:
     d.pop("distanceSource", None)
     for f in d["frames"]:
         f["ego"].pop("depthAnchor", None)
+        f["ego"].pop("depthAnchorMode", None)
         f["ego"].pop("depthScale", None)
         f["ego"].pop("depthScaleSource", None)
         for h in f["hazards"]:

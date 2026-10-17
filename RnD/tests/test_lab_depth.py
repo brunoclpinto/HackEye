@@ -89,7 +89,7 @@ def test_default_model_env_override(tmp_path, monkeypatch):
 def test_settings_defaults_validation_and_resolved(fake):
     c = TestClient(server.app)
     got = c.get("/api/recordings/rec1/settings").json()
-    assert got["projection"] == "auto" and got["distanceSource"] == "ground"
+    assert got["projection"] == "auto" and got["distanceSource"] == "depth"
     assert got["resolved"]["projection"] == "fisheye"        # default HFOV 118 -> fisheye
     put = c.put("/api/recordings/rec1/settings", json={"projection": "rectilinear", "distanceSource": "depth",
                                                        "hfovDeg": 90})
@@ -102,7 +102,7 @@ def test_settings_defaults_validation_and_resolved(fake):
     assert c.put("/api/recordings/rec1/settings", json={"distanceSource": "fused"}).status_code == 422   # dropped in v26.1.10
     # omitted keys fall back to the defaults
     again = c.put("/api/recordings/rec1/settings", json={}).json()
-    assert (again["projection"], again["distanceSource"]) == ("auto", "ground")
+    assert (again["projection"], again["distanceSource"]) == ("auto", "depth")
 
 
 # --- depth PNG --------------------------------------------------------------------------------------
@@ -237,8 +237,44 @@ def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth
             assert z["depth"].shape == (n, 68, 120) and z["depth"].dtype == np.float16
             assert np.array_equal(z["t"], times)
             assert str(z["units"]) == units
+            assert str(z["anchor"]) == analysis.DEPTH_ANCHOR[variant]
             assert not np.isinf(z["depth"]).any() and (z["depth"][:, 30:, 30:].astype(np.float32) == expect).all()
         assert len(fd.calls) == n and fd.calls[0] == (180, 320, 3) and _cache.variant == variant
         assert done["depth"] == variant and done["depthUnits"] == units and done["depthMsPerFrame"] is not None
     else:
         assert not (d / "depth.npz").exists() and not fd.calls
+
+
+# --- anchor mode per depth variant -------------------------------------------------------------------
+
+def test_variant_anchor_table():
+    assert analysis.DEPTH_ANCHOR == {"da3-small": "per-frame", "da3-base": "per-frame",
+                                     "da2-metric-outdoor-small": "initial", "unidepth-v2-s": "none"}
+
+
+@pytest.mark.parametrize("variant,units,npz_anchor,expect", [
+    ("da2-metric-outdoor-small", "metric", None, "initial"),      # older run: from the request's variant
+    ("da3-small", "relative", None, "per-frame"),
+    ("unidepth-v2-s", "metric", None, "none"),
+    (None, "relative", None, "per-frame"),                        # no variant: default rule by units
+    (None, "metric", None, "none"),
+    ("da3-small", "relative", "initial", "initial")])             # the npz field wins
+def test_collision_pass_passes_the_anchor_mode(fake, monkeypatch, variant, units, npz_anchor, expect):
+    import collision
+    d = _make_run(fake)
+    req = {"recording": "rec1"}
+    if variant:
+        req["depth"] = variant
+    (d / "run.json").write_text(json.dumps({"id": RUN, "request": req, "status": "done", "classNames": ["a"]}))
+    np.savez(d / "grids.npz", grids=np.zeros((3, 135, 240), np.uint8), t=np.arange(3.0), index=np.arange(3))
+    extra = {} if npz_anchor is None else {"anchor": np.array(npz_anchor)}
+    np.savez(d / "depth.npz", depth=np.ones((3, 68, 120), np.float16), t=np.arange(3.0),
+             units=np.array(units), **extra)
+    seen = {}
+
+    def fake_run(grids, times, names, config, settings, motion=None, depth=None):
+        seen.update(depth=depth, source=settings.distance_source)
+        return {"frames": []}, {"events": []}
+    monkeypatch.setattr(collision, "run_collision", fake_run)
+    analysis.collision_pass(RUN)
+    assert seen["depth"]["anchor"] == expect and seen["source"] == "depth"    # default distance source is depth

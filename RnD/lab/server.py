@@ -171,7 +171,7 @@ def _validated_settings(body: dict, config: dict) -> dict:
             "cameraHeightM": _opt_number(body, "cameraHeightM", 0.5, 2.5),
             "stepLengthM": _opt_number(body, "stepLengthM", 0.3, 2.0),
             "projection": _choice(body, "projection", PROJECTIONS, "auto"),
-            "distanceSource": _choice(body, "distanceSource", DISTANCE_SOURCES, "ground")}
+            "distanceSource": _choice(body, "distanceSource", DISTANCE_SOURCES, "depth")}
 
 
 def _settings_response(rec_id: str) -> dict:

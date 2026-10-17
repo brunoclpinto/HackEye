@@ -396,3 +396,24 @@ Against review 3:
 - **Held for a minute, the error around the level is a median 6% (p90 14%)**, the most stable result so far. Anchored DA3 Small, re-anchored every frame, gave 9% / 26%.
 - **The absolute level is whatever the reference says:** 0.39× Large with the uncalibrated camera height and lens. It moves to roughly ground level once multiplied by the gait scale k (≈ 1.8 on 4929), and that refinement can take over later.
 - **Result:** DA2 plus a 3–6-frame flat-ground calibration (then gait refinement) is the best mobile candidate so far, a candidate for the next version's collision logic.
+
+### v26.1.10 follow-up 3 — DA2 with initial-frame calibration is the default depth mode
+**Request:** make DA2 with the frame calibration the default depth mode. Also: verification runs use a **5-minute window** (4929 0–300 s), because full runs take too long for the gain.
+
+**Implementation** (a Sonnet worker, reviewed):
+- **Anchor modes:** each depth variant declares one: DA3 → `per-frame`, DA2 → `initial`, UniDepth → `none`.
+- **`initial`:** collects the flat-ground / DA2 ratio on the walking region (fixed mount horizon), uses its running median from the 3rd valid frame, and freezes it at the 6th. The gait level `c` refines it as before.
+- **Defaults:** depth model `da2-metric-outdoor-small` in the UI, and `distanceSource: depth`.
+
+**4929 0–300 s** (re-scored from the existing runs; no new inference):
+
+| Distance | Speech | Beeps | Step jumps | Closing \|Δ\| median / p90 | Level vs Large (after 60 s) | Drift median / p90 (after 60 s) |
+|---|---|---|---|---|---|---|
+| ground | 33 | 14 | 0.2% | 0.19 / 0.67 | — | — |
+| **DA2 + initial calibration** | **24** | **3** | 0.4% | 0.11 / 0.43 | **0.83** | 10% / 30% |
+| DA3 Small, per-frame anchor | 35 | 11 | 2.1% | 0.11 / 0.42 | 0.65 | 5% / 16% |
+| Metric Large (reference) | 26 | 3 | 0.4% | 0.10 / 0.38 | 1.00 | — |
+
+- **Usable from 0.3 s:** DA2 is usable almost at once (frozen anchor 0.208).
+- **Closest to the reference:** of the mobile options, DA2 is the closest to the Metric Large reference in level and in what it actually announces (24 / 3 against 26 / 3), with the same step stability.
+- **Drift:** over the first minute it is higher (p90 52%) while `c` settles from the ground scale to its gait estimate. DA3 Small drifts less in this window but reads further off and jumps more.

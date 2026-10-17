@@ -1013,6 +1013,40 @@ class _DepthAnchor:
         return None if self.log_a is None else math.exp(self.log_a)
 
 
+class _InitialAnchor:
+    """One-shot depth anchor (``anchor: "initial"``, DA2 metric): a stable but biased absolute level.
+
+    Collects the per-frame ground ratios (as ``_DepthAnchor`` would use) of valid frames (>= ``anchorMinCells``
+    cells; invalid frames do not count). The running median is usable from ``initialAnchorMinFrames`` (3) valid
+    ratios; at ``initialAnchorFrames`` (6) it is frozen and held for the rest of the run. ``reset()`` starts a
+    new collection (path change, only when ``recalibrateOnPathChange``). Same interface as ``_DepthAnchor``.
+    """
+
+    def __init__(self, dist_cfg: dict):
+        self.min_cells = int(dist_cfg.get("anchorMinCells", 150))
+        self.n_freeze = int(dist_cfg.get("initialAnchorFrames", 6))
+        self.n_min = min(int(dist_cfg.get("initialAnchorMinFrames", 3)), self.n_freeze)
+        self.reset()
+
+    def reset(self) -> None:
+        self.ratios: list[float] = []
+        self.frozen: float | None = None
+        self._run: float | None = None
+
+    def update(self, t: float, dt: float, raw: float | None, cells: int) -> None:
+        if self.frozen is not None:
+            return
+        if raw is not None and cells >= self.min_cells and math.isfinite(raw) and raw > 0:
+            self.ratios.append(float(raw))
+            self._run = float(np.median(self.ratios)) if len(self.ratios) >= self.n_min else None
+            if len(self.ratios) >= self.n_freeze:
+                self.frozen = self._run
+
+    @property
+    def value(self) -> float | None:
+        return self.frozen if self.frozen is not None else self._run
+
+
 def _ground_anchor(region: Region | None, dmap: np.ndarray, horizon: float, camera_height_m: float,
                    gh: int, gw: int, f: float, min_rows: float) -> tuple[float | None, int]:
     """(median of flat-ground z-distance / relative depth, cell count) over walking-region cells."""
@@ -1992,7 +2026,8 @@ def _motion_series(motion: dict | None, hfov_deg: float, ego_cfg: dict):
 def run_collision(grids, times, class_names, config, settings, motion=None, depth=None) -> tuple[dict, dict]:
     """Per-frame hazards and the speech/tone event list. ``motion`` = {"t","dx","dy"} arrays or None.
 
-    ``depth`` = {"t": (N,), "depth": (N, Dh, Dw), "units": "metric" | "relative"} or None: one depth map per
+    ``depth`` = {"t": (N,), "depth": (N, Dh, Dw), "units": "metric" | "relative",
+    optional "anchor": "per-frame" | "initial" | "none"} or None (anchor default: per-frame for relative, none for metric): one depth map per
     analysed frame (nearest ``t``); missing units = metric (metres). Relative depth (scale only, drifting per
     frame) is anchored every frame on the ground under our feet (``_DepthAnchor``) and levelled by walking
     (``_DepthScale``, ground k until its first estimate); with no anchor ``depthM`` is null. It is always reported as ``depthM``; it drives the distances only when
@@ -2020,9 +2055,15 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     source = getattr(settings, "distance_source", "ground")
     projection = getattr(settings, "projection", "rectilinear")
     depth_t = depth_maps = None
-    relative = depth is not None and depth.get("units", "metric") == "relative"
+    anchor_mode = None
+    if depth is not None:
+        anchor_mode = depth.get("anchor") or ("per-frame" if depth.get("units", "metric") == "relative" else "none")
+        if anchor_mode not in ("per-frame", "initial", "none"):
+            anchor_mode = "none"
+    relative = anchor_mode in ("per-frame", "initial")      # anchored on the ground (else plain metric metres)
     dscale = _DepthScale(ego_cfg, dist_cfg) if relative else None
-    anchor = _DepthAnchor(dist_cfg) if relative else None
+    anchor = (_InitialAnchor(dist_cfg) if anchor_mode == "initial" else _DepthAnchor(dist_cfg)) if relative else None
+    recalibrate = anchor_mode == "initial" and bool(dist_cfg.get("recalibrateOnPathChange", False))
     anchor_rows = float(trk["motionMinRowsBelowHorizon"])
     if depth is not None and len(depth["t"]):
         depth_t = np.asarray(depth["t"], dtype=float)
@@ -2256,6 +2297,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                                  and adopted[0] is not None)
         if path_change:
             policy.clear_context(t)
+            if recalibrate:
+                anchor.reset()
             _log(f"t={t:.1f}s path change ({'turn' if turned else 'surface'}); context memory cleared")
         policy.observe_context(t, {it.family or it.label for it in items
                                    if it.role in ("context", "danger") and _is_static_like(it)})
@@ -2285,6 +2328,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             "ego": {"speedMps": _r(ego_speed, 2), "cadenceHz": _r(cadence, 2), "stepLengthM": round(step_len, 2),
                     "headingDeg": _r(heading, 1),
                     "depthAnchor": _r(a_now, 4),
+                    "depthAnchorMode": anchor_mode,
                     "depthScale": (None if depth_maps is None or ds is None else _r(ds * a_now, 4) if relative else ds),
                     "depthScaleSource": "none" if depth_maps is None or ds is None else c_source,
                     "scale": round(scale.value, 3), "scaleSource": "gait" if scale.from_gait else "prior" if scale.k is not None else "none",
