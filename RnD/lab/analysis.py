@@ -46,9 +46,10 @@ PROFILES = ["default", "production", "half", "quarter"]  # legacy names, still a
 RESOLUTIONS = [f"{n}p" for n in profiles.SHORT_SIDE_OPTIONS]  # what the UI offers
 IDLE_SECONDS = float(os.environ.get("HACKEYE_LAB_IDLE_SECONDS", "300"))
 RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
-DEPTH_MODELS = ("none", "da3-small", "da3-base")
+DEPTH_MODELS = ("none", "da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s")
 DEPTH_W, DEPTH_H = 120, 68          # stored depth map size (CONTRACTS depth.npz)
 DEPTH_MIN_REL = 1e-3             # floor for relative depth (non-finite / <= 0 become nan)
+DEPTH_MIN_M, DEPTH_MAX_M = 0.1, 200.0   # clip range for metric depth (metres)
 DEFAULT_MODEL = os.environ.get("HACKEYE_LAB_DEFAULT_MODEL", "Yolo26m-sem-HackEye20261011.pt")
 MODEL_DIRS = [(Path(os.environ.get("HACKEYE_MODELS_DIR", "/models")), "*.pt"),
               (Path(os.environ.get("HACKEYE_RELEASES_DIR", "/hackeye-models")), "*HackEye*.pt")]
@@ -652,7 +653,8 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     depth_model = None
     if req.get("depth", "none") != "none":
         depth_model = cache.get_depth(req["depth"])
-        _log(f"run {run_id}: depth {req['depth']} (relative)")
+        _log(f"run {run_id}: depth {req['depth']}")
+    depth_units = None
     depth_maps: list[np.ndarray] = []
     depth_seconds = 0.0
 
@@ -670,10 +672,13 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             if depth_model is not None:
                 td = time.perf_counter()
-                rel = depth_model.predict_relative(rgb)
-                small_d = cv2.resize(rel, (DEPTH_W, DEPTH_H), interpolation=cv2.INTER_AREA)
+                raw, depth_units = depth_model.predict(rgb)
+                small_d = cv2.resize(raw, (DEPTH_W, DEPTH_H), interpolation=cv2.INTER_AREA)
                 small_d[~np.isfinite(small_d) | (small_d <= 0)] = np.nan
-                depth_maps.append(np.maximum(small_d, DEPTH_MIN_REL).astype(np.float16))
+                if depth_units == "metric":
+                    depth_maps.append(np.clip(small_d, DEPTH_MIN_M, DEPTH_MAX_M).astype(np.float16))
+                else:
+                    depth_maps.append(np.maximum(small_d, DEPTH_MIN_REL).astype(np.float16))
                 depth_seconds += time.perf_counter() - td
             letterboxed, meta = letterbox_with_meta(rgb, spec.dst_w, spec.dst_h)
             class_ids = model.predict_class_grid(letterboxed, spec.dst_w, spec.dst_h)
@@ -707,8 +712,8 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                         index=np.arange(len(grids), dtype=np.int32))
     if depth_model is not None:
         np.savez_compressed(out / "depth.npz", depth=np.stack(depth_maps), t=np.array(times, np.float64),
-                            units=np.array("relative"))
-        _update_run(run_id, depth=req["depth"], depthUnits="relative",
+                            units=np.array(depth_units))
+        _update_run(run_id, depth=req["depth"], depthUnits=depth_units,
                     depthMsPerFrame=round(depth_seconds * 1000 / len(depth_maps), 1))
     motion = reader.motion_track()
     np.savez_compressed(out / "motion.npz", **motion)

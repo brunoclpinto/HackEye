@@ -9,6 +9,8 @@ services:
     # clean up. Override with `UID=$(id -u) GID=$(id -g) docker compose ...`
     # if your host user isn't uid/gid 1000.
     user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      WANDB_MODE: disabled   # wandb is imported by UniDepth's code only; never let it log or phone home
     volumes:
       - .:/rnd
       - ../media:/media:ro
@@ -45,6 +47,8 @@ services:
       # Ultralytics wants a writable config dir; the image's $HOME isn't
       # writable for the host user (same issue HackEye-Models solved).
       YOLO_CONFIG_DIR: /debug/lab/.ultralytics
+      # wandb is imported by UniDepth's code only; never let it log or phone home.
+      WANDB_MODE: disabled
     volumes:
       - .:/rnd
       - ../media:/media:ro

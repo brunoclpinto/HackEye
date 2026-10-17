@@ -849,6 +849,7 @@ def test_depth_run_toggle_and_image(page):
     open_lab(page, SHORT_REC)
     labels = page.eval_on_selector_all("#depthSel option", "os => os.map(o => [o.value, o.textContent])")
     assert labels[0] == ["none", "Off"] and ["da3-small", "DA3 Small"] in labels and ["da3-base", "DA3 Base"] in labels
+    assert ["da2-metric-outdoor-small", "DA2 Metric Outdoor S"] in labels and ["unidepth-v2-s", "UniDepth v2 S"] in labels
     assert not any(v == "da3-metric-large" for v, _ in labels)
     assert page.input_value("#depthSel") == "da3-small"   # depth on by default (v26.1.10)
     known = {r["id"] for r in api("/api/runs")}

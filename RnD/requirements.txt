@@ -21,3 +21,9 @@ plyfile
 trimesh
 pycolmap
 evo
+# Metric depth variants: Depth Anything V2 Metric (transformers, Apache-2.0); UniDepth v2 is
+# installed in the Dockerfile with --no-deps and needs timm (Apache-2.0) and wandb (MIT, imported
+# at module level by its visualization utils).
+transformers==5.20.1
+timm>=1.0
+wandb

@@ -125,7 +125,7 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   | 736p | 1280×720 | 1280×736 |
 
   A 1080×1920 portrait source gives the transposed sizes (544p → 544×960).
-- `depth` ∈ `none | da3-small | da3-base` (missing = `none`, 422 otherwise, including the removed `da3-metric-large`). The UI default is `da3-small`. Stored in the normalised request (and so in the run id) **only when not `none`**, so ids of depth-less requests are unchanged.
+- `depth` ∈ `none | da3-small | da3-base | da2-metric-outdoor-small | unidepth-v2-s` (missing = `none`, 422 otherwise, including the removed `da3-metric-large`). The UI default is `da3-small`. Stored in the normalised request (and so in the run id) **only when not `none`**, so ids of depth-less requests are unchanged.
 - **Default model** offered by `GET /api/models`: `Yolo26m-sem-HackEye20261011.pt` (`analysis.DEFAULT_MODEL`, env `HACKEYE_LAB_DEFAULT_MODEL`); if missing, the newest release. The UI's default resolution is `736p`.
 - `end` is clamped to the recording duration (the clamped value is stored and hashed). Must satisfy `0 ≤ start < end` and `0 < fps ≤ 60`. `model` must be one of `GET /api/models`. Violations → 422.
 - **`runId`** = first 12 hex chars of sha1 over the canonical JSON (sorted keys, compact) of the normalised request **plus `"analysisVersion": 2`**, followed by `|<model file mtime>`. A finished run with the same id is reused.
@@ -145,9 +145,17 @@ crossing chapter boundaries; the stored `t` is the exact time of the source fram
 4. Write `masks/<i>.png`: an RGBA image at grid size; pixel colour = `SAFETY_LEVELS[level]["color"]` with alpha 255; safety level 0 (ignored) is fully transparent.
 
 **Depth pass** (only when the request has `depth`):
-- Models: Depth Anything 3 **Small** (0.08B) and **Base** (0.12B) (ByteDance, Apache-2.0, "any-view" series; the mobile-viable sizes, with CoreML ports). They output **relative z-depth** (larger = farther, correct up to one unknown scale, no shift). Weights in host `~/models/depth-anything/DA3-SMALL` / `DA3-BASE`, mounted at `/base-models` (README "Depth model"; root overridable with `HACKEYE_DEPTH_MODEL_ROOT`). `src/depth.py` `DepthModel(device, variant)`; one variant cached, loaded on first use, released with the segmentation model. Metric Large is no longer offered.
-- Per sampled frame, on the **un-letterboxed RGB frame**: `model.inference([rgb], process_res=504)` (longest side 504; 280×504 for 16:9) → `predict_relative`.
-- Resized to **120×68** (`INTER_AREA`), float16, non-finite / ≤ 0 → nan (floor 1e-3) → `depth.npz` (`depth` (N, 68, 120), `t` (N,), `units` = `"relative"`), aligned 1:1 with `grids.npz`. `run.json` gets `"depth"` (variant or `"none"`), `"depthUnits"` and `"depthMsPerFrame"` (~29 ms for either on the 5060 Ti). Older runs' `depth.npz` without `units` are metric metres.
+- Models (`src/depth.py`, `DepthModel(device, variant).predict(rgb) -> (map, units)`; only mobile-viable sizes; licences in `THIRD_PARTY_LICENSES.md`):
+
+  | Variant | Model | Units | Call |
+  |---|---|---|---|
+  | `da3-small`, `da3-base` | Depth Anything 3 Small / Base (Apache-2.0) | `relative` z-depth (larger = farther, one unknown scale) | `model.inference([rgb], process_res=504)` (280×504 for 16:9) |
+  | `da2-metric-outdoor-small` | Depth Anything V2 Metric Outdoor Small (Apache-2.0; Virtual KITTI 2) | `metric` m | transformers `AutoModelForDepthEstimation`, `post_process_depth_estimation` to the frame size |
+  | `unidepth-v2-s` | UniDepth v2 ViT-S (CC BY-NC 4.0) | `metric` m | `UniDepthV2.infer(rgb)` **without intrinsics**: it estimates the camera itself (production cameras are unknown); the estimate is logged once per run |
+
+  Weights in host `~/models/{depth-anything,unidepth}/…`, mounted at `/base-models` (root overridable with `HACKEYE_DEPTH_MODEL_ROOT`); one variant cached, loaded on first use, released with the segmentation model. Metric Large is no longer offered.
+- Per sampled frame, on the **un-letterboxed RGB frame** (true RGB).
+- Resized to **120×68** (`INTER_AREA`), float16 → `depth.npz` (`depth` (N, 68, 120), `t` (N,), `units`), aligned 1:1 with `grids.npz`. Relative maps: non-finite / ≤ 0 → nan (floor 1e-3). Metric maps: clipped to [0.1, 200] m. `run.json` gets `"depth"` (variant or `"none"`), `"depthUnits"` and `"depthMsPerFrame"`. Older runs' `depth.npz` without `units` are metric metres.
 
 **Ego-motion track:**
 - For **every source frame** from the first sampled frame up to (not including) `end` — all ~24 fps, not only the sampled ones — convert to grayscale at 160×90 (`cv2.resize`, `INTER_AREA`, float32).
@@ -560,7 +568,7 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 | `GET /api/recordings/{id}/settings` | | Settings (§4) + `"resolved": {"hfovDeg", "cameraHeightM", "stepLengthM" (null = prior), "horizon", "projection"}` |
 | `PUT /api/recordings/{id}/settings` | Settings | same as GET; 422 on invalid |
 | `GET /api/config/collision` | | the contents of collision.json |
-| `GET /api/models` | | `{"models": [{"path","name","default"}], "profiles": ["544p", ..., "736p"], "depthModels": ["none", "da3-small", "da3-base"]}` (the resolutions the UI offers; legacy names are accepted by `POST /api/runs` but not listed) |
+| `GET /api/models` | | `{"models": [{"path","name","default"}], "profiles": ["544p", ..., "736p"], "depthModels": ["none", "da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s"]}` (the resolutions the UI offers; legacy names are accepted by `POST /api/runs` but not listed) |
 | `POST /api/runs` | run request (§5) | `run.json`; queued, or the existing in-flight/done run; 409 / 422 as in §5 |
 | `GET /api/runs?recording=<id>` | | `[run.json]`, newest first (all runs without the query) |
 | `GET /api/runs/{runId}` | | `run.json` |
@@ -594,7 +602,7 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 
 **Library and proxy:** each recording shows duration, size, fps, chapter count and a proxy tag; "Build proxy" / "Retry build proxy" starts a build; the list polls every 2 s while a proxy builds. The video is attached once the proxy is ready.
 
-**Analyse panel:** range start/end (seconds, mm:ss or hh:mm:ss; default `0 → recording duration`; "from playhead" buttons; loading a run sets the range to the run's), model (default pre-selected), **Resolution** (`544p`–`736p`, default `736p`; each option reads e.g. `576p · 1024×576` from the recording's `inputSizes`, and options the recording cannot do without upscaling are disabled; loading a run selects the run's resolution), FPS (default 6), **Depth** (`Off` / `DA3 Small` / `DA3 Base`, from `depthModels`, **default DA3 Small**; sent only when not off; loading a run selects its depth). The run badge and the past-runs list show the run's input size (`inputSpec`) and depth model. The recording settings have **Lens** (`projection`, Auto shows the resolved lens) and **Distance** (`distanceSource`); changing Distance on a depth run highlights "Re-run collision" for a one-click A/B. Analyse saves the settings, then POSTs the run.
+**Analyse panel:** range start/end (seconds, mm:ss or hh:mm:ss; default `0 → recording duration`; "from playhead" buttons; loading a run sets the range to the run's), model (default pre-selected), **Resolution** (`544p`–`736p`, default `736p`; each option reads e.g. `576p · 1024×576` from the recording's `inputSizes`, and options the recording cannot do without upscaling are disabled; loading a run selects the run's resolution), FPS (default 6), **Depth** (`Off` / `DA3 Small` / `DA3 Base` / `DA2 Metric Outdoor S` / `UniDepth v2 S`, from `depthModels`, **default DA3 Small**; sent only when not off; loading a run selects its depth). The run badge and the past-runs list show the run's input size (`inputSpec`) and depth model. The recording settings have **Lens** (`projection`, Auto shows the resolved lens) and **Distance** (`distanceSource`); changing Distance on a depth run highlights "Re-run collision" for a one-click A/B. Analyse saves the settings, then POSTs the run.
 - **Progress and cancel:** whenever a recording is selected (or restored from the hash) the UI checks its runs for a `queued`/`running` one — including one started in another tab or on another device — and follows it: shows the progress bar (polling every 1 s), disables **Analyse** (the reason in the tooltip) and shows **Cancel analysis**. On completion it behaves as for a run started on this page (enables Analyse, lists the run, loads it). A 409 from Analyse follows the in-flight run.
 - Past runs: click a done run to load it; cancelled/error runs only show a message; an active one is followed.
 - **Collision settings:** mount, HFOV, camera height (m), step length (m). Empty = default; the placeholders show the resolved values (`118 (default)`, `1.3 (preset)` following the mount, `auto (default 0.7)`). **Re-run collision** saves the settings, re-runs §7 on the loaded run, reloads events and hazards, and reports compute time, speech and beeps counts.

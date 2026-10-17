@@ -34,7 +34,7 @@ def test_depth_field_validation_and_storage(fake):
     assert "depth" not in plain
     assert analysis._normalise_request(_req(depth="none")) == plain
     assert analysis._normalise_request(_req(depth=None)) == plain
-    for v in ("da3-small", "da3-base"):
+    for v in ("da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s"):
         assert analysis._normalise_request(_req(depth=v))["depth"] == v
     with pytest.raises(analysis.RunError, match="depth must be one of"):
         analysis._normalise_request(_req(depth="da3-metric-large"))   # removed from the Lab
@@ -58,7 +58,7 @@ def test_post_runs_422_on_bad_depth(fake):
 
 def test_models_endpoint_lists_depth_models(fake):
     r = TestClient(server.app).get("/api/models").json()
-    assert r["depthModels"] == ["none", "da3-small", "da3-base"]
+    assert r["depthModels"] == ["none", "da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s"]
 
 
 # --- pinned default model --------------------------------------------------------------------------
@@ -174,14 +174,14 @@ class _FakeSeg:
 
 
 class _FakeDepth:
-    def __init__(self):
-        self.calls = []
+    def __init__(self, units="relative", value=7.0):
+        self.calls, self.units, self.value = [], units, value
 
-    def predict_relative(self, rgb):
+    def predict(self, rgb):
         self.calls.append(rgb.shape)
-        out = np.full((28, 50), 7.0, np.float32)
+        out = np.full((28, 50), self.value, np.float32)
         out[0, 0] = np.nan                      # guarded: non-finite never reaches the npz as inf
-        return out
+        return out, self.units
 
 
 class _FakeCache:
@@ -203,15 +203,19 @@ def _video(path, n=40):
     w.release()
 
 
-@pytest.mark.parametrize("use_depth", [True, False])
-def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth):
+@pytest.mark.parametrize("use_depth,variant,units,value,expect", [
+    (True, "da3-small", "relative", 7.0, 7.0),
+    (True, "unidepth-v2-s", "metric", 450.0, 200.0),      # metric depth is clipped to [0.1, 200] m
+    (True, "da2-metric-outdoor-small", "metric", 12.5, 12.5),
+    (False, None, None, None, None)])
+def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth, variant, units, value, expect):
     vid = tmp_path / "v.mp4"
     _video(vid)
     rec = {**REC, "chapters": [{"file": str(vid), "start": 0.0, "duration": 4.0, "frames": 40}]}
     monkeypatch.setattr(recordings, "get_recording", lambda i: rec)
     request = {"recording": "rec1", "start": 0.0, "end": 3.0, "model": "m.pt", "profile": "default", "fps": 5.0}
     if use_depth:
-        request["depth"] = "da3-small"
+        request["depth"] = variant
     doc = {"id": RUN, "request": request, "status": "queued", "progress": 0.0}
     d = tmp_path / "runs" / RUN
     d.mkdir(parents=True)
@@ -219,7 +223,7 @@ def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth
     analysis._active[RUN] = dict(doc)
     real_pass, passes = analysis.collision_pass, []
     monkeypatch.setattr(analysis, "collision_pass", lambda rid: passes.append(rid) or real_pass(rid))
-    fd = _FakeDepth()
+    fd = _FakeDepth(units, value)
     _cache = _FakeCache(fd)
     analysis._run_job(RUN, _cache)
     done = analysis.get_run(RUN)
@@ -232,9 +236,9 @@ def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth
         with np.load(d / "depth.npz") as z:
             assert z["depth"].shape == (n, 68, 120) and z["depth"].dtype == np.float16
             assert np.array_equal(z["t"], times)
-            assert str(z["units"]) == "relative"
-            assert not np.isinf(z["depth"]).any() and (z["depth"][:, 30:, 30:].astype(np.float32) == 7.0).all()
-        assert len(fd.calls) == n and fd.calls[0] == (180, 320, 3) and _cache.variant == "da3-small"
-        assert done["depth"] == "da3-small" and done["depthUnits"] == "relative" and done["depthMsPerFrame"] is not None
+            assert str(z["units"]) == units
+            assert not np.isinf(z["depth"]).any() and (z["depth"][:, 30:, 30:].astype(np.float32) == expect).all()
+        assert len(fd.calls) == n and fd.calls[0] == (180, 320, 3) and _cache.variant == variant
+        assert done["depth"] == variant and done["depthUnits"] == units and done["depthMsPerFrame"] is not None
     else:
         assert not (d / "depth.npz").exists() and not fd.calls

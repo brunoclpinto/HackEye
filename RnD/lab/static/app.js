@@ -247,7 +247,7 @@ async function loadRuns() {
   renderRuns();
 }
 
-const DEPTH_LABELS = { "da3-small": "DA3 Small", "da3-base": "DA3 Base" };
+const DEPTH_LABELS = { "da3-small": "DA3 Small", "da3-base": "DA3 Base", "da2-metric-outdoor-small": "DA2 Metric Outdoor S", "unidepth-v2-s": "UniDepth v2 S" };
 
 /** The depth model of a run, or null (older runs have no field; "none" counts as none). */
 function runDepth(r) {

@@ -347,3 +347,52 @@ Against review 3:
 **Next:** a small **metric** model for mobile. Depth Anything V2 Metric Outdoor Small (24.8M parameters) needs its license verified. UniDepth v2 is CC-BY-NC, so it is ruled out.
 
 **Lab state:** the Small run `95d1beea0684`, the Base run `33b0702b8c81` and the Large reference `5b1d10dd5b3d` are kept for comparison.
+
+### v26.1.10 follow-up 2 — metric mobile depth models, licence documentation (same version, no wipe)
+**User input:**
+- The apps are open-source, free and **non-commercial**, so CC BY-NC models are acceptable. This reverses the earlier "UniDepth is CC-BY-NC, ruled out".
+- Ground truth isn't viable: production cameras can't be known. So models that estimate the camera themselves are preferred.
+
+**Added as Lab depth options** (a Sonnet worker built them and the lead reviewed):
+- `da2-metric-outdoor-small`: Depth Anything V2 Metric Outdoor Small, 24.8M params, Apache-2.0, fine-tuned on Virtual KITTI 2 (CC BY-NC-SA 3.0). Loaded with transformers.
+- `unidepth-v2-s`: UniDepth v2 ViT-S, CC BY-NC 4.0. It runs **without intrinsics** and estimates the camera itself. On 4929 it estimated fx ≈ 1282 px, i.e. a pinhole view of ~74° HFOV, while the GoPro Wide covers ~118°.
+- **Install:** both from pinned commits with `--no-deps`. The new deps are `transformers`, `timm` and `wandb`; wandb is imported by UniDepth only and is disabled with `WANDB_MODE=disabled`.
+
+**4929 full runs** (20261011 @ 736p, depth mode re-scored; reference = the DA3 Metric Large run `5b1d10dd5b3d`):
+
+| Model | ms/frame | Level vs Large | Drift median / p90 | Frames within ±25% | Speech / beeps | Step jumps | Closing \|Δ\| median / p90 |
+|---|---|---|---|---|---|---|---|
+| DA3 Small, anchored | 23 | 0.74 | 9% / 26% | 28% | 231 / 47 | 1.9% | 0.13 / 0.52 |
+| DA3 Base, anchored | 32 | 0.68 | 11% / 29% | 17% | 270 / 62 | 2.7% | 0.13 / 0.58 |
+| **DA2 Metric Outdoor S** | 56 | **2.23** | **4% / 10%** | 0% | 65 / 5 | **0.0%** | 0.25 / 0.86 |
+| UniDepth v2 S | 39 | 1.33 | 19% / 37% | 42% | 126 / 13 | 7.8% | 0.32 / 1.44 |
+
+**Reading the results:**
+- **DA2 Metric Outdoor S** is by far the most temporally stable: per-frame scale drift 4%, no step jumps. Its absolute level, though, is ~2.2× Large. That is a near-constant bias, most likely because it was trained on pinhole driving footage and is now shown fisheye pedestrian frames.
+- **UniDepth** lands closest in level, but it is noisy frame to frame.
+- **Desktop timings** include post-processing at the full frame size. DA2's 56 ms is mostly its upsampling to 1920×1080, which the phone would not need.
+
+**Candidate next step:**
+- Treat a metric model as *metric up to a constant* and apply only the gait-calibrated level `c`, without the per-frame anchor, to DA2's very stable maps.
+- That pairs the best stability with a self-calibrated level, needing no camera knowledge.
+
+**Licence documentation:**
+- `THIRD_PARTY_LICENSES.md` was added to HackEye and to HackEye-Models.
+  - **Section 1, "requires legal handling":**
+    - Ultralytics AGPL-3.0, which covers the YOLO26 bases, the fine-tunes and the exports;
+    - Mapillary Vistas CC BY-NC-SA 4.0, ADE20K and Cityscapes terms;
+    - UniDepth CC BY-NC 4.0, and Virtual KITTI 2 behind DA2 Metric;
+    - the Meta Wearables Developer Terms;
+    - the GPL-3.0 tools in the RnD image only (evo, plyfile, ffmpeg);
+    - the Apple SDK terms.
+  - It ends with a shipping checklist.
+  - **Section 2, "Thanks":** the permissive projects, with their licences read from package metadata.
+- **READMEs:** the HackEye, RnD and HackEye-Models READMEs gained licence sections. The RnD "Depth model" section lists each option's licence and download.
+
+**User's idea: a quick "delta" calibration for DA2, within 6 frames** (`tools/depth_delta_calibration.py`):
+- **Method:** over N frames, c₀ = median(flat-ground z / DA2 z) on the walking region. The flat-ground z uses the fixed mount horizon and the preset camera height, the only absolute reference available within 6 frames; gait needs ~2.4 s for a cadence. Then depth = c₀ × DA2 is held.
+- **Test:** a fresh calibration every minute of 4929 (50 calibrations), each held for the following minute.
+- **c₀ is very consistent:** 0.174 (p10 0.162, p90 0.191, spread 4%). **3 frames are as good as 6.**
+- **Held for a minute, the error around the level is a median 6% (p90 14%)**, the most stable result so far. Anchored DA3 Small, re-anchored every frame, gave 9% / 26%.
+- **The absolute level is whatever the reference says:** 0.39× Large with the uncalibrated camera height and lens. It moves to roughly ground level once multiplied by the gait scale k (≈ 1.8 on 4929), and that refinement can take over later.
+- **Result:** DA2 plus a 3–6-frame flat-ground calibration (then gait refinement) is the best mobile candidate so far, a candidate for the next version's collision logic.

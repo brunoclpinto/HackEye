@@ -155,18 +155,26 @@ speed up as a collision gets closer).
 
 ## Depth model
 
-The Lab can estimate per-frame depth with Depth Anything 3 **Small** or **Base**
-(Apache-2.0, "Any-view" series; `depth: "da3-small"` / `"da3-base"` in `POST /api/runs`).
-Only mobile-viable sizes are offered; DA3 Metric Large was removed from the Lab (its
-weights may stay on disk; runs made with it still load and are treated as metric).
-Single-image output is **relative** depth (positive, larger = farther, unknown global
-scale), stored in `depth.npz` with `units = "relative"`; the collision pass calibrates the
-scale from the walker's gait. The weights are not in the repo; download them once to the
-shared models dir (mounted read-only in the containers as `/base-models`, parent dir
-overridable with `HACKEYE_DEPTH_MODEL_ROOT`):
+The Lab can estimate per-frame depth (`depth` in `POST /api/runs`; UI "Depth" select, default DA3 Small).
+Only mobile-viable sizes are offered:
+
+| Option | Model | Output | Licence |
+|---|---|---|---|
+| `da3-small` (default) | Depth Anything 3 Small, 0.08B | relative z-depth: the collision pass anchors it per frame to the flat ground and gait-calibrates the level | Apache-2.0 |
+| `da3-base` | Depth Anything 3 Base, 0.12B | relative z-depth (as above) | Apache-2.0 |
+| `da2-metric-outdoor-small` | Depth Anything V2 Metric Outdoor Small, 24.8M | metric metres | Apache-2.0 (fine-tuned on Virtual KITTI 2, CC BY-NC-SA 3.0) |
+| `unidepth-v2-s` | UniDepth v2 ViT-S, ~34M; estimates the camera intrinsics itself | metric metres | **CC BY-NC 4.0** (non-commercial) |
+
+What these licences require is summarised in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
+
+DA3 Metric Large was removed from the Lab because it isn't mobile-sized. Runs made with it still load and are treated as metric.
+
+**Weights** are not in the repo. Download them once into the shared models dir. The containers mount it read-only as `/base-models`, and `HACKEYE_DEPTH_MODEL_ROOT` (default `/base-models`) overrides the root that each variant's subpath (`depth-anything/…`, `unidepth/…`) is resolved under:
 
 ```bash
 for v in SMALL BASE; do d=~/models/depth-anything/DA3-$v; mkdir -p $d && for f in config.json model.safetensors README.md; do curl -L -o $d/$f https://huggingface.co/depth-anything/DA3-$v/resolve/main/$f; done; done
+d=~/models/depth-anything/DA2-METRIC-OUTDOOR-SMALL-hf; mkdir -p $d && for f in config.json preprocessor_config.json model.safetensors README.md; do curl -L -o $d/$f https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf/resolve/main/$f; done
+d=~/models/unidepth/unidepth-v2-vits14; mkdir -p $d && for f in config.json model.safetensors README.md; do curl -L -o $d/$f https://huggingface.co/lpiccinelli/unidepth-v2-vits14/resolve/main/$f; done
 ```
 
 The package is pinned in the `Dockerfile` (installed `--no-deps`; see the comments

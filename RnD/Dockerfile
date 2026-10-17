@@ -23,6 +23,14 @@ ARG DA3_COMMIT=3d835ec1a5802d64a8b8b15f817a1ab54809bfe4
 RUN SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir --no-deps \
     https://github.com/ByteDance-Seed/Depth-Anything-3/archive/${DA3_COMMIT}.zip
 
+# UniDepth v2 (CC-BY-NC-4.0 code and weights; fine for this non-commercial project), pinned to a commit.
+# --no-deps: its metadata wants numpy>=2/xformers/h5py/gradio/tables/... which inference never touches.
+# xformers is optional (guarded imports, falls back to torch SDPA); the imports it does need
+# (timm, einops, huggingface_hub, wandb) are in requirements.txt.
+ARG UNIDEPTH_COMMIT=8d8cfe4c7ee15297099983607febf0d4f32eb3d6
+RUN pip install --no-cache-dir --no-deps \
+    https://github.com/lpiccinelli-eth/UniDepth/archive/${UNIDEPTH_COMMIT}.zip
+
 COPY . .
 
 ENTRYPOINT ["python", "cli.py"]
