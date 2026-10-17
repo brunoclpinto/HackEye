@@ -88,14 +88,15 @@ def test_settings_defaults_validation_and_resolved(fake):
     got = c.get("/api/recordings/rec1/settings").json()
     assert got["projection"] == "auto" and got["distanceSource"] == "depth"
     assert got["resolved"]["projection"] == "fisheye"        # default HFOV 118 -> fisheye
-    put = c.put("/api/recordings/rec1/settings", json={"projection": "rectilinear", "distanceSource": "fused",
+    put = c.put("/api/recordings/rec1/settings", json={"projection": "rectilinear", "distanceSource": "ground",
                                                        "hfovDeg": 90})
     assert put.status_code == 200
     body = put.json()
-    assert (body["projection"], body["distanceSource"], body["resolved"]["projection"]) == ("rectilinear", "fused", "rectilinear")
-    assert c.get("/api/recordings/rec1/settings").json()["distanceSource"] == "fused"
+    assert (body["projection"], body["distanceSource"], body["resolved"]["projection"]) == ("rectilinear", "ground", "rectilinear")
+    assert c.get("/api/recordings/rec1/settings").json()["distanceSource"] == "ground"
     assert c.put("/api/recordings/rec1/settings", json={"projection": "equirect"}).status_code == 422
     assert c.put("/api/recordings/rec1/settings", json={"distanceSource": "lidar"}).status_code == 422
+    assert c.put("/api/recordings/rec1/settings", json={"distanceSource": "fused"}).status_code == 422   # dropped in v26.1.10
     # omitted keys fall back to the defaults
     again = c.put("/api/recordings/rec1/settings", json={}).json()
     assert (again["projection"], again["distanceSource"]) == ("auto", "depth")

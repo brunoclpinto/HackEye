@@ -173,7 +173,7 @@ class CollisionSettings:
     step_length_m: float | None        # None = estimate, fall back to the default
     horizon_default: float
     projection: str = "rectilinear"    # resolved lens model: "rectilinear" (pinhole) or "fisheye" (equidistant)
-    distance_source: str = "ground"    # "ground" | "depth" | "fused" (v26.1.10 depth experiment)
+    distance_source: str = "ground"    # "ground" | "depth" (v26.1.10 depth experiment)
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -183,7 +183,7 @@ def load_config(path: Path | None = None) -> dict:
 
 
 AUTO_FISHEYE_HFOV_DEG = 100.0
-DISTANCE_SOURCES = ("ground", "depth", "fused")
+DISTANCE_SOURCES = ("ground", "depth")
 
 
 def resolve_projection(projection: str | None, hfov_deg: float) -> str:
@@ -1875,7 +1875,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
 
     ``depth`` = {"t": (N,), "depth": (N, Dh, Dw) metres} or None: one metric depth map per analysed frame
     (nearest ``t``). It is always reported as ``depthM``; it drives the distances only when
-    ``settings.distance_source`` is "depth" or "fused"."""
+    ``settings.distance_source`` is "depth"."""
     grids = np.asarray(grids)
     times = np.asarray(times, dtype=float)
     n, gh, gw = grids.shape
@@ -1893,7 +1893,6 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
 
     dist_cfg = config.get("distance", {})
     depth_rows_frac = float(dist_cfg.get("depthLowestRowsFrac", 0.25))
-    fused_rel = float(dist_cfg.get("fusedMaxRelDiff", 0.5))
     source = getattr(settings, "distance_source", "ground")
     projection = getattr(settings, "projection", "rectilinear")
     depth_t = depth_maps = None
@@ -2007,10 +2006,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             if it.depth_m is not None:
                 tr.dhist.append((t, it.depth_m))
                 tr.dhist = [h for h in tr.dhist if h[0] >= t - trk["historySeconds"] - 1e-9]
-                use_depth = source == "depth" or (source == "fused" and (
-                    it.clipped or (it.contact_y_raw - horizon) * gh < trk["motionMinRowsBelowHorizon"]
-                    or abs(it.distance_m - it.depth_m) / it.depth_m > fused_rel))
-                if use_depth:
+                if source == "depth":
                     # metric already: no gait scale. Lateral keeps its bearing at the new distance.
                     if it.distance_m > 0:
                         it.lateral_m *= it.depth_m / it.distance_m

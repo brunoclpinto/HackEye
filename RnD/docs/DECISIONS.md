@@ -299,6 +299,7 @@ Against review 3:
   - DA3 is installed from a pinned commit with `--no-deps` plus its import-time deps. Its metadata asks for numpy < 2, but it works on numpy 2.2.
 - **Distance source** (`distanceSource`: ground / depth / fused): re-scored with "Re-run collision", without new inference. Tracking still matches on ground distances, and the gait calibration stays ground-based.
 - **Lab UI:** a Depth select, a Depth overlay (turbo, near = red), Lens and Distance settings, and labels showing `ground X m · depth Y m`.
+- **Fused mode dropped** (user decision after the A/B): "its either one or the other". `distanceSource` is `ground | depth`; a stored or requested `fused` is refused (422) or resolves to ground in the library.
 - **Defaults:** model `Yolo26m-sem-HackEye20261011.pt` (`HACKEYE_LAB_DEFAULT_MODEL`), resolution 736p, and — the user's decision after the A/B — **depth on and `distanceSource: depth`**. The API defaults for a missing `depth`/`profile` stay `none`/`default`.
 
 **Results** (4929 full, 20261011 @ 736p + depth, 72 ms/frame of which depth 45.5):
@@ -314,7 +315,7 @@ Against review 3:
 - **Scale check (no ground truth):** the closing speed of static poles divided by the walking speed should be a bit under 1 (lateral offset). It is 0.87 with depth (IQR 0.42–1.21) and 0.75 with ground (0.39–1.34), so depth's scale looks right and the ground distances still read short.
 
 **Known limitations:**
-- **fused** switches source frame to frame, so step counts jump. It needs per-track hysteresis before use.
+- **fused** switched source frame to frame, so step counts jumped (6.3 %).
 - **Lens model:** DA3 assumes a pinhole camera, but the footage is fisheye (equidistant focal used).
 - **Portrait recordings:** their depth maps are stretched to 120×68.
 - **Validation:** fewer calls is not yet validated: the next review is the baseline.

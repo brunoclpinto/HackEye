@@ -94,7 +94,7 @@
     "thinNoticeSteps": 15,
     "thinNoticeLateralM": 2.5
   },
-  "distance": {"depthLowestRowsFrac": 0.25, "fusedMaxRelDiff": 0.5},
+  "distance": {"depthLowestRowsFrac": 0.25},
   "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
                "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2,
                "motionMinRowsBelowHorizon": 8, "motionMinSeconds": 0.75, "contactEma": 0.5},

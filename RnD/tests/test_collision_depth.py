@@ -126,8 +126,9 @@ def test_resolve_projection_auto_by_hfov():
 def test_resolve_settings_stores_projection_and_distance_source():
     s = col.resolve_settings(CONFIG)
     assert (s.projection, s.distance_source) == ("fisheye", "ground")
-    s = col.resolve_settings(CONFIG, "chest", 90, None, None, "fisheye", "fused")
-    assert (s.projection, s.distance_source) == ("fisheye", "fused")
+    s = col.resolve_settings(CONFIG, "chest", 90, None, None, "fisheye", "depth")
+    assert (s.projection, s.distance_source) == ("fisheye", "depth")
+    assert col.resolve_settings(CONFIG, distance_source="fused").distance_source == "ground"   # dropped in v26.1.10
     assert col.resolve_settings(CONFIG, hfov_deg=90).projection == "rectilinear"
     assert col.resolve_settings(CONFIG, distance_source="bogus").distance_source == "ground"
 
@@ -199,34 +200,7 @@ def test_depth_maps_are_matched_by_nearest_time():
     assert [h["depthM"] for _, h in hz(doc, "pole")] == [6.0, 7.0, 8.0, 9.0]
 
 
-def test_fused_uses_depth_for_a_clipped_item():
-    frames = static_scene("pole", 1.2, n=12)                      # base below the image: clipped
-    depth = depth_doc(12, 1.5)
-    args = (np.stack(frames), np.arange(12) / FPS, NAMES, CONFIG)
-    g, _ = col.run_collision(*args, with_source("ground"), None, depth)
-    f, _ = col.run_collision(*args, with_source("fused"), None, depth)
-    assert last(g)["distanceM"] == pytest.approx(1.26, abs=0.1) and last(g)["depthM"] == 1.5
-    assert last(f)["distanceM"] == 1.5 and last(f)["stepsTo"] == pytest.approx(1.5 / 0.7, abs=0.06)
-
-
-def test_fused_uses_depth_near_the_horizon_and_when_the_two_disagree_but_not_otherwise():
-    args = lambda fr: (np.stack(fr), np.arange(len(fr)) / FPS, NAMES, CONFIG)     # noqa: E731
-    # near the horizon: 20 m is 4.7 rows below it (< 8): the ground distance is too coarse, depth is used
-    far = static_scene("pole", 20.0, n=12, w=3.0)
-    g, _ = col.run_collision(*args(far), with_source("ground"), None, depth_doc(12, 24.0))
-    f, _ = col.run_collision(*args(far), with_source("fused"), None, depth_doc(12, 24.0))
-    assert last(g)["distanceM"] != 24.0 and last(f)["distanceM"] == 24.0
-    # reliable contact and agreement within 50 percent: ground is kept
-    mid = static_scene("pole", 8.0, n=12)
-    g, _ = col.run_collision(*args(mid), with_source("ground"), None, depth_doc(12, 8.0))
-    f, _ = col.run_collision(*args(mid), with_source("fused"), None, depth_doc(12, 8.0))
-    assert last(f)["distanceM"] == last(g)["distanceM"] != 8.0
-    # reliable contact but the two disagree by more than 50 percent: depth is used
-    f, _ = col.run_collision(*args(mid), with_source("fused"), None, depth_doc(12, 20.0))
-    assert last(f)["distanceM"] == 20.0
-
-
-def test_fused_lateral_follows_the_depth_distance():
+def test_depth_lateral_follows_the_depth_distance():
     g = base_grid(half_w_m=3.0)
     place(g, "pole", 8.0, 1.0, 0.6, 3.0)
     frames = [g.copy() for _ in range(10)]
@@ -251,8 +225,8 @@ def test_ground_mode_with_depth_is_identical_to_without_apart_from_depth_m():
     assert strip(a_doc) == strip(b_doc)
 
 
-@pytest.mark.parametrize("source", ["depth", "fused"])
-def test_without_depth_data_every_source_behaves_as_ground(source):
+def test_without_depth_data_depth_source_behaves_as_ground():
+    source = "depth"
     frames = approach_frames(seconds=16)
     mot = motion(16)
     ground = run(frames, mot=mot)

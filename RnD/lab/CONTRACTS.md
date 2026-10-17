@@ -92,7 +92,7 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   "cameraHeightM": null,       // null = the mount preset's cameraHeightM
   "stepLengthM": null,         // null = the prior step length (collision.json ego.priorStepLengthM, 0.70 m)
   "projection": "auto",        // lens model for bearings/clocks and the depth focal: auto | rectilinear | fisheye (auto = fisheye when HFOV >= 100°)
-  "distanceSource": "depth"    // ground | depth | fused (§7.3a); without depth.npz every mode is ground
+  "distanceSource": "depth"    // ground | depth (§7.3a); without depth.npz depth behaves as ground
 }
 ```
 
@@ -102,7 +102,7 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   - `hfovDeg` null or a number in [10, 180)
   - `cameraHeightM` null or a number in [0.5, 2.5]
   - `stepLengthM` null or a number in [0.3, 2.0]
-  - `projection` one of `auto | rectilinear | fisheye` (missing = `auto`); `distanceSource` one of `ground | depth | fused` (missing = `depth`, the Lab default since v26.1.10)
+  - `projection` one of `auto | rectilinear | fisheye` (missing = `auto`); `distanceSource` one of `ground | depth` (missing = `depth`, the Lab default since v26.1.10)
 - Step length is **never estimated from the footage**: steps are `distance / stepLength`, where the length is the stored
   value or the prior (§7.7).
 - The Lab saves the settings before starting an analysis and before every collision re-run, so the post-inference collision pass always uses the stored settings.
@@ -390,8 +390,7 @@ Frames are processed in order; every state below carries over from frame to fram
 - With depth, each item gets `depthM` = median depth over its component pixels in the lowest `distance.depthLowestRowsFrac` (0.25) of its rows, mapped onto the 120×68 grid (null if none). It is reported in every mode.
 - `ground`: §7.3 unchanged; output equals no-depth output apart from `depthM`.
 - `depth` (**Lab default**): distance = `depthM` (already metric: the scale `k` is **not** applied); lateral = the ground lateral × depth/ground; steps = depth / step length. Items without `depthM` fall back to ground.
-- `fused`: `depthM` when the ground contact is unreliable — the item is clipped, its contact is < `motionMinRowsBelowHorizon` rows below the horizon, or `|ground·k − depthM| / depthM > distance.fusedMaxRelDiff` (0.5); otherwise ground·k.
-- Tracking and the ground gate still match on ground distances; depth is substituted after matching. When an item's distance came from depth, its closing speed is the negative slope of the track's own depth history (same ≥ 3 points / ≥ `motionMinSeconds` / latest-point rule). The raw closing speeds that feed the gait calibration stay ground-based.
+- Tracking and the ground gate still match on ground distances; depth is substituted after matching. There is no mixing: every item takes its distance from the selected source (ground, or depth with a ground fallback when it has no depth pixels). When an item's distance came from depth, its closing speed is the negative slope of the track's own depth history (same ≥ 3 points / ≥ `motionMinSeconds` / latest-point rule). The raw closing speeds that feed the gait calibration stay ground-based.
 
 ### 7.4 Items
 - 4-connected components of **each class** (not each group) of the `static`, `moving` and `feature` groups, only over rows whose bottom edge is below the horizon, with ≥ `minComponentFraction × grid area` pixels. A pole against a wall is two items.

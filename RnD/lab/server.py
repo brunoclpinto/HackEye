@@ -149,7 +149,7 @@ def _opt_number(body: dict, key: str, lo: float, hi: float, hi_inclusive: bool =
 
 
 PROJECTIONS = ("auto", "rectilinear", "fisheye")
-DISTANCE_SOURCES = ("ground", "depth", "fused")
+DISTANCE_SOURCES = ("ground", "depth")
 
 
 def _choice(body: dict, key: str, options: tuple, default: str) -> str:
