@@ -44,6 +44,9 @@ def strip(doc: dict) -> dict:
     d = copy.deepcopy(doc)
     d.pop("distanceSource", None)
     for f in d["frames"]:
+        f["ego"].pop("depthAnchor", None)
+        f["ego"].pop("depthScale", None)
+        f["ego"].pop("depthScaleSource", None)
         for h in f["hazards"]:
             h.pop("depthM", None)
     return d
@@ -234,3 +237,15 @@ def test_without_depth_data_depth_source_behaves_as_ground():
     assert other[1] == ground[1]
     assert other[0]["distanceSource"] == source and ground[0]["distanceSource"] == "ground"
     assert strip(other[0]) == strip(ground[0])
+
+
+def test_metric_units_are_the_default_and_explicit_metric_is_identical():
+    frames = approach_frames(seconds=8)
+    times = np.arange(len(frames)) / FPS
+    d = depth_doc(len(frames), 12.0)
+    a, ea = col.run_collision(np.stack(frames), times, NAMES, CONFIG, with_source("depth"), motion(8), d)
+    b, eb = col.run_collision(np.stack(frames), times, NAMES, CONFIG, with_source("depth"), motion(8), {**d, "units": "metric"})
+    assert a == b and ea == eb
+    assert all(f["ego"]["depthScaleSource"] == "metric" and f["ego"]["depthScale"] == 1.0 for f in a["frames"])
+    c, _ = run(frames, mot=motion(8))
+    assert all(f["ego"]["depthScale"] is None and f["ego"]["depthScaleSource"] == "none" for f in c["frames"])

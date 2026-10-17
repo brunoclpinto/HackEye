@@ -12,7 +12,8 @@ pytestmark = pytest.mark.skipif(os.environ.get("HACKEYE_GPU_TESTS") != "1", reas
 VIDEO = Path("/media/GOPR4929.MP4")
 
 
-def test_da3_metric_on_gopr4929():
+@pytest.mark.parametrize("variant", ["da3-small", "da3-base"])
+def test_da3_relative_on_gopr4929(variant):
     import depth
     import gpu_guard
 
@@ -21,15 +22,17 @@ def test_da3_metric_on_gopr4929():
     ok, bgr = cap.read()
     assert ok
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    model = depth.DepthModel(gpu_guard.assert_torch_cuda())
-    focal = depth.focal_px(rgb.shape[1], 120.0, "auto")
-    model.predict_metric(rgb, focal)  # warm-up
+    model = depth.DepthModel(gpu_guard.assert_torch_cuda(), variant)
+    model.predict_relative(rgb)  # warm-up
     t0 = time.perf_counter()
     n = 10
     for _ in range(n):
-        d = model.predict_metric(rgb, focal)
+        d = model.predict_relative(rgb)
     ms = (time.perf_counter() - t0) * 1000 / n
-    print(f"\nDA3 metric: {ms:.1f} ms/frame, map {d.shape}, median {np.median(d):.2f} m, "
-          f"p5 {np.percentile(d, 5):.2f} p95 {np.percentile(d, 95):.2f}")
-    assert np.isfinite(d).all()
-    assert 1.0 < float(np.median(d)) < 60.0
+    h, w = d.shape
+    ground = float(np.median(d[int(0.8 * h):, int(0.4 * w):int(0.6 * w)]))      # bottom centre: near the walker
+    ahead = float(np.median(d[int(0.3 * h):int(0.5 * h), int(0.4 * w):int(0.6 * w)]))  # centre-top: farther
+    print(f"\n{variant}: {ms:.1f} ms/frame, map {d.shape}, range {d.min():.3f}-{d.max():.3f}, "
+          f"ground {ground:.3f} < ahead {ahead:.3f}")
+    assert np.isfinite(d).all() and (d > 0).all()
+    assert ground < ahead   # relative depth: larger = farther

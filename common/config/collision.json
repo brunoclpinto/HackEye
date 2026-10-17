@@ -94,7 +94,8 @@
     "thinNoticeSteps": 15,
     "thinNoticeLateralM": 2.5
   },
-  "distance": {"depthLowestRowsFrac": 0.25},
+  "distance": {"depthLowestRowsFrac": 0.25, "depthWitnessMaxBearingDeg": 40,
+               "depthLevelRange": [0.3, 5.0], "depthLevelMinSamples": 30, "anchorMinCells": 150, "anchorEmaSeconds": 0.4, "anchorHoldSeconds": 2.0, "anchorHorizon": "fixed"},
   "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
                "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2,
                "motionMinRowsBelowHorizon": 8, "motionMinSeconds": 0.75, "contactEma": 0.5},

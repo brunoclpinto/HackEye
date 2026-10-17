@@ -664,6 +664,7 @@ class _Item:
     clock_text: str = ""                      # spoken clock position, "12", "12:15", "11:45"
     depth_m: float | None = None              # metric depth under the item's lower rows (experiment), if a depth map exists
     depth_on: bool = False                    # a depth map exists for this frame (``depthM`` is reported, maybe null)
+    depth_raw: float | None = None            # depth under the item's lower rows in the map's own units (metres or relative)
     from_depth: bool = False                  # distance_m was taken from the depth map
 
     def __post_init__(self) -> None:
@@ -979,6 +980,119 @@ class _Scale:
         return self.applied
 
 
+class _DepthAnchor:
+    """Per-frame scale of a RELATIVE depth map from the ground under our feet.
+
+    The relative maps match the metric ones up to ONE scale per frame, but that scale drifts from frame to
+    frame. Walking-region pixels at least ``motionMinRowsBelowHorizon`` rows below the horizon have a flat-
+    ground z-distance ``g`` (uncalibrated camera height, k = 1); ``a_t = median(g / rel)`` maps relative units
+    onto that ground metre. Smoothed lightly in log space (``anchorEmaSeconds``); a frame without enough
+    cells (``anchorMinCells``) holds the last anchor for ``anchorHoldSeconds``, then there is none.
+    """
+
+    def __init__(self, dist_cfg: dict):
+        self.min_cells = int(dist_cfg.get("anchorMinCells", 150))
+        self.tau_s = float(dist_cfg.get("anchorEmaSeconds", 0.5))
+        self.hold_s = float(dist_cfg.get("anchorHoldSeconds", 2.0))
+        self.log_a: float | None = None
+        self.last_t = -math.inf
+
+    def update(self, t: float, dt: float, raw: float | None, cells: int) -> None:
+        if raw is not None and cells >= self.min_cells and math.isfinite(raw) and raw > 0:
+            x = math.log(raw)
+            if self.log_a is None or t - self.last_t > self.hold_s or self.tau_s <= 0:
+                self.log_a = x                                       # tau 0 = no smoothing
+            else:
+                self.log_a += (1.0 - math.exp(-max(dt, 0.0) / self.tau_s)) * (x - self.log_a)
+            self.last_t = t
+        elif self.log_a is not None and t - self.last_t > self.hold_s:
+            self.log_a = None
+
+    @property
+    def value(self) -> float | None:
+        return None if self.log_a is None else math.exp(self.log_a)
+
+
+def _ground_anchor(region: Region | None, dmap: np.ndarray, horizon: float, camera_height_m: float,
+                   gh: int, gw: int, f: float, min_rows: float) -> tuple[float | None, int]:
+    """(median of flat-ground z-distance / relative depth, cell count) over walking-region cells."""
+    if region is None:
+        return None, 0
+    rr, cc = np.nonzero(region.mask)
+    keep = rr + 0.5 - horizon * gh >= min_rows
+    rr, cc = rr[keep], cc[keep]
+    if rr.size == 0:
+        return None, 0
+    dh, dw = dmap.shape
+    rel = dmap[np.minimum(dh - 1, ((rr + 0.5) / gh * dh).astype(int)),
+               np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(float)
+    ok = np.isfinite(rel) & (rel > 0.0)
+    if not ok.any():
+        return None, 0
+    g = camera_height_m * f / (rr[ok] + 0.5 - horizon * gh)
+    return float(np.median(g / rel[ok])), int(ok.sum())
+
+
+class _DepthScale:
+    """Absolute level ``c`` of the anchored depth (``a_t * rel``, ground-metre units): a dimensionless
+    correction, gait calibrated.
+
+    Depth maps are z-depth (planar, along the optical axis), so walking along the axis a static witness's
+    anchored depth falls at ``v / c`` with ``v = cadence * step length`` whatever its bearing (no cosine
+    factor); one sample is ``v / r`` with ``r`` the closing rate of the witness's anchored depth (without
+    ``c``, so no feedback). The bearing gate only limits the effect of a heading off the optical axis.
+    Per frame the median over the witnesses is one sample; the estimate is the median of the samples of the
+    last ``calibrationWindowSeconds`` (first one at once, later ones blended in log space with the
+    ``_Scale`` time constant) and the applied level slews at <= ``scaleMaxChangePerSecond``.
+    ``value`` is None until the first estimate (the caller then uses the ground scale k).
+    Never uses the ground closing speeds.
+    """
+
+    def __init__(self, ego_cfg: dict, dist_cfg: dict):
+        self.window_s = float(ego_cfg.get("calibrationWindowSeconds", 20.0))
+        self.min_samples = int(dist_cfg.get("depthLevelMinSamples", ego_cfg.get("calibrationMinSamples", 12)))
+        self.tau_min_s = float(ego_cfg.get("calibrationEmaMinSeconds", 3.0))
+        self.tau_s = float(ego_cfg.get("calibrationEmaSeconds", 40.0))
+        self.max_rate = float(ego_cfg.get("scaleMaxChangePerSecond", 0.25))
+        self.lo, self.hi = dist_cfg.get("depthLevelRange", [0.3, 5.0])
+        self.max_bearing = float(dist_cfg.get("depthWitnessMaxBearingDeg", 40.0))
+        self.min_speed = float(dist_cfg.get("depthWitnessMinEgoSpeed", 0.5))
+        self.age_s = 0.0
+        self.samples: list[tuple[float, float]] = []
+        self.target: float | None = None
+        self.applied: float | None = None
+
+    def sample(self, ego_speed: float | None, witnesses: list[tuple[float, float]]) -> float | None:
+        """witnesses = [(bearing deg, closing rate of the anchored depth)]; the frame's level sample or None."""
+        if ego_speed is None or ego_speed < self.min_speed:
+            return None
+        vals = [ego_speed / r for b, r in witnesses
+                if r > 0 and abs(b) <= self.max_bearing]
+        return float(np.median(vals)) if vals else None
+
+    def update(self, t: float, sample: float | None, dt: float) -> None:
+        if sample is not None and math.isfinite(sample) and sample > 0:
+            self.samples.append((t, sample))
+        self.samples = [x for x in self.samples if x[0] >= t - self.window_s - 1e-9]
+        if len(self.samples) >= self.min_samples:
+            inst = min(self.hi, max(self.lo, float(np.median([x[1] for x in self.samples]))))
+            if self.target is None:
+                self.target = self.applied = inst
+            else:
+                self.age_s += max(dt, 0.0)
+                tau = min(self.tau_s, max(self.tau_min_s, self.age_s))
+                a = 1.0 - math.exp(-max(dt, 0.0) / tau)
+                self.target = math.exp(math.log(self.target) + a * (math.log(inst) - math.log(self.target)))
+        if self.target is not None and self.applied != self.target:
+            lim = self.max_rate * max(dt, 0.0)
+            self.applied = math.exp(
+                math.log(self.applied) + max(-lim, min(lim, math.log(self.target) - math.log(self.applied))))
+
+    @property
+    def value(self) -> float | None:
+        return self.applied
+
+
 class _SurfaceTracker:
     """Surface group with strict evidence (CONTRACTS.md 15 design 4; supersedes 14.1.8).
 
@@ -1179,7 +1293,12 @@ def _speed_witness(it: _Item) -> bool:
     """Can this item tell us our own speed? Only something that stands on the ground at a point:
     a pole, sign or lamp (tall and thin). The contact row of a wall, hedge or building is where the
     segmentation happens to end, so its "closing" is mostly zero or random and would drag the median."""
-    if it.group != "static" or it.closing_raw is None or it.clipped or it.along_path:
+    return it.closing_raw is not None and _pole_like(it)
+
+
+def _pole_like(it: _Item) -> bool:
+    """Static, tall and thin, not clipped, not running along the path (also the depth-scale witnesses)."""
+    if it.group != "static" or it.clipped or it.along_path:
         return False
     w, h = it.bbox[2] - it.bbox[0], it.bbox[3] - it.bbox[1]
     return h >= POINT_ASPECT * w
@@ -1873,8 +1992,10 @@ def _motion_series(motion: dict | None, hfov_deg: float, ego_cfg: dict):
 def run_collision(grids, times, class_names, config, settings, motion=None, depth=None) -> tuple[dict, dict]:
     """Per-frame hazards and the speech/tone event list. ``motion`` = {"t","dx","dy"} arrays or None.
 
-    ``depth`` = {"t": (N,), "depth": (N, Dh, Dw) metres} or None: one metric depth map per analysed frame
-    (nearest ``t``). It is always reported as ``depthM``; it drives the distances only when
+    ``depth`` = {"t": (N,), "depth": (N, Dh, Dw), "units": "metric" | "relative"} or None: one depth map per
+    analysed frame (nearest ``t``); missing units = metric (metres). Relative depth (scale only, drifting per
+    frame) is anchored every frame on the ground under our feet (``_DepthAnchor``) and levelled by walking
+    (``_DepthScale``, ground k until its first estimate); with no anchor ``depthM`` is null. It is always reported as ``depthM``; it drives the distances only when
     ``settings.distance_source`` is "depth"."""
     grids = np.asarray(grids)
     times = np.asarray(times, dtype=float)
@@ -1892,10 +2013,17 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         ego_cfg.get("priorStepLengthM", default_step))
 
     dist_cfg = config.get("distance", {})
+    # anchor horizon: "estimated" (the frame's smoothed horizon), "fixed" (the mount preset's), or a row fraction
+    _ah = dist_cfg.get("anchorHorizon", "estimated")
+    anchor_horizon = (settings.horizon_default if _ah == "fixed" else float(_ah) if isinstance(_ah, (int, float)) else None)
     depth_rows_frac = float(dist_cfg.get("depthLowestRowsFrac", 0.25))
     source = getattr(settings, "distance_source", "ground")
     projection = getattr(settings, "projection", "rectilinear")
     depth_t = depth_maps = None
+    relative = depth is not None and depth.get("units", "metric") == "relative"
+    dscale = _DepthScale(ego_cfg, dist_cfg) if relative else None
+    anchor = _DepthAnchor(dist_cfg) if relative else None
+    anchor_rows = float(trk["motionMinRowsBelowHorizon"])
     if depth is not None and len(depth["t"]):
         depth_t = np.asarray(depth["t"], dtype=float)
         depth_maps = depth["depth"]
@@ -1958,6 +2086,15 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             step = geo_cfg["horizonEma"] * (target - horizon)
             horizon += max(-geo_cfg["horizonMaxStep"], min(geo_cfg["horizonMaxStep"], step))
 
+        cadence = heading = None
+        if mser is not None:
+            mt, cad, hcum = mser
+            j = int(np.clip(np.searchsorted(mt, t), 0, len(mt) - 1))
+            if j > 0 and abs(mt[j - 1] - t) < abs(mt[j] - t):
+                j -= 1
+            cadence = None if np.isnan(cad[j]) else float(cad[j])
+            heading = float(np.interp(t, mt, hcum))
+
         # 3. items
         k = scale.value                            # gait scale from the frames so far: metres are real-world
         geo = _frame_geometry(gh, gw, horizon, settings.camera_height_m * k, f, settings.hfov_deg, lane_half,
@@ -1968,9 +2105,13 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             if j > 0 and abs(depth_t[j - 1] - t) < abs(depth_t[j] - t):
                 j -= 1
             dmap = np.asarray(depth_maps[j])
+            if relative:
+                a_hz = anchor_horizon if anchor_horizon is not None else horizon   # fixed: no horizon jitter
+                a_raw, a_cells = _ground_anchor(region, dmap, a_hz, settings.camera_height_m, gh, gw, f, anchor_rows)
+                anchor.update(t, dt, a_raw, a_cells)
             for it in items:
                 it.depth_on = True
-                it.depth_m = _item_depth_m(it, dmap, gh, gw, depth_rows_frac)
+                it.depth_raw = _item_depth_m(it, dmap, gh, gw, depth_rows_frac)
 
         # 4. tracking
         tracks = {k: v for k, v in tracks.items() if t - v.last_t <= trk["maxMissedSeconds"]}
@@ -2003,28 +2144,48 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 if d_s is not None and it.distance_m > 0:
                     it.lateral_m *= d_s / it.distance_m
                     it.distance_m = d_s
-            if it.depth_m is not None:
-                tr.dhist.append((t, it.depth_m))
+            if relative:                               # anchored ground metres (before the level c)
+                a_t = anchor.value
+                it.depth_raw = None if (a_t is None or it.depth_raw is None) else a_t * it.depth_raw
+            if it.depth_raw is not None:
+                tr.dhist.append((t, it.depth_raw))        # relative: anchored metres, the level c applies at use
                 tr.dhist = [h for h in tr.dhist if h[0] >= t - trk["historySeconds"] - 1e-9]
-                if source == "depth":
-                    # metric already: no gait scale. Lateral keeps its bearing at the new distance.
-                    if it.distance_m > 0:
-                        it.lateral_m *= it.depth_m / it.distance_m
-                    it.distance_m, it.from_depth = it.depth_m, True
-                    tr.closing = _depth_closing(tr.dhist, t, trk["motionMinSeconds"])
             it.track_id, it.closing_raw, it.closing = tid, raw_closing, tr.closing
             it.present_run = tr.present_run
             it.settled = t - tr.first_t >= MIN_TRACK_AGE_S - 1e-9
 
+        # 4b. depth in metres: metric maps as they are; relative maps anchored per frame, levelled by gait
+        if relative:
+            wit = []
+            for it in items:
+                if it.depth_raw is not None and _pole_like(it):
+                    r = _depth_closing(tracks[it.track_id].dhist, t, trk["motionMinSeconds"])
+                    if r is not None:
+                        wit.append((it.bearing, r))
+            dscale.update(t, dscale.sample(cadence * step_len if cadence else None, wit), dt)
+            level = dscale.value
+            c_source = "gait" if level is not None else "ground"
+            if level is None:
+                level = scale.value
+            a_now = anchor.value
+            ds = None if a_now is None else level
+        else:
+            ds, a_now, c_source = 1.0, None, "metric"
+        for it in items:
+            if it.depth_raw is None or ds is None:
+                continue
+            tr = tracks[it.track_id]
+            it.depth_m = ds * it.depth_raw             # metric: ds = 1; relative: depth_raw is anchored, ds the level c
+            if source == "depth":
+                # metric now: no ground scale. Lateral keeps its bearing at the new distance.
+                if it.distance_m > 0:
+                    it.lateral_m *= it.depth_m / it.distance_m
+                it.distance_m, it.from_depth = it.depth_m, True
+                raw_c = _depth_closing(tr.dhist, t, trk["motionMinSeconds"])
+                tr.closing = None if raw_c is None else ds * raw_c
+                it.closing = tr.closing
+
         # 5. ego
-        cadence = heading = None
-        if mser is not None:
-            mt, cad, hcum = mser
-            j = int(np.clip(np.searchsorted(mt, t), 0, len(mt) - 1))
-            if j > 0 and abs(mt[j - 1] - t) < abs(mt[j] - t):
-                j -= 1
-            cadence = None if np.isnan(cad[j]) else float(cad[j])
-            heading = float(np.interp(t, mt, hcum))
         ego.cadence = cadence
         ego.update_speed([it.closing_raw for it in items
                           if _speed_witness(it) and 0.0 <= it.closing_raw <= ego_cfg["speedMaxMps"]], t, ego_cfg)
@@ -2123,6 +2284,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             "lane": _lane_polygon(geo, lane_half, roles["dangerSteps"] * step_len),
             "ego": {"speedMps": _r(ego_speed, 2), "cadenceHz": _r(cadence, 2), "stepLengthM": round(step_len, 2),
                     "headingDeg": _r(heading, 1),
+                    "depthAnchor": _r(a_now, 4),
+                    "depthScale": (None if depth_maps is None or ds is None else _r(ds * a_now, 4) if relative else ds),
+                    "depthScaleSource": "none" if depth_maps is None or ds is None else c_source,
                     "scale": round(scale.value, 3), "scaleSource": "gait" if scale.from_gait else "prior" if scale.k is not None else "none",
                     "estimated": {"speed": speed_known, "cadence": cadence is not None,
                                   "stepLength": False}},

@@ -247,7 +247,7 @@ async function loadRuns() {
   renderRuns();
 }
 
-const DEPTH_LABELS = { "da3-metric-large": "DA3 Metric Large" };
+const DEPTH_LABELS = { "da3-small": "DA3 Small", "da3-base": "DA3 Base" };
 
 /** The depth model of a run, or null (older runs have no field; "none" counts as none). */
 function runDepth(r) {
@@ -687,7 +687,7 @@ async function init() {
     if (dm.length) {
       for (const d of dm) $("#depthSel").add(new Option(d === "none" ? "Off" : DEPTH_LABELS[d] ?? d, d));
       if (!dm.includes("none")) $("#depthSel").add(new Option("Off", "none"), 0);
-      $("#depthSel").value = dm.includes("da3-metric-large") ? "da3-metric-large" : "none";   // depth on by default (v26.1.10)
+      $("#depthSel").value = dm.includes("da3-small") ? "da3-small" : "none";   // depth on by default (v26.1.10)
       $("#depthLbl").hidden = false;
     }
   } else $("#profileSel").add(new Option("default", "default"));

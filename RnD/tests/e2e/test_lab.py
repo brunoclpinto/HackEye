@@ -844,22 +844,23 @@ def test_depth_toggle_disabled_without_depth(page):
 
 def test_depth_run_toggle_and_image(page):
     """A short depth run: Analyse sends depth, the badge/list show it, the Depth toggle fetches depth PNGs (200)."""
-    if "da3-metric-large" not in _depth_models():
+    if "da3-small" not in _depth_models():
         pytest.skip("/api/models has no depthModels yet (restart the lab container)")
     open_lab(page, SHORT_REC)
     labels = page.eval_on_selector_all("#depthSel option", "os => os.map(o => [o.value, o.textContent])")
-    assert labels[0] == ["none", "Off"] and ["da3-metric-large", "DA3 Metric Large"] in labels
-    assert page.input_value("#depthSel") == "da3-metric-large"   # depth on by default (v26.1.10)
+    assert labels[0] == ["none", "Off"] and ["da3-small", "DA3 Small"] in labels and ["da3-base", "DA3 Base"] in labels
+    assert not any(v == "da3-metric-large" for v, _ in labels)
+    assert page.input_value("#depthSel") == "da3-small"   # depth on by default (v26.1.10)
     known = {r["id"] for r in api("/api/runs")}
     page.fill("#rangeStart", "0")
     page.fill("#rangeEnd", "6")
-    page.select_option("#depthSel", "da3-metric-large")
+    page.select_option("#depthSel", "da3-small")
     page.click("#analyseBtn")
     page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('depth')", timeout=300_000)
     run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
     try:
         run = api(f"/api/runs/{run_id}")
-        assert run["request"].get("depth") == "da3-metric-large" or run.get("depth") == "da3-metric-large"
+        assert run["request"].get("depth") == "da3-small" or run.get("depth") == "da3-small"
         assert "depth" in page.inner_text("#runList")
         assert page.is_enabled("#depthChk")
         page.uncheck("#depthChk") if page.is_checked("#depthChk") else None
@@ -870,6 +871,6 @@ def test_depth_run_toggle_and_image(page):
         # Loading another (non-depth) run disables the toggle again; reloading this one selects its depth model.
         page.reload()
         page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('run ')")
-        assert page.input_value("#depthSel") == "da3-metric-large"
+        assert page.input_value("#depthSel") == "da3-small"
     finally:
         _rm_run(run_id)

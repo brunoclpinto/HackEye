@@ -155,17 +155,20 @@ speed up as a collision gets closer).
 
 ## Depth model
 
-The Lab can estimate metric depth per frame with Depth Anything 3 Metric Large
-(Apache-2.0; `depth: "da3-metric-large"` in `POST /api/runs`). The weights are not
-in the repo; download them once to the shared models dir (mounted read-only in
-the containers as `/base-models`, override with `HACKEYE_DEPTH_MODEL_DIR`):
+The Lab can estimate per-frame depth with Depth Anything 3 **Small** or **Base**
+(Apache-2.0, "Any-view" series; `depth: "da3-small"` / `"da3-base"` in `POST /api/runs`).
+Only mobile-viable sizes are offered; DA3 Metric Large was removed from the Lab (its
+weights may stay on disk; runs made with it still load and are treated as metric).
+Single-image output is **relative** depth (positive, larger = farther, unknown global
+scale), stored in `depth.npz` with `units = "relative"`; the collision pass calibrates the
+scale from the walker's gait. The weights are not in the repo; download them once to the
+shared models dir (mounted read-only in the containers as `/base-models`, parent dir
+overridable with `HACKEYE_DEPTH_MODEL_ROOT`):
 
 ```bash
-d=~/models/depth-anything/DA3METRIC-LARGE; mkdir -p $d && for f in config.json model.safetensors README.md; do curl -L -o $d/$f https://huggingface.co/depth-anything/DA3METRIC-LARGE/resolve/main/$f; done
+for v in SMALL BASE; do d=~/models/depth-anything/DA3-$v; mkdir -p $d && for f in config.json model.safetensors README.md; do curl -L -o $d/$f https://huggingface.co/depth-anything/DA3-$v/resolve/main/$f; done; done
 ```
 
 The package is pinned in the `Dockerfile` (installed `--no-deps`; see the comments
-there and in `requirements.txt`). Metric depth = `focal_px * net_output / 300`, with the
-focal computed from the recording's HFOV + projection settings at DA3's processed width.
-The model is loaded on the first run that asks for depth and released with the
+there and in `requirements.txt`). The model is loaded on the first run that asks for depth and released with the
 segmentation model when the worker goes idle.

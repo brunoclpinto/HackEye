@@ -300,7 +300,7 @@ Against review 3:
 - **Distance source** (`distanceSource`: ground / depth / fused): re-scored with "Re-run collision", without new inference. Tracking still matches on ground distances, and the gait calibration stays ground-based.
 - **Lab UI:** a Depth select, a Depth overlay (turbo, near = red), Lens and Distance settings, and labels showing `ground X m · depth Y m`.
 - **Fused mode dropped** (user decision after the A/B): "its either one or the other". `distanceSource` is `ground | depth`; a stored or requested `fused` is refused (422) or resolves to ground in the library.
-- **Defaults:** model `Yolo26m-sem-HackEye20261011.pt` (`HACKEYE_LAB_DEFAULT_MODEL`), resolution 736p, and — the user's decision after the A/B — **depth on and `distanceSource: depth`**. The API defaults for a missing `depth`/`profile` stay `none`/`default`.
+- **Defaults:** model `Yolo26m-sem-HackEye20261011.pt` (`HACKEYE_LAB_DEFAULT_MODEL`), resolution 736p. Depth with Metric Large was briefly the default distance source; it was revised in the follow-up below (Small/Base, opt-in, ground default). The API defaults for a missing `depth`/`profile` stay `none`/`default`.
 
 **Results** (4929 full, 20261011 @ 736p + depth, 72 ms/frame of which depth 45.5):
 
@@ -320,3 +320,30 @@ Against review 3:
 - **Portrait recordings:** their depth maps are stretched to 120×68.
 - **Validation:** fewer calls is not yet validated: the next review is the baseline.
 - **Fixture matching:** the regression fixtures match clocks with a ±2-quarter tolerance (fisheye bearings shift).
+
+### v26.1.10 follow-up — mobile-sized depth: DA3 Small / Base (same version, no wipe)
+**Request:** run DA3 Small and Base, the mobile-viable sizes; there is "no gain in testing large if it won't be a good match for mobile". Decisions: remove Metric Large from the Lab (weights kept in `~/models`), make Small the default depth model, and use a gait-calibrated scale.
+
+**Finding: relative depth.** Small and Base are DA3 "any-view" models (Apache-2.0) and output **relative z-depth**. Against Metric Large on the same 4929 frames:
+- **Within a frame:** they match up to one scale with ~4% error, so the shape is good.
+- **Across frames:** that scale drifts (median 7%, p90 ~20% per 1.7 s, range ~7.5–12 for Small).
+
+**Iterations** (scaled `depthM` against Large; frame-level error around the run's median level):
+
+| Scaling | Level vs Large | Drift median / p90 | Frames within ±25% |
+|---|---|---|---|
+| Run-level gait scale only (Small) | 0.55 | — (items: p10 0.13, p90 2.4) | 15% |
+| Per-frame ground anchor (estimated horizon) + gait level, Small | 0.77 | 12% / 33% | 38% |
+| … Base | 0.67 | 12% / 34% | 19% |
+| **Anchor on the fixed mount horizon** (user's idea), 0.4 s smoothing, Small | 0.74 | **9% / 26%** | 28% |
+| … Base | 0.68 | 11% / 29% | 17% |
+
+- **User's suggestion, adopted:** hold the horizon at its mid/mount row for the anchor. A fixed point is easy to stabilise in 2–3 frames, and it only loses consistency while turning, which is accepted. It cut the drift, so `distance.anchorHorizon: "fixed"` is the default.
+- **The remaining gap is the absolute level:** ~0.74× Large, about the same level as the plain ground geometry (≈0.69× Large). Either the gait level undershoots or Large overshoots; the pole check put Large's closing at 0.87× walking speed. Only a **ground-truth measurement** (a clip walking up to a tape-measured landmark) can settle it.
+- **Timing (5060 Ti):** depth takes Small 23 ms/frame and Base 32 ms/frame in the full runs (Large took 45.5). Base is no better than Small here.
+
+**Decision (user):** ship Small and Base as **opt-in** experiments. The distance default goes **back to ground**, and depth runs still default to Small, so the overlay and the A/B are one click away.
+
+**Next:** a small **metric** model for mobile. Depth Anything V2 Metric Outdoor Small (24.8M parameters) needs its license verified. UniDepth v2 is CC-BY-NC, so it is ruled out.
+
+**Lab state:** the Small run `95d1beea0684`, the Base run `33b0702b8c81` and the Large reference `5b1d10dd5b3d` are kept for comparison.

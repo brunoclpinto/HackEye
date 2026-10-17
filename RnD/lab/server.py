@@ -171,7 +171,7 @@ def _validated_settings(body: dict, config: dict) -> dict:
             "cameraHeightM": _opt_number(body, "cameraHeightM", 0.5, 2.5),
             "stepLengthM": _opt_number(body, "stepLengthM", 0.3, 2.0),
             "projection": _choice(body, "projection", PROJECTIONS, "auto"),
-            "distanceSource": _choice(body, "distanceSource", DISTANCE_SOURCES, "depth")}
+            "distanceSource": _choice(body, "distanceSource", DISTANCE_SOURCES, "ground")}
 
 
 def _settings_response(rec_id: str) -> dict:
@@ -395,8 +395,8 @@ def get_classes_png(run_id: str, index: int) -> Response:
     return Response(buf.tobytes(), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
 
-# --- metric depth maps (view-only) --------------------------------------------------------------------
-# depth.npz holds (N,68,120) float16 metres; one small LRU like the class grids.
+# --- depth maps (view-only) --------------------------------------------------------------------
+# depth.npz holds (N,68,120) float16 (metres for old runs, `units` = "relative" for DA3 Small/Base); one small LRU like the class grids.
 
 DEPTH_VIS_MIN_M, DEPTH_VIS_MAX_M = 0.5, 30.0
 _DEPTH_CACHE_RUNS = 2
@@ -404,7 +404,7 @@ _depth_cache: "OrderedDict[str, tuple]" = OrderedDict()   # run_id -> (mtime_ns,
 _depth_lock = threading.Lock()
 
 
-def _run_depth(run_id: str) -> np.ndarray:
+def _run_depth(run_id: str) -> tuple[np.ndarray, str]:
     _run(run_id)
     path = analysis.run_dir(run_id) / "depth.npz"
     try:
@@ -415,19 +415,30 @@ def _run_depth(run_id: str) -> np.ndarray:
         ent = _depth_cache.get(run_id)
         if ent is None or ent[0] != mtime:
             with np.load(path) as z:
-                ent = (mtime, z["depth"])
+                ent = (mtime, z["depth"], str(z["units"]) if "units" in z.files else "metric")
             _depth_cache[run_id] = ent
         _depth_cache.move_to_end(run_id)
         while len(_depth_cache) > _DEPTH_CACHE_RUNS:
             _depth_cache.popitem(last=False)
-        return ent[1]
+        return ent[1], ent[2]
 
 
-def depth_to_png(depth: np.ndarray) -> bytes:
-    """8-bit turbo PNG of a metric depth map: log scale over 0.5-30 m, near = warm (red), far = cool (blue)."""
-    lo, hi = math.log(DEPTH_VIS_MIN_M), math.log(DEPTH_VIS_MAX_M)
-    d = np.clip(np.nan_to_num(depth.astype(np.float32), nan=DEPTH_VIS_MAX_M, posinf=DEPTH_VIS_MAX_M),
-                DEPTH_VIS_MIN_M, DEPTH_VIS_MAX_M)
+def depth_to_png(depth: np.ndarray, units: str = "metric") -> bytes:
+    """8-bit turbo PNG of a depth map, log scale, near = warm (red), far = cool (blue).
+    Metric: fixed 0.5-30 m. Relative: this frame's 2nd-98th percentile (the scale is arbitrary)."""
+    d = depth.astype(np.float32)
+    if units == "relative":
+        good = d[np.isfinite(d) & (d > 0)]
+        if good.size:
+            vmin, vmax = (float(v) for v in np.percentile(good, (2, 98)))
+        else:
+            vmin = vmax = 1.0
+        vmax = max(vmax, vmin * 1.01)
+        vmin = max(vmin, 1e-6)
+    else:
+        vmin, vmax = DEPTH_VIS_MIN_M, DEPTH_VIS_MAX_M
+    lo, hi = math.log(vmin), math.log(vmax)
+    d = np.clip(np.nan_to_num(d, nan=vmax, posinf=vmax, neginf=vmin), vmin, vmax)
     norm = (np.log(d) - lo) / (hi - lo)                       # 0 = near, 1 = far
     idx = np.round((1.0 - norm) * 255).astype(np.uint8)       # turbo: 255 = red, 0 = blue
     ok, buf = cv2.imencode(".png", cv2.applyColorMap(idx, cv2.COLORMAP_TURBO))
@@ -438,10 +449,10 @@ def depth_to_png(depth: np.ndarray) -> bytes:
 
 @app.get("/api/runs/{run_id}/depth/{index}.png")
 def get_depth_png(run_id: str, index: int) -> Response:
-    depth = _run_depth(run_id)
+    depth, units = _run_depth(run_id)
     if index < 0 or index >= len(depth):
         raise HTTPException(404, "No such frame")
-    return Response(depth_to_png(depth[index]), media_type="image/png",
+    return Response(depth_to_png(depth[index], units), media_type="image/png",
                     headers={"Cache-Control": "max-age=86400"})
 
 
