@@ -1,0 +1,27 @@
+{
+  "version": "v26.2-spike",
+  "cellM": 0.10,
+  "windowM": 64.0,
+  "snapshot": {"size": 200, "originCol": 100, "originRow": 180},
+  "halfLifeSeconds": 6.0,
+  "weightFloor": 0.25,
+  "confFullWeight": 3.0,
+  "rangeWeightM": 8.0,
+  "minForwardM": 0.4,
+  "maxRangeM": 20.0,
+  "lateralModel": "collision",
+  "groundScale": "auto",
+  "objectDistance": "depth",
+  "objectDepthRowsAbove": 0,
+  "objectVoteGain": 2.0,
+  "classes": {
+    "surface": ["flat bike-lane", "crosswalk", "flat driveway", "parking", "flat pedestrian-area", "flat rail-track", "flat road",
+                "flat road-shoulder", "flat service-lane", "flat sidewalk", "flat traffic-island", "curb", "lane-line-dashed",
+                "continuous solid", "marking-other", "discrete stop-line", "symbol bicycle", "terrain", "utility-cover",
+                "object pothole", "void ground", "nature water", "nature snow"],
+    "object": ["pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign", "sidewalk-obstacle", "barrier",
+               "barrier fence", "barrier guard-rail", "divider", "barrier wall", "nature vegetation", "building",
+               "structure bridge", "structure tunnel"],
+    "mover": ["person", "rider", "animal", "vehicle"]
+  }
+}

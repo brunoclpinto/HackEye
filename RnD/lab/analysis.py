@@ -894,3 +894,35 @@ def collision_pass(run_id: str) -> dict | None:
     _update_run(run_id, **fields)
     _log(f"run {run_id}: collision pass {elapsed:.2f}s")
     return {"version": config["version"], "elapsedSeconds": elapsed}
+
+
+def worldmap_pass(run_id: str) -> dict:
+    """(Re)build worldmap.npz (v26.2 step 1 spike) from grids.npz, hazards.json (the horizon, ego block and calibration the
+    collision pass stored) and depth.npz. Pure numpy; never touches the GPU queue or hazards.json / events.json.
+    Raises FileNotFoundError when grids.npz or hazards.json is missing."""
+    import collision
+    import worldmap
+
+    out = run_dir(run_id)
+    for name in ("grids.npz", "hazards.json"):
+        if not (out / name).exists():
+            raise FileNotFoundError(name)
+    doc = get_run(run_id)
+    with np.load(out / "grids.npz") as z:
+        grids, times = z["grids"], z["t"]
+    hazards = json.loads((out / "hazards.json").read_text())
+    depth = None
+    if (out / "depth.npz").exists():
+        with np.load(out / "depth.npz") as z:
+            depth = {"t": z["t"], "depth": z["depth"]}
+    cfg = worldmap.load_config()
+    t0 = time.perf_counter()
+    arrays = worldmap.build(grids, times, doc["classNames"], hazards, collision.load_config(), cfg, depth)
+    elapsed = round(time.perf_counter() - t0, 3)
+    tmp = out / "worldmap.tmp.npz"
+    np.savez_compressed(tmp, **arrays)
+    os.replace(tmp, out / "worldmap.npz")
+    _log(f"run {run_id}: worldmap pass {elapsed:.2f}s")
+    ms = arrays["ms"]
+    return {"version": cfg["version"], "elapsedSeconds": elapsed, "frames": int(len(ms)),
+            "msMean": round(float(ms.mean()), 2), "msP95": round(float(np.percentile(ms, 95)), 2)}

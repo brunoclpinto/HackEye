@@ -824,3 +824,38 @@ The user asked for a tone tuner in the middle section (pitch low ↔ high, repea
 - **Tests.** Unit **566 passed, 6 skipped** (557 + 9; new `tests/test_collision_v26116_lanepart.py`: config + hazard field, plain side wall → no lane part, L-shaped building → side-wall context + lane-part danger + beeps (synthetic, with a pole as speed witness), the base-cell extra item and its absence for a plain wall / a face that is a lane hit by itself / config off, review 8: "building at 12" at 9.9–12.0 s, center beeps 10–17 s, lane-part track ids ≥ 1000000, at most 3 lane-part danger tracks). The golden hash of `chest0004_review7` in `test_orientation.py` is re-pinned (the 10.9 s building: `83568a1d…` → `85e11f9c…`). No Lab UI / JS change, no browser E2E.
 
 **Δ / open items.** (1) The phrase comes at 11.83 s, not 10–11 s: on the depth distances the building is farther than 10 steps until 11.6 s. (2) Beeps are 15.83–16.7 s (5→4 steps), not 14.5–16.2 s. (3) Walls / fences are not covered (item 5); a lane part of a wall that is also a main lane danger arrives 0.3 s earlier and can displace a feature phrase by the 1.0 s priority gap — decide with the user's look at the review-5 39 s and 51 s overlay (the `lanePart` field is in the hazards for the overlay). (4) The 0.3 m/s closing and 1 s age gates make a lane part silent for its first second and while the ego speed is unknown (start of a run). (5) Apple/ untouched.
+
+
+## v26.2 step 1 — world map spike (plan [`plans/v26.2-spike-worldmap.md`](plans/v26.2-spike-worldmap.md); Lab only, no version bump, no Lab wipe, collision rules untouched)
+
+**Question.** Is a local, ego-centric bird's-eye map fused over time from what a run already stores cheap enough, consistent enough, and is our pose (cadence x step length along the optical-flow heading) good enough for it, or is visual odometry needed first?
+
+**What was built** (`src/worldmap.py`, `common/config/worldmap.json`, `POST/GET /api/runs/{id}/worldmap`, `worldmap/{i}.png`, `worldmap/pose.json`; CONTRACTS §8.1; `tools/worldmap_metrics.py`, `tools/worldmap_render.py`; `tests/test_worldmap.py`). Inputs only `grids.npz`, `depth.npz` and the horizon / ego block / calibration stored in `hazards.json` (so the map uses exactly the calibration the hazards used; `collision.resolve_settings` is not re-run). Reused from `collision.py` without change: `focal_px`, the `ground_distance_m` / `lateral_m` formulas (inverted), `_WorldMemory.advance` for the pose, `load_config`.
+- **Surfaces** by inverse ground-plane sampling (each map cell looks up the pixel that sees it: no holes, vectorised); camera height x 1.0 when the distance source is depth (the plane anchor already makes depth and ground agree), the gait scale otherwise.
+- **Objects** only at their base (lowest pixel of each vertical run), at depth x `depthScale` (what `distanceM` uses) or the row's ground distance without depth; upper pixels are not projected. Movers are never mapped.
+- **Fusion:** 64 m world window of 0.10 m cells, range-weighted votes with a 6 s half-life (lazy decay: no per-frame cost), floor 0.25, object votes x 2 (a wall base is one thin line among many surface cells; at x 1 a 0.3 m wall across the path was out-voted by the sidewalk around it in the synthetic test).
+- **Snapshot** 200 x 200 heading-up, user at (col 100, row 180); `classes` + `conf` + `pose` + `ms` in `worldmap.npz`.
+
+**Metrics, run `116731b3e5c2`** (Chest-center-0004, 0-155 s, 930 frames, DA2 depth, fisheye 118 deg, depth distances; `hazards.json` / `events.json` sha256 identical before and after the pass):
+
+| Metric | Value |
+|---|---|
+| Cost per frame (observation + fusion + snapshot, single-threaded numpy, Ryzen, CPU) | mean **4.9 ms**, p95 5.7 ms, max 13.8 ms (whole run 4.7 s) |
+| Wall along the right, 10-16 s, one frame (robust line fit, RMS perpendicular) | 0.16 m (all points 0.30 m mean, p90 0.38) |
+| same, the base points of the last 1 s / 2 s / 3 s / 6 s pooled in the world frame by the pose | 0.23 / 0.26 / 0.32 / 0.39 m |
+| same, the fused map at 16 s (all points / worst 10 % dropped) | 0.53 / 0.39 m |
+| Wall base source: depth vs ground ray of the contact row (per-frame RMS) | 0.30 m vs 0.49 m: depth is better; the lens-model lateral (`lateralModel: lens`) is slightly worse than the collision pass's rectilinear lateral (0.34 vs 0.30), so the default stays `collision` |
+| Poles / lights / signs seen >= 3 s (40 tracks): std of world position over the life | median 0.80 m, p90 2.5 m |
+| ...of which inside 1 s windows (= measurement noise) | median 0.34 m |
+| ...spread by track life 3-5 s / 5-8 s / > 8 s | 0.64 / 0.63 / 1.56 m (the > 8 s ones are first seen farther: 12 m vs 8 m) |
+| Drift proxy: same pole first vs last fifth of its life | median 1.0 m, p90 3.1 m (first seen at 7.9 m median) |
+| All static tracks (168) | spread median 2.2 m, first-vs-last 2.8 m (walls / vegetation: a track is a whole component, its contact point slides) |
+| Fused vs current-frame class on surface cells | 24 % disagree (rows are 0.3-2.5 m deep at 6-18 m; class flips at the far edge) |
+| Pose | path 171 m (155 s, 20 s standing), max step 0.41 m / 2.5 m/s (the known noisy cadence speed), end (86.6, 98.3) m |
+| 10.9 s extrusion: building cells in the +-0.6 m corridor ahead (0-8 m) | 11 s 67 cells, nearest 5.3 m; 12 s 123 / 4.7 m; 13 s 241 / 4.5 m; 14 s 256 / 3.4 m; 15 s 246 / 2.7 m; 16 s 211 / 1.9 m: **yes**, the section that juts into the path is a solid cluster in the corridor from 11 s on, approaching at walking pace |
+
+**Verdict (decision gate).** Cost is not an issue (about 5 ms/frame vs 932 ms/frame for the analysis). Pose is **good enough for step 2 as a short-memory map (about 6-10 s, about 10 m)**: a wall pooled over 6 s of walking (7-8 m) blurs by about 0.2-0.25 m beyond a single frame, and the pole spread does not grow with life (0.64 m for 3-5 s tracks, 0.63 m for 5-8 s), i.e. the error is dominated by the depth range error at 8+ m (0.34 m noise inside 1 s, 1 m first-vs-last at 8 m), not by the pose. Visual odometry is not needed first. What this spike does **not** show: drift over minutes (no loop or surveyed reference on this footage), so the map must keep decaying (half-life 6 s) and must not become a persistent global map without a loop check; and the 24 % far-edge class disagreement means step 2 should read the map near the user (within about 10 m) and use `conf`.
+
+**Deviations / open items.** (1) Settings are read from the run's `hazards.json` instead of re-running `collision.resolve_settings` (same numbers, one source of truth; a run needs its collision pass first). (2) `objectVoteGain` 2.0 is an addition to the plan's fusion (reason above). (3) The wall metric fits the building/barrier-wall base points in the ego region 0-8 m ahead, 1-8 m right: it includes the scaffolded section and door recesses, so 0.16 m per frame is an upper bound on pure measurement noise. (4) No Chest-0002 run: analyses occupy the Lab worker on CPU while the GPU trains; one needs the user's OK. (5) The PNG default is RGBA with binary alpha (a canvas premultiplies, so class ids under partial alpha would be corrupted); confidence is `?alpha=conf` (display only) or `worldmap.npz`. (6) The browser panel is W2.
+
+**Tests:** unit **573 passed, 6 skipped** (566 + 7 new in `tests/test_worldmap.py`: straight wall + corridor face, a pole stays in one place, a mover is not mapped, stationary pose does not drift, pose = `_WorldMemory`, vote decay / floor, endpoints). Collision goldens untouched.

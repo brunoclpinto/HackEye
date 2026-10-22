@@ -330,6 +330,90 @@ def rerun_collision(run_id: str) -> dict:
             "hazards": f"/api/runs/{run_id}/hazards.json", "events": f"/api/runs/{run_id}/events.json"}
 
 
+# --- world map (v26.2 step 1 spike; CONTRACTS 8.1) ---------------------------------------------------------------
+# worldmap.npz: classes (N,200,200) uint8 (255 = unknown), conf (N,200,200) uint8, t, pose (N,3), cellM, origin, ms.
+# Built from stored files only (pure numpy, synchronous like the collision pass; never the GPU queue).
+
+_WM_CACHE_RUNS = 1
+_wm_cache: "OrderedDict[str, tuple]" = OrderedDict()      # run_id -> (mtime_ns, arrays)
+_wm_lock = threading.Lock()
+
+
+def _run_worldmap(run_id: str) -> dict:
+    run = _run(run_id)
+    if run["status"] != "done":
+        raise HTTPException(409, f"Run is {run['status']}, not done")
+    path = analysis.run_dir(run_id) / "worldmap.npz"
+    try:
+        mtime = path.stat().st_mtime_ns
+    except FileNotFoundError:
+        raise HTTPException(404, "worldmap.npz not available (POST /api/runs/{id}/worldmap builds it)") from None
+    with _wm_lock:
+        ent = _wm_cache.get(run_id)
+        if ent is None or ent[0] != mtime:
+            with np.load(path) as z:
+                ent = (mtime, {k: z[k] for k in z.files})
+            _wm_cache[run_id] = ent
+        _wm_cache.move_to_end(run_id)
+        while len(_wm_cache) > _WM_CACHE_RUNS:
+            _wm_cache.popitem(last=False)
+        return ent[1]
+
+
+@app.post("/api/runs/{run_id}/worldmap")
+def build_worldmap(run_id: str) -> dict:
+    run = _run(run_id)
+    if run["status"] != "done":
+        raise HTTPException(409, f"Run is {run['status']}, not done")
+    _collision()
+    try:
+        result = analysis.worldmap_pass(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"{exc} not available (a worldmap needs grids.npz and hazards.json)") from None
+    return {**result, "worldmap": f"/api/runs/{run_id}/worldmap"}
+
+
+@app.get("/api/runs/{run_id}/worldmap")
+def get_worldmap(run_id: str) -> dict:
+    _run(run_id)
+    path = analysis.run_dir(run_id) / "worldmap.npz"
+    if not path.exists():
+        return {"exists": False}
+    wm = _run_worldmap(run_id)
+    n, h, w = wm["classes"].shape
+    ms = wm["ms"]
+    return {"exists": True, "frames": int(n), "cellM": float(wm["cellM"]), "origin": [int(v) for v in wm["origin"]],
+            "width": int(w), "height": int(h), "msMean": round(float(ms.mean()), 2),
+            "msP95": round(float(np.percentile(ms, 95)), 2)}
+
+
+@app.get("/api/runs/{run_id}/worldmap/pose.json")
+def get_worldmap_pose(run_id: str) -> dict:
+    wm = _run_worldmap(run_id)
+    return {"t": [round(float(v), 4) for v in wm["t"]],
+            "pose": [[round(float(a), 3) for a in p] for p in wm["pose"]]}
+
+
+@app.get("/api/runs/{run_id}/worldmap/{index}.png")
+def get_worldmap_png(run_id: str, index: int, alpha: str = "binary") -> Response:
+    """Snapshot of frame ``index``. Default: RGBA, R = G = B = class id (as classes.png, read the red channel), alpha 255
+    where the cell is known and 0 where unknown. ``alpha=conf``: alpha = confidence (0..255; browsers premultiply, so
+    the class id is only exact where alpha is 255). ``alpha=gray``: single-channel classes (255 = unknown)."""
+    wm = _run_worldmap(run_id)
+    if index < 0 or index >= len(wm["classes"]):
+        raise HTTPException(404, "No such frame")
+    cls = np.ascontiguousarray(wm["classes"][index], dtype=np.uint8)
+    if alpha == "gray":
+        img = cls
+    else:
+        a = np.ascontiguousarray(wm["conf"][index], dtype=np.uint8) if alpha == "conf" else np.where(cls != 255, 255, 0).astype(np.uint8)
+        img = cv2.merge([cls, cls, cls, a])                 # cv2 writes BGRA; B = G = R = class id
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise HTTPException(500, "PNG encode failed")
+    return Response(buf.tobytes(), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
 # --- windowed hazards (CONTRACTS 12.1) ----------------------------------------
 # A full-length run's hazards.json is ~120 MB: parse it once per run, keep an LRU of 2 runs,
 # and serve slices. The cache key includes the file's mtime/size, so a collision re-run
