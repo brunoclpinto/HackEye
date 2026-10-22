@@ -11,6 +11,16 @@ const UNKNOWN = 255;
 const CORRIDOR_HALF_M = 0.6, CORRIDOR_STEPS = 10, RING_EVERY = 5, DEFAULT_STEP_M = 0.7;
 const MAX_FETCH_HZ = 6, CACHE = 24, STALE_S = 1.0;
 
+/** Quarter-hour clock index / spoken text, same rules as collision.py clock_quarter / clock_text (bearing 0 = 12, + = right). */
+function clockQuarter(bearing) {
+  const v = bearing / 7.5, q = Math.floor(Math.abs(v) + 0.5) * (v < 0 ? -1 : 1);
+  return Math.max(-12, Math.min(12, q));
+}
+function clockText(q) {
+  const m = (720 + 15 * q) % 720, hour = Math.floor(m / 60) || 12, min = m % 60;
+  return min === 0 ? `${hour}` : `${hour}:${String(min).padStart(2, "0")}`;
+}
+
 export class WorldMapPanel {
   /** `getStyle` = () => MaskStyle | null; `getFrames` = () => windowed hazards frames; `isPlaying` = () => bool. */
   constructor({ getStyle, getFrames, isPlaying }) {
@@ -23,7 +33,21 @@ export class WorldMapPanel {
     // The canvas follows the layout (CSS size x devicePixelRatio): repaint when its box changes.
     new ResizeObserver(() => { this.sig = ""; this.paintIfNeeded(); }).observe(this.canvas);
     $("#wmBuild").addEventListener("click", () => this.build());
+    for (const ev of ["pointermove", "pointerdown"]) this.canvas.addEventListener(ev, (e) => this.readout(e));
+    this.canvas.addEventListener("pointerleave", () => { $("#wmReadout").textContent = ""; });
     this.paint();
+  }
+
+  /** Hover / tap readout: clock position, steps and metres of the pointed map point (heading-up, user at 100/180, 0.1 m per cell). */
+  readout(e) {
+    const r = this.canvas.getBoundingClientRect();
+    if (!r.width) return;
+    const col = (e.clientX - r.left) / r.width * SIZE, row = (e.clientY - r.top) / r.height * SIZE;
+    const ahead = (ORIGIN_ROW + 0.5 - row) * CELL_M, right = (col - ORIGIN_COL - 0.5) * CELL_M;
+    const dist = Math.hypot(ahead, right), bearing = Math.atan2(right, ahead) * 180 / Math.PI;
+    const step = this.stepM || DEFAULT_STEP_M;
+    const clock = ahead < 0 ? "behind" : clockText(clockQuarter(bearing));
+    $("#wmReadout").textContent = `${clock} · ${(dist / step).toFixed(1)} st · ${dist.toFixed(1)} m`;
   }
 
   reset() {
@@ -201,12 +225,47 @@ export class WorldMapPanel {
     const stepPx = step / CELL_M * s;
     const fs = Math.max(10, Math.round(W / 34));
     ctx.font = `${fs}px sans-serif`;
-    // range rings every 5 steps
-    ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,255,255,0.28)"; ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.textAlign = "center";
-    for (let n = RING_EVERY; n * stepPx < uy + 1; n += RING_EVERY) {
-      ctx.beginPath(); ctx.arc(ux, uy, n * stepPx, Math.PI * 1.02, Math.PI * 1.98); ctx.stroke();
-      if (uy - n * stepPx > fs) ctx.fillText(`${n} st`, ux + fs * 1.6, uy - n * stepPx - 3);
+    this.stepM = step;
+    // clock spokes (hours full length to the canvas edge, quarter hours to 10 steps), faint so the map colours stay readable
+    const dirs = (b) => [Math.sin(b * Math.PI / 180), -Math.cos(b * Math.PI / 180)];
+    const edge = (b) => {
+      const [dx, dy] = dirs(b);
+      let t = Infinity;
+      if (dx > 1e-6) t = Math.min(t, (W - ux) / dx); else if (dx < -1e-6) t = Math.min(t, ux / -dx);
+      if (dy < -1e-6) t = Math.min(t, uy / -dy);
+      return t;
+    };
+    ctx.lineWidth = Math.max(1, W / 400);
+    for (let q = -12; q <= 12; q++) {
+      const hour = q % 4 === 0, b = q * 7.5, [dx, dy] = dirs(b);
+      const len = hour ? edge(b) : Math.min(edge(b), CORRIDOR_STEPS * stepPx);
+      ctx.strokeStyle = hour ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.08)";
+      ctx.beginPath(); ctx.moveTo(ux, uy); ctx.lineTo(ux + dx * len, uy + dy * len); ctx.stroke();
     }
+    // rings: every step to 10 steps (faint), every 5 steps beyond; the 5-step rings are stronger and labelled; ticks at the quarter spokes
+    const tick = Math.max(2, W / 180);
+    ctx.textAlign = "center";
+    for (let n = 1; n * stepPx < uy + 1; n += n < CORRIDOR_STEPS ? 1 : RING_EVERY) {
+      const r = n * stepPx, major = n % RING_EVERY === 0;
+      ctx.lineWidth = 1; ctx.strokeStyle = major ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.10)";
+      ctx.beginPath(); ctx.arc(ux, uy, r, Math.PI, 2 * Math.PI); ctx.stroke();
+      ctx.strokeStyle = major ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.22)";
+      ctx.beginPath();
+      for (let q = -12; q <= 12; q++) {
+        const [dx, dy] = dirs(q * 7.5), t = q % 4 === 0 ? tick * 1.6 : tick;
+        ctx.moveTo(ux + dx * (r - t), uy + dy * (r - t)); ctx.lineTo(ux + dx * (r + t), uy + dy * (r + t));
+      }
+      ctx.stroke();
+      // "N st" label beside the 12 o'clock spoke; skipped near the top edge where the "12" label sits
+      if (major && uy - r > fs * 2.4) { ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.fillText(`${n} st`, ux + fs * 1.6, uy - r - 3); }
+    }
+    // hour labels once, at the outer end of each hour spoke, inside the canvas
+    ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.textBaseline = "middle";
+    for (let q = -12; q <= 12; q += 4) {
+      const b = q * 7.5, [dx, dy] = dirs(b), r = edge(b) - fs * 0.9;
+      ctx.fillText(String(clockText(q)), ux + dx * r, uy + dy * r);
+    }
+    ctx.textBaseline = "alphabetic";
     // corridor +-0.6 m to 10 steps
     const hw = CORRIDOR_HALF_M / CELL_M * s, len = CORRIDOR_STEPS * stepPx;
     ctx.fillStyle = "rgba(255,45,45,0.12)"; ctx.fillRect(ux - hw, uy - len, 2 * hw, len);

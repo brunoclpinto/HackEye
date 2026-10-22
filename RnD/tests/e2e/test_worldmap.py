@@ -30,6 +30,14 @@ def test_world_map_panel_builds_and_draws(page):
     assert snaps, "no snapshot requested"
     assert page.evaluate("async (u) => (await fetch(u)).status", snaps[-1].replace(BASE, "")) == 200
     assert page.evaluate(DRAWN) > 0.05, "the canvas is (nearly) empty"
+    # hover readout (clock markers): 12 o'clock, 5 steps ahead of the user marker
+    box = page.evaluate("() => { const r = document.querySelector('#wmCanvas').getBoundingClientRect(); return {l: r.left, t: r.top, w: r.width, h: r.height}; }")
+    page.mouse.move(box["l"] + box["w"] * 0.5, box["t"] + box["h"] * (180 - 35) / 200)
+    page.wait_for_function("() => /^\\d{1,2}(:\\d\\d)? · [\\d.]+ st · [\\d.]+ m$/.test(document.querySelector('#wmReadout').textContent)")
+    txt = page.inner_text("#wmReadout")
+    assert txt.startswith("12 · ") or txt.startswith("12:15 · ") or txt.startswith("11:45 · "), txt
+    page.mouse.move(box["l"] + box["w"] * 0.8, box["t"] + box["h"] * 0.4)   # ahead-right: a later hour
+    page.wait_for_function("() => !document.querySelector('#wmReadout').textContent.startsWith('12')")
     assert not page.errors, page.errors
 
 
