@@ -134,6 +134,17 @@
       </fieldset>
     </div>
 
+    <details id="secWorldmap" class="worldmap">
+      <summary>World map</summary>
+      <p class="hint">Bird's-eye, heading-up: you are the white marker, ahead is up. Rings every 5 steps, red box = the 0.6 m corridor to 10 steps; dots are the frame's items (diamond = mover, big ring = danger).</p>
+      <div class="wm-bar">
+        <button type="button" id="wmBuild" hidden>Build map</button>
+        <span id="wmInfo" class="hint" aria-live="polite"></span>
+      </div>
+      <canvas id="wmCanvas" class="wm-canvas" width="400" height="400" aria-label="World map around the user"></canvas>
+      <div id="wmStatus" class="hint mono"></div>
+    </details>
+
     <details open id="secSounds" class="sounds">
       <summary>Sounds</summary>
       <table class="snd-table" aria-label="Sound tuner">

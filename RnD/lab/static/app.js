@@ -9,6 +9,7 @@ import { HazardWindow } from "./js/hazards.js";
 import { ClassesPanel } from "./js/classes.js";
 import { EtaTracker, runStartMs } from "./js/eta.js";
 import { SoundsPanel } from "./js/sounds.js";
+import { WorldMapPanel } from "./js/worldmap.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 const video = $("#video");
@@ -27,6 +28,7 @@ const classesPanel = new ClassesPanel(overlay);
 const audio = new AudioEngine(video);
 window.__labAudio = audio;                                  // E2E hook (CONTRACTS 13): the tests set / clear the sound profile on it
 const sounds = new SoundsPanel({ audio, rerun: () => rerunCollision(), hasRun: () => !!S.run });
+const worldmap = new WorldMapPanel({ getStyle: () => overlay.style, getFrames: () => overlay.frames, isPlaying: () => !video.paused });
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
 const reviews = new Reviews({
   seek: (t) => seekTo(t),
@@ -490,6 +492,7 @@ function unloadRun() {
   hazards.setRun(null);
   overlay.setRun(null);
   classesPanel.setRun(null);
+  worldmap.setRun(null);
   audio.setEvents([]);
   timeline.set(null, []);
   reviews.setRun(null, []);
@@ -510,6 +513,7 @@ async function loadRunData(run, links) {
   hazards.setRun(run);
   overlay.setRun(run);
   classesPanel.setRun(run);
+  worldmap.setRun(run);
   setDepthAvailable(!!runDepth(run));
   hazards.update(playheadForRun(run));
   audio.setEvents(S.events);
@@ -618,6 +622,7 @@ function updateTime(t) {
   timeline.setPlayhead(t);
   reviews.highlight(t);
   hazards.update(t);
+  worldmap.update(t);
 }
 let draggingSeek = false;
 
