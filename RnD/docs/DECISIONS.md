@@ -826,7 +826,9 @@ The user asked for a tone tuner in the middle section (pitch low ↔ high, repea
 **Δ / open items.** (1) The phrase comes at 11.83 s, not 10–11 s: on the depth distances the building is farther than 10 steps until 11.6 s. (2) Beeps are 15.83–16.7 s (5→4 steps), not 14.5–16.2 s. (3) Walls / fences are not covered (item 5); a lane part of a wall that is also a main lane danger arrives 0.3 s earlier and can displace a feature phrase by the 1.0 s priority gap — decide with the user's look at the review-5 39 s and 51 s overlay (the `lanePart` field is in the hazards for the overlay). (4) The 0.3 m/s closing and 1 s age gates make a lane part silent for its first second and while the ego speed is unknown (start of a run). (5) Apple/ untouched.
 
 
-## v26.2 step 1 — world map spike (plan [`plans/v26.2-spike-worldmap.md`](plans/v26.2-spike-worldmap.md); Lab only, no version bump, no Lab wipe, collision rules untouched)
+## v26.2.0 — world map spike + Lab layout (plan [`plans/v26.2.0.md`](plans/v26.2.0.md); roadmap step 1 of v26.2; Lab only, collision rules untouched, version bumped so the Lab wiped its runs)
+
+**Layout and overflow (user request, same version).** The world view sits next to the video (video left, map right, same height; speech/review panel stays in the right column; the left options and the other panels start below the video+map row). The map is always visible (no longer a collapsed panel). The Sounds table overflowed the phone (scrollWidth 650 at 390 px); it now scrolls inside its own wrapper. Details: plan v26.2.0 "Layout", CONTRACTS §9. The version bump wiped run 116731b3e5c2 (no reviews existed); it was re-created afterwards from its saved request.
 
 **Question.** Is a local, ego-centric bird's-eye map fused over time from what a run already stores cheap enough, consistent enough, and is our pose (cadence x step length along the optical-flow heading) good enough for it, or is visual odometry needed first?
 

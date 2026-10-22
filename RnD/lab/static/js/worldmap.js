@@ -10,7 +10,6 @@ const SIZE = 200, ORIGIN_COL = 100, ORIGIN_ROW = 180, CELL_M = 0.1;
 const UNKNOWN = 255;
 const CORRIDOR_HALF_M = 0.6, CORRIDOR_STEPS = 10, RING_EVERY = 5, DEFAULT_STEP_M = 0.7;
 const MAX_FETCH_HZ = 6, CACHE = 24, STALE_S = 1.0;
-const OPEN_KEY = "hackeye.lab.worldmap.open";
 
 export class WorldMapPanel {
   /** `getStyle` = () => MaskStyle | null; `getFrames` = () => windowed hazards frames; `isPlaying` = () => bool. */
@@ -20,13 +19,9 @@ export class WorldMapPanel {
     this.isPlaying = isPlaying;
     this.canvas = $("#wmCanvas");
     this.ctx = this.canvas.getContext("2d");
-    this.det = $("#secWorldmap");
     this.reset();
-    try { this.det.open = localStorage.getItem(OPEN_KEY) === "1"; } catch { /* storage blocked */ }
-    this.det.addEventListener("toggle", () => {
-      try { localStorage.setItem(OPEN_KEY, this.det.open ? "1" : "0"); } catch { /* storage blocked */ }
-      if (this.det.open) this.update(this.lastT);
-    });
+    // The canvas follows the layout (CSS size x devicePixelRatio): repaint when its box changes.
+    new ResizeObserver(() => { this.sig = ""; this.paintIfNeeded(); }).observe(this.canvas);
     $("#wmBuild").addEventListener("click", () => this.build());
     this.paint();
   }
@@ -110,7 +105,7 @@ export class WorldMapPanel {
   /** Playhead moved (called on every drawn video frame). */
   update(t) {
     if (Number.isFinite(t)) this.lastT = t;
-    if (!this.run || !this.meta?.exists || !this.det.open || !this.poseT.length) { this.paintIfNeeded(); return; }
+    if (!this.run || !this.meta?.exists || !this.poseT.length) { this.paintIfNeeded(); return; }
     const k = lastAtOrBefore(this.poseT, this.lastT, (x) => x);
     const inRange = k >= 0 && this.lastT - this.poseT[k] <= STALE_S + (this.poseT[k + 1] - this.poseT[k] || 0);
     this.k = inRange ? k : -1;
@@ -167,7 +162,7 @@ export class WorldMapPanel {
   paintIfNeeded() {
     const f = this.currentHazardFrame();
     const grid = this.k >= 0 ? this.cache.get(this.k) : null;
-    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}|${this.det.open}`;
+    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}`;
     if (sig === this.sig) return;
     this.sig = sig;
     this.paint(grid, f);
@@ -199,7 +194,7 @@ export class WorldMapPanel {
       ctx.drawImage(this.off, 0, 0, W, W);
     } else {
       ctx.fillStyle = "#6b7280"; ctx.font = `${Math.round(W / 28)}px sans-serif`; ctx.textAlign = "center";
-      ctx.fillText(this.run && this.meta?.exists ? (this.det.open ? "no snapshot at this time" : "") : "", W / 2, W / 2);
+      ctx.fillText(this.run && this.meta?.exists ? "no snapshot at this time" : "", W / 2, W / 2);
     }
     const ux = (ORIGIN_COL + 0.5) * s, uy = (ORIGIN_ROW + 0.5) * s;
     const step = frame?.ego?.stepLengthM > 0 ? frame.ego.stepLengthM : DEFAULT_STEP_M;

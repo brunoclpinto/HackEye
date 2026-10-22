@@ -24,7 +24,7 @@ ROLES = CONFIG["roles"]
 # --------------------------------------------------------------------------
 
 def test_the_v26112_numbers():
-    assert CONFIG["version"] == "v26.1.16"            # (the file keeps the v26.1.12 rules; the version is the current one)
+    assert CONFIG["version"] == "v26.2.0"            # (the file keeps the v26.1.12 rules; the version is the current one)
     assert ROLES["movingDangerSteps"] == ROLES["dangerSteps"] == 10
     assert CONFIG["tones"]["maxSteps"] == 5 and CONFIG["tones"]["bySteps"][0][0] == 5
     assert ROLES["approachingMps"] == 0.4 and ROLES["standingMps"] == 0.3 and ROLES["standingHoldSeconds"] == 1.0

@@ -15,6 +15,36 @@
 </header>
 
 <div class="layout">
+  <section id="viewer" aria-label="Video and world map">
+    <div id="viewerVideo">
+    <div id="stage">
+      <video id="video" playsinline webkit-playsinline preload="auto" muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="hud" class="mono" hidden></div>
+      <div id="stageMsg">Select a recording</div>
+    </div>
+
+    <div class="controls">
+      <button type="button" id="stepBack" title="Previous analysed frame (&larr;)">&#9664;&#9664;</button>
+      <button type="button" id="playBtn" class="primary" title="Play / pause (space)">&#9654;</button>
+      <button type="button" id="stepFwd" title="Next analysed frame (&rarr;)">&#9654;&#9654;</button>
+      <span id="timeLabel" class="mono">0:00.0 / 0:00</span>
+      <label class="inline">Speed
+        <select id="speedSel"></select>
+      </label>
+    </div>
+    <input id="seekBar" type="range" min="0" max="1" step="0.01" value="0" aria-label="Seek">
+    </div>
+    <section id="secWorldmap" class="worldmap" aria-label="World map">
+      <canvas id="wmCanvas" class="wm-canvas" width="400" height="400" aria-label="World map around the user" title="Bird's-eye, heading-up: you are the white marker, ahead is up. Rings every 5 steps, red box = the 0.6 m corridor to 10 steps; dots are the frame's items (diamond = mover, big ring = danger)."></canvas>
+      <div class="wm-bar">
+        <button type="button" id="wmBuild" hidden>Build map</button>
+        <span id="wmInfo" class="hint" aria-live="polite"></span>
+        <span id="wmStatus" class="hint mono"></span>
+      </div>
+    </section>
+  </section>
+
   <aside id="sidebar">
     <details open id="secLib">
       <summary>Recordings</summary>
@@ -84,24 +114,6 @@
   </aside>
 
   <main id="main">
-    <div id="stage">
-      <video id="video" playsinline webkit-playsinline preload="auto" muted></video>
-      <canvas id="overlay"></canvas>
-      <div id="hud" class="mono" hidden></div>
-      <div id="stageMsg">Select a recording</div>
-    </div>
-
-    <div class="controls">
-      <button type="button" id="stepBack" title="Previous analysed frame (&larr;)">&#9664;&#9664;</button>
-      <button type="button" id="playBtn" class="primary" title="Play / pause (space)">&#9654;</button>
-      <button type="button" id="stepFwd" title="Next analysed frame (&rarr;)">&#9654;&#9654;</button>
-      <span id="timeLabel" class="mono">0:00.0 / 0:00</span>
-      <label class="inline">Speed
-        <select id="speedSel"></select>
-      </label>
-    </div>
-    <input id="seekBar" type="range" min="0" max="1" step="0.01" value="0" aria-label="Seek">
-
     <div class="panels">
       <fieldset>
         <legend>Audio</legend>
@@ -134,23 +146,14 @@
       </fieldset>
     </div>
 
-    <details id="secWorldmap" class="worldmap">
-      <summary>World map</summary>
-      <p class="hint">Bird's-eye, heading-up: you are the white marker, ahead is up. Rings every 5 steps, red box = the 0.6 m corridor to 10 steps; dots are the frame's items (diamond = mover, big ring = danger).</p>
-      <div class="wm-bar">
-        <button type="button" id="wmBuild" hidden>Build map</button>
-        <span id="wmInfo" class="hint" aria-live="polite"></span>
-      </div>
-      <canvas id="wmCanvas" class="wm-canvas" width="400" height="400" aria-label="World map around the user"></canvas>
-      <div id="wmStatus" class="hint mono"></div>
-    </details>
-
     <details open id="secSounds" class="sounds">
       <summary>Sounds</summary>
+      <div class="snd-scroll">
       <table class="snd-table" aria-label="Sound tuner">
         <thead><tr><th>Sound</th><th>Pitch (low &harr; high)</th><th>Duration</th><th>Repeat</th><th></th></tr></thead>
         <tbody id="sndRows"></tbody>
       </table>
+      </div>
       <div class="snd-speech">
         <label class="inline" for="sndSpeech">Speech speed</label>
         <input id="sndSpeech" type="range" min="0.5" max="2" step="0.05" value="1" aria-label="Speech speed">

@@ -185,7 +185,8 @@ def test_horizon_unchanged_for_the_full_frame():
 # matched path: byte-identical
 # --------------------------------------------------------------------------
 
-GOLDEN_CHEST0004_REVIEW7 = "85e11f9cb5b81473646674908d32820c7f87a61f3a80c4779066efb515952da5"   # collision output of v26.1.16 (re-pinned there: new sound kinds, rules 6-9; was dbf69f1a... on v26.1.15; re-pinned again by the lane-part follow-up: the 10.9 s building, was 83568a1d...)
+GOLDEN_CHEST0004_REVIEW7 = "48833826f331fa10ce3b027e02132c36a1ee783f5f38991520d30304d5f80de3"   # collision output of v26.2.0 (re-pinned: only the version string changed, was 85e11f9c... on v26.1.16)
+# older: collision output of v26.1.16 (re-pinned there: new sound kinds, rules 6-9; was dbf69f1a... on v26.1.15; re-pinned again by the lane-part follow-up: the 10.9 s building, was 83568a1d...)
 
 
 def _fixture_output(window=None):
