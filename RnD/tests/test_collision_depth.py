@@ -44,6 +44,7 @@ def strip(doc: dict) -> dict:
     d = copy.deepcopy(doc)
     d.pop("distanceSource", None)
     for f in d["frames"]:
+        f.pop("corridor", None)               # v26.2.1: the map's nearest object in the corridor is placed with the depth when there is one
         f["ego"].pop("depthAnchor", None)
         f["ego"].pop("depthAnchorMode", None)
         for k in ("depthPitchDeg", "depthCameraHeightUnits", "depthGaitCheck"):

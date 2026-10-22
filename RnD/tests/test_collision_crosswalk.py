@@ -31,7 +31,7 @@ def _feed(tracker, fractions, stationary=False, t0=0.0, dt=DT):
 
 
 def test_the_crosswalk_numbers():
-    assert CONFIG["version"] == "v26.2.0"
+    assert CONFIG["version"] == "v26.2.1"
     assert (CW["enterFraction"], CW["enterSeconds"], CW["exitFraction"], CW["exitSeconds"]) == (0.3, 0.5, 0.15, 0.7)
     assert CW["enterFraction"] > CW["exitFraction"]                     # hysteresis
     assert CONFIG["surfaces"]["seedBox"] == [0.40, 0.90, 0.60, 1.00]    # the box the share is measured in (under the feet)

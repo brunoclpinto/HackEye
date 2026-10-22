@@ -185,7 +185,7 @@ def test_horizon_unchanged_for_the_full_frame():
 # matched path: byte-identical
 # --------------------------------------------------------------------------
 
-GOLDEN_CHEST0004_REVIEW7 = "48833826f331fa10ce3b027e02132c36a1ee783f5f38991520d30304d5f80de3"   # collision output of v26.2.0 (re-pinned: only the version string changed, was 85e11f9c... on v26.1.16)
+GOLDEN_CHEST0004_REVIEW7 = "0138457220cbcac81f7f185302b31cdeefac2ea519c558e55799575fe10125d2"   # collision output of v26.2.1 (re-pinned: the version string, the new hazards keys source / mapCells / corridor, and the building at 12 now judged on the map: 11.83 "in 10" -> 13.50 "in 8"; was 48833826... on v26.2.0)
 # older: collision output of v26.1.16 (re-pinned there: new sound kinds, rules 6-9; was dbf69f1a... on v26.1.15; re-pinned again by the lane-part follow-up: the 10.9 s building, was 83568a1d...)
 
 

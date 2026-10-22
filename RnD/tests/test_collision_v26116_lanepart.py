@@ -10,8 +10,20 @@ import numpy as np
 import pytest
 
 import collision as col
-from tests.test_collision import CONFIG, F, H, HC, HV, ID, NAMES, SPEED, W, base_grid, dist_at_row, motion, place, row_for, run
+import copy
+
+from tests.test_collision import CONFIG as _CONFIG, F, H, HC, HV, ID, NAMES, SPEED, W, base_grid, dist_at_row, motion, place, row_for, run as _run
 from tests.test_collision_regression import _run_windows
+
+# v26.2.1: these tests pin the v26.1.16 lane-part rule, which is the ``staticSource: image`` behaviour (the map replaces it by default)
+CONFIG = copy.deepcopy(_CONFIG)
+CONFIG["roles"]["staticSource"] = "image"
+
+
+def run(frames, **kw):
+    kw.setdefault("config", CONFIG)
+    return _run(frames, **kw)
+
 
 ROLES = CONFIG["roles"]
 FPS = 10.0
@@ -47,7 +59,7 @@ def _frames(face: bool, seconds=14.0, d0=22.0):
 
 def test_config_and_hazard_field():
     assert ROLES["laneBaseClasses"] == ["building"]
-    assert ROLES["laneBaseMinColumns"] >= 2 and CONFIG["version"] == "v26.2.0"
+    assert ROLES["laneBaseMinColumns"] >= 2 and CONFIG["version"] == "v26.2.1"
     it = col._Item(group="static", class_name="building", bbox=[0, 0, 1, 1], contact_y=0.6, distance_m=5.0, lateral_m=0.0, bearing=0.0, clock=12,
                    pan=0.0, area_frac=0.1, clipped=False, touches=True, lane_hit=True, along_path=False, lane_cover=0.5, lane_part=True)
     assert col._hazard_dict(it)["lanePart"] is True
@@ -129,7 +141,7 @@ def test_the_classes_and_the_minimum_columns_are_configurable():
 
 @pytest.fixture(scope="module")
 def review8():
-    return _run_windows("chest0004_review8")
+    return _run_windows("chest0004_review8", CONFIG)
 
 
 def test_review8_the_building_in_the_lane_at_12_is_announced_and_beeped(review8):

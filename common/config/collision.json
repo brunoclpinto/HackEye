@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.0",
+  "version": "v26.2.1",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -90,6 +90,10 @@
     "contextMinAreaFraction": 0.003,
     "featureMinLaneCover": 0.2,
     "alongPathRatio": 0.5,
+    "staticSource": "map",
+    "mapMinConf": 0.7, "mapFootprintRadiusM": 0.3, "mapCorridorMarginM": -0.3, "mapMinCells": 10,
+    "mapMinAgeSeconds": 0.5, "mapGapSeconds": 0.7, "mapMinClosingMps": 0.6,
+    "mapGhostMinConf": 0.3, "mapGhostSeconds": 2.0, "mapGhostNearM": 2.0,
     "laneBaseClasses": ["building"],
     "laneBaseMinColumns": 2, "laneBaseMinRowColumns": 4, "laneBaseMinConcentration": 0.42, "laneBaseMinClosingMps": 0.3, "laneBaseMinAgeSeconds": 1.0, "laneBaseHoldSeconds": 3.0,
     "minObstacleAreaM2": 0.08,

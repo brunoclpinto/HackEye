@@ -838,6 +838,11 @@ class _Item:
     depth_cells: tuple | None = None          # (rows, cols) the depth is read from instead of the component's lowest rows (lane part: its base)
     lane_part_weak: bool = False              # ...whose base is not flat: it only continues a lane part that was flat a moment ago (laneBaseHoldSeconds)
     lane_part: bool = False                   # the extra item of a wall / building whose ground base crosses the lane (v26.1.16 follow-up)
+    map_source: str = ""                      # "map": a static item judged on the fused world map (v26.2.1); "image": no map cells to read (its contact point); "": staticSource image
+    map_cells: int = 0                        # (map) cells of the item's family inside the walking corridor
+    map_world: tuple | None = None            # (map) world position of its nearest corridor cell (a ghost is followed from it)
+    image_dl: tuple | None = None             # (map, in the corridor) the image contact point's (distance, lateral, bearing, clock, clock_q, clock_text, pan) the map measurement replaced
+    ghost: bool = False                       # (map) no longer in the image (under the frame): kept alive by its map cells
 
     def __post_init__(self) -> None:
         if self.clock_q is None:
@@ -866,6 +871,8 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
     max_range = config["geometry"]["maxRangeM"]
     items: list[_Item] = []
     lane_base_classes = frozenset(config["roles"].get("laneBaseClasses", ()))
+    if config["roles"].get("staticSource", "image") == "map":
+        lane_base_classes = frozenset()           # v26.2.1: the corridor test of the map covers the lane part
     present = np.bincount(grid.ravel(), minlength=int(grid.max()) + 1)
     for group in ITEM_GROUPS:
         for cid in ids.items[group]:
@@ -1024,6 +1031,10 @@ class _Track:
     mstate: str | None = None                 # motion state with hysteresis: "still" | "approach" | "recede" | "side" | None (v26.1.12)
     prox_run: int = 0                         # consecutive analysed frames the item was a proximity item (v26.1.13 follow-up)
     context_seen: bool = False                # the track has been a context item (v26.1.16)
+    ghost_src: "_Item | None" = None          # a static danger that may be followed on in the map once the image loses it (v26.2.1)
+    ghost_t0: float | None = None             # since when it has been a ghost
+    map_hist: list = field(default_factory=list)   # (t, nearest corridor cell's distance m) of a building / wall section on the map
+    map_first: float | None = None            # since when the section has been on the map without a break
     still_t0: float | None = None             # since when |own along speed| < standingMps without a break (v26.1.12)
 
 
@@ -1966,7 +1977,8 @@ def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_
         # v26.1.11 (review 4, 39.0 s): a vehicle whose motion is not measured yet (a new track: a moving car re-detected in
         # fragments has no closing speed for ~0.75 s) is no static danger while we CAN measure motion; it waits
         unmeasured_mover = it.group == "moving" and it.moving is None and it.ego_known
-        if big_enough and it.lane_hit and not it.along_path and it.steps <= danger_steps and not unmeasured_mover:
+        in_lane = (it.lane_hit and not it.along_path) or it.map_cells > 0
+        if big_enough and in_lane and it.steps <= danger_steps and not unmeasured_mover:
             it.role, it.collision = "danger", True
         elif (it.touches and it.distance_m <= roles["contextMaxDistanceM"]
               and it.area_frac >= roles.get("contextMinAreaFraction", 0.0)
@@ -2807,12 +2819,220 @@ def _hazard_dict(it: _Item) -> dict:
             "urgency": it.urgency, "areaFrac": round(it.area_frac, 5), "collision": bool(it.collision),
             "latVelMps": _r(it.lat_vel, 2), "crossMps": _r(it.cross_mps, 2),
             **({"depthM": _r(it.depth_m, 2)} if it.depth_on else {}),
-            **({"lanePart": True} if it.lane_part else {})}
+            **({"lanePart": True} if it.lane_part else {}),
+            **({"source": it.map_source, "mapCells": it.map_cells} if it.group == "static" and it.map_source else {}),
+            **({"imageDistanceM": round(it.image_dl[0], 2), "imageLateralM": round(it.image_dl[1], 2)} if it.image_dl else {}),
+            **({"ghost": True} if it.ghost else {})}
 
 
 # --------------------------------------------------------------------------
 # Driver
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Static items on the fused world map (v26.2.1)
+# --------------------------------------------------------------------------
+
+class _StaticMap:
+    """The collision pass's online world map (``worldmap.WorldMap``, causal: this frame and the past) and what the static rules
+    read from it.
+
+    Per static item: its footprint = the map cells of its own ground-base pixels (the pixels the map projects: the lowest pixel of each
+    vertical run of the item, at its depth), grown by ``mapFootprintRadiusM``. The item's cells are the fused map's object cells of its
+    family (spoken label) on that footprint with a fused confidence >= ``mapMinConf`` (a cell seen in two frames, not a one-frame
+    blip). Those inside the walking corridor (|lateral| <= laneHalfWidthM, ahead > 0) make it a danger; the nearest one is the item's
+    distance, lateral, bearing and clock. A static danger that is clipped / leaves the bottom of the image is followed on in the map
+    (``ghost``): its cells are looked up again at the dead-reckoned position until they are passed or decayed."""
+
+    def __init__(self, wmod, grids, times, class_names, config: dict, settings, lat_off: float, projection: str, source: str,
+                 lane_half: float, step_len: float):
+        roles = config["roles"]
+        wcfg = wmod.load_config()
+        wsettings = {"hfovDeg": settings.hfov_deg, "cameraHeightM": settings.camera_height_m, "lateralOffsetM": lat_off,
+                     "projection": projection, "distanceSource": source}
+        self.wm = wmod.WorldMap(grids, times, class_names, None, wsettings, config, wcfg, None)
+        self.ob = self.wm.observer
+        self.object_kind = wmod.KIND_OBJECT
+        ob = self.ob
+        self.cell = ob.cell
+        self.step_len = step_len
+        self.corr = (ob.fwd > 0.0) & (np.abs(ob.right) <= lane_half + float(roles.get("mapCorridorMarginM", 0.0)))   # the core a section must reach
+        self.corr_full = (ob.fwd > 0.0) & (np.abs(ob.right) <= lane_half)
+        self.min_conf = int(math.ceil(float(roles.get("mapMinConf", 0.7)) * 255.0 - 1e-9))
+        self.ghost_conf = int(math.ceil(float(roles.get("mapGhostMinConf", 0.3)) * 255.0 - 1e-9))     # the image already confirmed the item
+        self.rad = max(0, int(round(float(roles.get("mapFootprintRadiusM", 0.3)) / ob.cell)))
+        yy, xx = np.mgrid[-self.rad:self.rad + 1, -self.rad:self.rad + 1]
+        self.disk = (yy * yy + xx * xx) <= self.rad * self.rad + 0.5
+        self.min_cells = int(roles.get("mapMinCells", 1))
+        self.part_classes = frozenset(roles.get("laneBaseClasses", ()))
+        self.ghost_s = float(roles.get("mapGhostSeconds", 2.0))
+        self.ghost_near_m = float(roles.get("mapGhostNearM", 2.0))
+        labels = config.get("spokenLabels", {})
+        self.labels = labels
+        self.fam: dict[str, np.ndarray] = {}
+        for cid, name in enumerate(class_names):
+            if self.wm.kind[cid] == self.object_kind:
+                self.fam.setdefault(labels.get(name, name.replace("-", " ")), np.zeros(256, dtype=bool))[cid] = True
+        self._names = list(class_names)
+        self.ms = 0.0
+        self.classes = self.conf = self.solid = None
+        self.pose = (0.0, 0.0, 0.0)
+        self.b_rr = self.b_cc = self.b_row = self.b_col = np.zeros(0, dtype=np.int64)
+
+    def update(self, i: int, frame: dict, dmap, grid: np.ndarray) -> None:
+        """Fuse frame i (pose, observation, votes, snapshot) and index the object-base points of its image."""
+        _, self.classes, self.conf, self.ms = self.wm.step(i, frame, dmap)
+        self.pose = self.wm.last_pose
+        is_obj = self.wm.kind[self.classes] == self.object_kind
+        self.solid = is_obj & (self.conf >= self.min_conf)
+        self.solid_ghost = is_obj & (self.conf >= self.ghost_conf)
+        ob = self.ob
+        rr, cc, dist, lat = ob.object_bases(grid, frame, dmap)
+        row = ob.orow - np.rint(dist / ob.cell).astype(np.int64)
+        col = ob.oc + np.rint(lat / ob.cell).astype(np.int64)
+        ok = (row >= 0) & (row < ob.size) & (col >= 0) & (col < ob.size)
+        self.b_rr, self.b_cc, self.b_row, self.b_col = rr[ok], cc[ok], row[ok], col[ok]
+
+    # -- measurement ---------------------------------------------------------------------------------------
+    def _lut(self, it: _Item) -> np.ndarray | None:
+        return self.fam.get(self.labels.get(it.class_name, it.class_name.replace("-", " ")))
+
+    def _corridor_cells(self, patch, lut: np.ndarray, r0: int, c0: int, full: bool = False):   # full: the ghost's search (whole corridor, lower confidence)
+        """(forward m, right m, corridor count, family count) of the nearest corridor cell of the family inside the boolean ``patch``
+        (offset r0, c0); the position is None when no cell of the family is in the corridor."""
+        sl = (slice(r0, r0 + patch.shape[0]), slice(c0, c0 + patch.shape[1]))
+        fam = patch & (self.solid_ghost if full else self.solid)[sl] & lut[self.classes[sl]]
+        nf = int(np.count_nonzero(fam))
+        inc = fam & (self.corr_full if full else self.corr)[sl]
+        n = int(np.count_nonzero(inc))
+        if not n:
+            return None, None, 0, nf
+        fwd, right = self.ob.fwd[sl][inc], self.ob.right[sl][inc]
+        k = int(np.argmin(fwd + 1e-3 * np.abs(right)))
+        return float(fwd[k]), float(right[k]), n, nf
+
+    def _apply(self, it: _Item, fwd: float, right: float, n: int) -> None:
+        bearing = math.degrees(math.atan2(right, fwd))
+        if it.image_dl is None:
+            it.image_dl = (it.distance_m, it.lateral_m, it.bearing, it.clock, it.clock_q, it.clock_text, it.pan)
+        it.distance_m, it.lateral_m, it.bearing = fwd, right, bearing
+        it.clock = clock_from_bearing(bearing)
+        it.clock_q = clock_quarter(bearing)
+        it.clock_text = clock_text(it.clock_q)
+        it.pan = _pan_from_bearing(bearing)
+        it.map_cells = n
+        x, y, th = self.pose
+        s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
+        it.map_world = (x + s_ * fwd + c_ * right, y + c_ * fwd - s_ * right)
+
+    def measure(self, it: _Item) -> None:
+        """A building / wall (``roles.laneBaseClasses``) whose image contact point is not in the lane: does a section of it stand in the
+        walking corridor on the map? (replaces the v26.1.16 lane part; the core is ``laneHalfWidthM`` + ``mapCorridorMarginM``, at least
+        ``mapMinCells`` cells). Sets ``map_source`` / ``map_cells`` and, on a hit, the measurement of the nearest corridor cell."""
+        if it.group != "static":
+            return
+        it.map_source = "image"
+        if it.class_name not in self.part_classes:
+            return
+        if (it.lane_hit and not it.along_path) or it.shape is None or not self.b_rr.size:
+            return
+        lut = self._lut(it)
+        mask, c0, r0 = it.shape
+        rb, cb = self.b_rr - r0, self.b_cc - c0
+        ok = (rb >= 0) & (rb < mask.shape[0]) & (cb >= 0) & (cb < mask.shape[1])
+        ok[ok] = mask[rb[ok], cb[ok]]
+        if lut is None or not ok.any():
+            return
+        row, col = self.b_row[ok], self.b_col[ok]
+        R, size = self.rad, self.ob.size
+        pr0, pr1 = max(0, int(row.min()) - R), min(size, int(row.max()) + R + 1)
+        pc0, pc1 = max(0, int(col.min()) - R), min(size, int(col.max()) + R + 1)
+        fp = np.zeros((pr1 - pr0, pc1 - pc0), dtype=bool)
+        fp[row - pr0, col - pc0] = True
+        if R:
+            fp = ndimage.binary_dilation(fp, structure=self.disk)
+        fwd, right, n, _ = self._corridor_cells(fp, lut, pr0, pc0)
+        it.map_source = "map"
+        if n >= self.min_cells:
+            it.map_cells = n
+            self._apply(it, fwd, right, n)
+
+    def gate(self, it: _Item, tr: "_Track", t: float, roles: dict) -> bool:
+        """The v26.1.16 lane-part gates, on the map: the section is believed once it has been on the map for ``mapMinAgeSeconds`` (gaps up to ``mapGapSeconds`` bridged) and
+        its nearest corridor cell closes on us at >= ``mapMinClosingMps`` (a wall that bends across the camera axis, or one beside the path
+        that the blur leaks into the corridor, keeps its distance)."""
+        if tr.map_hist and t - tr.map_hist[-1][0] > roles.get("mapGapSeconds", 0.5):
+            tr.map_hist, tr.map_first = [], None
+        tr.map_hist.append((t, it.distance_m))
+        tr.map_hist = [h for h in tr.map_hist if h[0] >= t - 1.5 - 1e-9]
+        tr.map_first = t if tr.map_first is None else tr.map_first
+        ok = t - tr.map_first >= roles.get("mapMinAgeSeconds", 0.0) - 1e-9
+        span = t - tr.map_hist[0][0]
+        if ok:
+            ok = span >= roles.get("mapClosingSpanSeconds", 0.5) - 1e-9 and (tr.map_hist[0][1] - it.distance_m) / span >= roles.get("mapMinClosingMps", 0.0)
+        return ok
+
+    def revert(self, it: _Item) -> None:
+        if it.image_dl is not None:
+            it.distance_m, it.lateral_m, it.bearing, it.clock, it.clock_q, it.clock_text, it.pan = it.image_dl
+        it.image_dl = None
+        it.map_cells, it.map_world = 0, None
+
+    def locate(self, it: _Item) -> None:
+        """World position of the item's image measurement (a ghost is followed from it when the map did not place it)."""
+        x, y, th = self.pose
+        s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
+        it.map_world = (x + s_ * it.distance_m + c_ * it.lateral_m, y + c_ * it.distance_m - s_ * it.lateral_m)
+
+    def ghost(self, tr: "_Track", t: float) -> _Item | None:
+        """A static danger that left the image keeps its place in the map: the item again, measured from the cells near where it was."""
+        src = tr.ghost_src
+        if src is None or src.map_world is None:
+            return None
+        if tr.ghost_t0 is not None and t - tr.ghost_t0 > self.ghost_s + 1e-9:
+            return None
+        lut = self._lut(src)
+        if lut is None:
+            return None
+        x, y, th = self.pose
+        s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
+        dx, dy = src.map_world[0] - x, src.map_world[1] - y
+        fwd, right = dx * s_ + dy * c_, dx * c_ - dy * s_
+        if fwd <= 0.0:
+            return None                                   # passed
+        size, ob = self.ob.size, self.ob
+        row, col = ob.orow - int(round(fwd / ob.cell)), ob.oc + int(round(right / ob.cell))
+        R = self.rad + 3                                  # the dead reckoning drifts a little
+        pr0, pr1 = max(0, row - R), min(size, row + R + 1)
+        pc0, pc1 = max(0, col - R), min(size, col + R + 1)
+        if pr1 <= pr0 or pc1 <= pc0:
+            return None
+        fwd, right, n, _ = self._corridor_cells(np.ones((pr1 - pr0, pc1 - pc0), dtype=bool), lut, pr0, pc0, full=True)
+        if n < 1:
+            return None
+        g = replace(src, ghost=True, shape=None, clipped=True, map_source="map")
+        self._apply(g, fwd, right, n)
+        return g
+
+    def keeps(self, it: _Item) -> bool:
+        """May this item's track be followed as a ghost once the image loses it?"""
+        return (it.group == "static" and it.role == "danger" and it.collision
+                and (it.clipped or it.distance_m <= self.ghost_near_m))
+
+    def corridor(self) -> dict | None:
+        """The nearest object cell of any class in the walking corridor (Lab readout)."""
+        m = self.solid & self.corr
+        if not m.any():
+            return None
+        fwd = np.where(m, self.ob.fwd, np.inf)
+        k = np.unravel_index(int(np.argmin(fwd)), fwd.shape)
+        d = float(fwd[k])
+        return {"nearestM": round(d, 2), "nearestSteps": round(d / self.step_len, 1),
+                "className": self.classes_name(int(self.classes[k]))}
+
+    def classes_name(self, cid: int) -> str:
+        return self._names[cid] if cid < len(self._names) else str(cid)
+
 
 def _motion_series(motion: dict | None, hfov_deg: float, ego_cfg: dict):
     """(t, cadence per sample, cumulative heading degrees per sample, stationary flag per sample or None) or None."""
@@ -2920,6 +3140,11 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     policy = SpeechPolicy(config)
     world = _WorldMemory(config.get("memory", {}), enabled=mser is not None)
     policy.world = world
+    smap = None                                # v26.2.1: the online world map the static rules read (roles.staticSource "map")
+    if roles.get("staticSource", "image") == "map" and n:
+        import worldmap
+        smap = _StaticMap(worldmap, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len)
+    map_ms: list[float] = []
     under_rows = int(config["surfaces"].get("passUnderRows", 6))
     under_gone_s = float(config["surfaces"].get("passUnderGoneSeconds", 1.5))
     under_min_w = float(config["surfaces"].get("passUnderMinWidth", 0.15))
@@ -3002,6 +3227,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         geo = _frame_geometry(gh, gw, horizon, settings.camera_height_m * k, f, settings.hfov_deg, lane_half,
                               region, roles["boundaryMarginPx"], projection, lat_off)
         items = detect_items(grid, ids, geo, config)
+        dmap = None
         if depth_maps is not None:
             j = int(np.clip(np.searchsorted(depth_t, t), 0, len(depth_t) - 1))
             if j > 0 and abs(depth_t[j - 1] - t) < abs(depth_t[j] - t):
@@ -3161,6 +3387,34 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             ego_settled = False
         turned = ego.update_heading(heading, t, config["pathChange"], dt)
 
+        depth_scale_out = None if depth_maps is None or ds is None else _r(ds * a_now, 4) if relative else ds
+        corridor_out = None
+        if smap is not None:
+            # v26.2.1: the map of this frame (causal), fed with the same ego values the hazards.json stores, so that the offline
+            # ``worldmap.build`` reproduces it; static items are then judged on it; a static danger that left the image is a ghost
+            frame_in = {"horizon": round(horizon, 4), "scale": round(scale.value, 3), "depthScale": depth_scale_out,
+                        "ego": {"speedMps": _r(ego_speed, 2), "headingDeg": _r(heading, 1), "stationary": stationary}}
+            smap.update(i, frame_in, dmap, grid)
+            map_ms.append(smap.ms)
+            for it in items:
+                smap.measure(it)
+                if it.map_cells > 0 and not smap.gate(it, tracks[it.track_id], t, roles):
+                    smap.revert(it)
+            seen_now = {it.track_id for it in items}
+            for tid, tr in tracks.items():
+                if tid in seen_now or tr.ghost_src is None:
+                    continue
+                g = smap.ghost(tr, t)
+                if g is None:
+                    tr.ghost_src = tr.ghost_t0 = None
+                    continue
+                tr.ghost_t0 = t if tr.ghost_t0 is None else tr.ghost_t0
+                tr.last_t = t
+                tr.present_run += 1
+                g.present_run = tr.present_run
+                items.append(g)
+            corridor_out = smap.corridor()
+
         # 6-8. steps, parked vs moving, roles
         span = None
         if region is not None:
@@ -3259,6 +3513,19 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             tr.prox_run = tr.prox_run + 1 if it.proximity else 0
             it.prox_run = tr.prox_run
             seen_tracks.add(it.track_id)
+        if smap is not None:
+            for it in items:
+                if it.group != "static":
+                    continue
+                tr = tracks[it.track_id]
+                if smap.keeps(it) and it.settled and it.role_run >= policy.confirm and not stationary:      # a confirmed danger only
+                    if it.map_world is None:
+                        smap.locate(it)
+                    tr.ghost_src = it
+                    tr.ghost_t0 = t if it.ghost and tr.ghost_t0 is None else (tr.ghost_t0 if it.ghost else None)
+                else:
+                    tr.ghost_src = tr.ghost_t0 = None
+
         for tid, tr in tracks.items():
             if tid not in seen_tracks:
                 tr.role, tr.role_run, tr.present_run, tr.prox_run = "none", 0, 0, 0
@@ -3324,7 +3591,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                     "depthPitchDeg": _r(anchor.pitch_deg, 1) if plane else None,
                     "depthCameraHeightUnits": _r(anchor.height_units, 4) if plane else None,
                     "depthGaitCheck": _r(gait_check.value, 3) if plane else None,
-                    "depthScale": (None if depth_maps is None or ds is None else _r(ds * a_now, 4) if relative else ds),
+                    "depthScale": depth_scale_out,
                     "depthScaleSource": "none" if depth_maps is None or ds is None else depth_scale_source,
                     "depthLevel": None if not relative or ds is None else _r(ds, 4),
                     "depthLevelSource": None if not relative or ds is None else c_source,
@@ -3332,6 +3599,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                     "estimated": {"speed": speed_known, "cadence": cadence is not None,
                                   "stepLength": False}},
             "pathChange": bool(path_change),
+            **({"corridor": corridor_out} if smap is not None else {}),
             "hazards": [_hazard_json(it, gh, gw) for it in sorted(items, key=lambda it: it.steps)],
         })
 

@@ -1,5 +1,5 @@
 {
-  "version": "v26.2-spike",
+  "version": "v26.2.1",
   "cellM": 0.10,
   "windowM": 64.0,
   "snapshot": {"size": 200, "originCol": 100, "originRow": 180},

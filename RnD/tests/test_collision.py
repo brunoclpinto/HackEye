@@ -406,7 +406,7 @@ def test_beep_episodes_one_track_each_and_every_tone_inside_exactly_one_episode(
     tn = tones(ev)
     assert eps and tn
     for e in eps:
-        assert e["role"] == "danger" and e["tEnd"] > e["t"] and e["minSteps"] >= 1
+        assert e["role"] == "danger" and e["tEnd"] > e["t"] and e["minSteps"] >= 0     # v26.2.1: a pole under the frame keeps beeping until passed (ghost)
         assert re.fullmatch(r"beeps \u00b7 (left|center|right) \u00b7 \w+ at \d+(:\d+)? \u00b7 \d+(\u2192\d+)? steps", e["text"]), e["text"]
         mine = [x for x in tn if x["trackId"] == e["trackId"] and e["t"] - 0.05 <= x["t"] <= e["tEnd"] + 0.05]
         assert mine and abs(min(x["t"] for x in mine) - e["t"]) < 1e-6
@@ -1011,12 +1011,12 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames"}
-    assert doc["version"] == "v26.2.0" == ev["version"]
+    assert doc["version"] == "v26.2.1" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM",
                                   "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM"}
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150
-    frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards"}
+    frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards", "corridor"}    # v26.2.1: corridor = the nearest object on the world map in the walking corridor
     ego_keys = {"speedMps", "cadenceHz", "stepLengthM", "headingDeg", "estimated", "scale", "scaleSource",
                 "depthAnchor", "depthAnchorMode", "depthScale", "depthScaleSource", "depthLevel", "depthLevelSource",
                 "depthPitchDeg", "depthCameraHeightUnits", "depthGaitCheck", "stationary"}
@@ -1031,7 +1031,9 @@ def test_output_documents_are_serializable_and_complete():
             assert set(f["region"]) == {"surface", "label", "rows"}
             assert all(len(r) == 3 for r in f["region"]["rows"])
         for h in f["hazards"]:
-            assert set(h) == hazard_keys | ({"outline"} if h["role"] != "none" else set())
+            # v26.2.1: a static item reports where it was judged ("source", "mapCells"); a map measurement keeps the image's (imageDistanceM...)
+            map_keys = {"source", "mapCells"} if h["group"] == "static" else set()
+            assert set(h) - {"imageDistanceM", "imageLateralM"} == hazard_keys | map_keys | ({"outline"} if h["role"] != "none" else set())
             assert h["role"] in ("danger", "feature", "context", "none")
             assert h["urgency"] in ("none", "danger", "final")
             seen_hazard = True

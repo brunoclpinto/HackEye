@@ -51,22 +51,32 @@ def class_kinds(cfg: dict, class_names: list[str]) -> np.ndarray:
     return kind
 
 
+class PoseTracker:
+    """The user's pose, frame by frame: exactly what the collision pass's world memory integrates (speed x dt along the mean
+    heading; stationary = 0). The offline ``build`` and the collision pass feed it the same (rounded) ego values."""
+
+    def __init__(self, coll_cfg: dict):
+        self.wm = _WorldMemory(coll_cfg.get("memory", {}))
+        self.prev_t: float | None = None
+        self.last_heading = 0.0
+
+    def advance(self, t: float, ego: dict) -> tuple[float, float, float]:
+        dt = 0.0 if self.prev_t is None else float(t - self.prev_t)
+        self.prev_t = float(t)
+        h = ego.get("headingDeg")
+        h = self.last_heading if h is None else float(h)
+        self.last_heading = h
+        speed = 0.0 if ego.get("stationary") else ego.get("speedMps")
+        self.wm.advance(float(t), dt, speed, h)
+        return (self.wm.x, self.wm.y, h)
+
+
 def integrate_pose(times: np.ndarray, egos: list[dict], coll_cfg: dict) -> np.ndarray:
-    """(N, 3) x east, y north (m), heading deg (0 = initial direction, + = right turn): exactly what the collision pass's
-    world memory integrates (speed x dt along the mean heading; stationary = 0)."""
-    wm = _WorldMemory(coll_cfg.get("memory", {}))
+    """(N, 3) x east, y north (m), heading deg (0 = initial direction, + = right turn) over a whole run."""
+    pt = PoseTracker(coll_cfg)
     out = np.zeros((len(times), 3))
-    prev_t = None
-    last_heading = 0.0
     for i, (t, e) in enumerate(zip(times, egos)):
-        dt = 0.0 if prev_t is None else float(t - prev_t)
-        prev_t = float(t)
-        h = e.get("headingDeg")
-        h = last_heading if h is None else float(h)
-        last_heading = h
-        speed = 0.0 if e.get("stationary") else e.get("speedMps")
-        wm.advance(float(t), dt, speed, h)
-        out[i] = (wm.x, wm.y, h)
+        out[i] = pt.advance(float(t), e)
     return out
 
 
@@ -108,6 +118,49 @@ class Observer:
             return 1.0
         return float(frame.get("scale") or 1.0)
 
+    def object_bases(self, grid: np.ndarray, frame: dict, dmap: np.ndarray | None, kgrid: np.ndarray | None = None):
+        """The ground base of every vertical run of an object class: (rows, cols, forward distance m, lateral m in body
+        coordinates) of the image pixels that are projected into the map. The collision rules (v26.2.1) read the same points to
+        place an item's footprint on the map."""
+        gh, gw = self.gh, self.gw
+        cam_h = self.cam_h * self.ground_scale(frame)
+        kgrid = self.kind[grid] if kgrid is None else kgrid
+        cls = grid
+        is_obj = kgrid == KIND_OBJECT
+        below_same = np.zeros_like(is_obj)
+        below_same[:-1] = cls[1:] == cls[:-1]
+        base = is_obj & ~below_same
+        below_surface = np.zeros_like(is_obj)
+        below_surface[:-1] = kgrid[1:] == KIND_SURFACE
+        rr, cc = np.nonzero(base)
+        empty = (rr[:0], cc[:0], np.zeros(0), np.zeros(0))
+        if not rr.size:
+            return empty
+        horizon = float(frame["horizon"])
+        y_b = (rr + 1.0) / gh
+        contact = below_surface[rr, cc] & (y_b > horizon + 1e-6) & (rr < gh - 1)          # stands on the ground
+        ground = cam_h * self.f_px / (np.maximum(y_b - horizon, 1e-6) * gh)
+        if dmap is not None and frame.get("depthScale"):
+            dh, dw = dmap.shape
+            up = int(self.cfg.get("objectDepthRowsAbove", 0))                 # read the depth inside the object, not at its edge
+            r_d = np.maximum(rr - up, 0)
+            r_d = np.where(grid[r_d, cc] == grid[rr, cc], r_d, rr)
+            v = dmap[np.minimum(dh - 1, ((r_d + 0.5) / gh * dh).astype(int)),
+                     np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(np.float64)
+            dist = float(frame["depthScale"]) * v
+            good = np.isfinite(dist) & (dist > 0)
+            if self.cfg.get("objectDistance", "depth") == "ground-contact":    # a base on the ground: the ground ray beats the depth
+                dist = np.where(contact, ground, dist)
+        else:                                           # ground distance of the base row; needs the ground below it
+            good = contact
+            dist = np.where(good, ground, 0.0)
+        good &= (dist >= self.min_fwd) & (dist <= self.max_range)
+        rr, cc, dist = rr[good], cc[good], dist[good]
+        if not rr.size:
+            return empty
+        lat_b = self._lateral((cc + 0.5) / gw, dist) + self.lat_off
+        return rr, cc, dist, lat_b
+
     def observe(self, grid: np.ndarray, frame: dict, dmap: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
         gh, gw, size = self.gh, self.gw, self.size
         obs = np.full((size, size), UNKNOWN, dtype=np.uint8)
@@ -132,49 +185,20 @@ class Observer:
         surf = ok & (kgrid[ri, ci] == KIND_SURFACE)
         obs[surf] = grid[ri, ci][surf]
         # --- object bases ----------------------------------------------------------------------------------
-        cls = grid
-        is_obj = kgrid == KIND_OBJECT
-        below_same = np.zeros_like(is_obj)
-        below_same[:-1] = cls[1:] == cls[:-1]
-        base = is_obj & ~below_same
-        below_surface = np.zeros_like(is_obj)
-        below_surface[:-1] = kgrid[1:] == KIND_SURFACE
-        rr, cc = np.nonzero(base)
+        rr, cc, dist, lat_b = self.object_bases(grid, frame, dmap, kgrid)
         if rr.size:
-            y_b = (rr + 1.0) / gh
-            contact = below_surface[rr, cc] & (y_b > horizon + 1e-6) & (rr < gh - 1)          # stands on the ground
-            ground = cam_h * self.f_px / (np.maximum(y_b - horizon, 1e-6) * gh)
-            if dmap is not None and frame.get("depthScale"):
-                dh, dw = dmap.shape
-                up = int(self.cfg.get("objectDepthRowsAbove", 0))                 # read the depth inside the object, not at its edge
-                r_d = np.maximum(rr - up, 0)
-                r_d = np.where(grid[r_d, cc] == grid[rr, cc], r_d, rr)
-                v = dmap[np.minimum(dh - 1, ((r_d + 0.5) / gh * dh).astype(int)),
-                         np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(np.float64)
-                dist = float(frame["depthScale"]) * v
-                good = np.isfinite(dist) & (dist > 0)
-                if self.cfg.get("objectDistance", "depth") == "ground-contact":    # a base on the ground: the ground ray beats the depth
-                    dist = np.where(contact, ground, dist)
-            else:                                           # ground distance of the base row; needs the ground below it
-                good = contact
-                dist = np.where(good, ground, 0.0)
-            good &= (dist >= self.min_fwd) & (dist <= self.max_range)
-            rr, cc, dist = rr[good], cc[good], dist[good]
-            if rr.size:
-                xs = (cc + 0.5) / gw
-                lat_b = self._lateral(xs, dist) + self.lat_off
-                col = self.oc + np.rint(lat_b / self.cell).astype(np.int64)
-                row = self.orow - np.rint(dist / self.cell).astype(np.int64)
-                half = np.minimum(4, np.rint(dist / self.f_px / 2.0 / self.cell).astype(np.int64))   # one image column's width
-                order = np.argsort(-dist)                  # nearer points are written last and win
-                rr, cc, col, row, half = rr[order], cc[order], col[order], row[order], half[order]
-                vals = grid[rr, cc]
-                for off in range(-4, 5):
-                    m = half >= abs(off)
-                    cx = col[m] + off
-                    ry = row[m]
-                    inside = (cx >= 0) & (cx < size) & (ry >= 0) & (ry < size)
-                    obs[ry[inside], cx[inside]] = vals[m][inside]
+            col = self.oc + np.rint(lat_b / self.cell).astype(np.int64)
+            row = self.orow - np.rint(dist / self.cell).astype(np.int64)
+            half = np.minimum(4, np.rint(dist / self.f_px / 2.0 / self.cell).astype(np.int64))   # one image column's width
+            order = np.argsort(-dist)                  # nearer points are written last and win
+            rr, cc, col, row, half = rr[order], cc[order], col[order], row[order], half[order]
+            vals = grid[rr, cc]
+            for off in range(-4, 5):
+                m = half >= abs(off)
+                cx = col[m] + off
+                ry = row[m]
+                inside = (cx >= 0) & (cx < size) & (ry >= 0) & (ry < size)
+                obs[ry[inside], cx[inside]] = vals[m][inside]
         w = np.where(obs != UNKNOWN, self.weight, 0.0).astype(np.float32)
         gain = float(self.cfg.get("objectVoteGain", 1.0))        # an object base is one thin line among many surface cells
         if gain != 1.0:
@@ -193,6 +217,7 @@ class Fusion:
         self.floor = float(cfg["weightFloor"])
         self.full = float(cfg["confFullWeight"])
         keep = [int(c) for c in present if kind[c] in (KIND_SURFACE, KIND_OBJECT)]
+        keep = keep or [0]                       # a run with no surface / object class at all: one empty layer
         self.classes = np.array(keep, dtype=np.uint8)
         self.lut = np.full(256, -1, dtype=np.int16)
         for k, c in enumerate(keep):
@@ -309,7 +334,8 @@ def settings_from_hazards(hazards: dict) -> dict:
 
 
 class WorldMap:
-    """Drives the passes frame by frame (``step``); ``build`` runs it over a whole run."""
+    """Drives the passes frame by frame (``step``); ``build`` runs it over a whole run, and the collision pass (v26.2.1)
+    runs it online (``frames=None``: each ``step`` gets the frame's horizon / scales / ego block)."""
 
     def __init__(self, grids, times, class_names, frames, settings, coll_cfg, cfg=None, depth=None):
         self.cfg = cfg or load_config()
@@ -320,9 +346,10 @@ class WorldMap:
         n, gh, gw = grids.shape
         self.n, self.gh, self.gw = n, gh, gw
         self.observer = Observer(self.cfg, settings, self.kind, gh, gw)
-        self.pose = integrate_pose(self.times, [f["ego"] for f in frames], coll_cfg)
+        self.pose_tracker = PoseTracker(coll_cfg)
+        self.pose = np.zeros((n, 3))
         present = np.flatnonzero(np.bincount(np.asarray(grids).ravel(), minlength=256))
-        self.fusion = Fusion(self.cfg, self.kind, present, (self.pose[0, 0], self.pose[0, 1]))
+        self.fusion = Fusion(self.cfg, self.kind, present, (0.0, 0.0))
         self.depth_t = self.depth = None
         if depth is not None:
             self.depth_t, self.depth = np.asarray(depth["t"], dtype=float), depth["depth"]
@@ -336,13 +363,21 @@ class WorldMap:
             j -= 1
         return np.asarray(self.depth[j])
 
-    def step(self, i: int):
-        """Frame i: observation + fusion + snapshot. Returns (obs, snapshot classes, conf, ms)."""
+    def step(self, i: int, frame: dict | None = None, dmap=None):
+        """Frame i: pose + observation + fusion + snapshot. Returns (obs, snapshot classes, conf, ms).
+        ``frame`` = {"horizon", "scale", "depthScale", "ego"} (default: the stored one of ``frames``); ``dmap`` the depth map of
+        the frame (default: the nearest one of the run's depth)."""
         t0 = time.perf_counter()
-        pose = tuple(self.pose[i])
-        obs, w = self.observer.observe(np.asarray(self.grids[i]), self.frames[i], self.depth_map(i))
-        self.fusion.update(float(self.times[i]), pose, obs, w, self.observer)
-        classes, conf = self.fusion.snapshot(float(self.times[i]), pose, self.observer)
+        frame = frame if frame is not None else self.frames[i]
+        dmap = dmap if dmap is not None else self.depth_map(i)
+        t = float(self.times[i])
+        pose = self.pose_tracker.advance(t, frame["ego"])
+        self.pose[i] = pose
+        self.last_pose = pose
+        obs, w = self.observer.observe(np.asarray(self.grids[i]), frame, dmap)
+        self.fusion.update(t, pose, obs, w, self.observer)
+        classes, conf = self.fusion.snapshot(t, pose, self.observer)
+        self.last_frame, self.last_dmap = frame, dmap
         return obs, classes, conf, (time.perf_counter() - t0) * 1000.0
 
 
