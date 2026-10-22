@@ -1,0 +1,170 @@
+{
+ "source": "User's first Lab review (Lab v26.1.4, collision v26.1.1) on recording 4929, run 7b9d5ac14e14 (0-3093 s, fps 6, Yolo26m-sem-HackEye20261012-544.pt, chest mount defaults). Kept in the repo because version bumps wipe Lab runs/reviews.",
+ "windows": [
+  {
+   "key": "w0",
+   "start": 0.0,
+   "end": 10.0
+  },
+  {
+   "key": "w1",
+   "start": 14.0,
+   "end": 21.0
+  },
+  {
+   "key": "w2",
+   "start": 27.0,
+   "end": 31.0
+  }
+ ],
+ "classNames": [
+  "animal",
+  "barrier",
+  "curb",
+  "barrier fence",
+  "barrier guard-rail",
+  "divider",
+  "barrier wall",
+  "flat bike-lane",
+  "crosswalk",
+  "flat driveway",
+  "parking",
+  "flat pedestrian-area",
+  "flat rail-track",
+  "flat road",
+  "flat road-shoulder",
+  "flat service-lane",
+  "flat sidewalk",
+  "flat traffic-island",
+  "structure bridge",
+  "building",
+  "structure tunnel",
+  "person",
+  "rider",
+  "lane-line-dashed",
+  "continuous solid",
+  "marking-other",
+  "discrete stop-line",
+  "symbol bicycle",
+  "nature mountain",
+  "terrain",
+  "nature sky",
+  "nature snow",
+  "nature vegetation",
+  "nature water",
+  "sign",
+  "sidewalk-obstacle",
+  "utility-cover",
+  "pole",
+  "object pothole",
+  "traffic-light",
+  "traffic-light pedestrians",
+  "traffic-sign",
+  "vehicle",
+  "ego-vehicle",
+  "void dynamic",
+  "void ground",
+  "void static",
+  "void unlabeled"
+ ],
+ "gridW": 240,
+ "gridH": 135,
+ "srcW": 1920,
+ "srcH": 1080,
+ "settings": {
+  "mount": "chest",
+  "hfovDeg": null,
+  "cameraHeightM": null,
+  "stepLengthM": null
+ },
+ "knownDataEntryError": "Annotation 302fe78c was meant as t=6.6 with text 'Vehicle at 11, building at 1' (Lab add-form bug stored t=0.2 and the time as text; the intended phrase is in its note).",
+ "annotations": [
+  {
+   "id": "f8a55082",
+   "kind": "added",
+   "t": 0.2,
+   "text": "Obstacle at 12, Building at 2",
+   "role": "context",
+   "note": "",
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.1",
+   "createdAt": "2026-10-16T15:19:33Z",
+   "updatedAt": "2026-10-16T15:24:00Z"
+  },
+  {
+   "id": "302fe78c",
+   "kind": "added",
+   "t": 0.2,
+   "text": "0:06.6",
+   "role": "context",
+   "note": "Vehicle at 11, building at 1",
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.1",
+   "createdAt": "2026-10-16T15:27:34Z",
+   "updatedAt": "2026-10-16T15:27:34Z"
+  },
+  {
+   "id": "553406c0",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "Already referenced before + vehicle is static and not in colision course.",
+   "t": 16.3497,
+   "event": {
+    "t": 16.3497,
+    "text": "vehicle, 10 o'clock, 5 steps",
+    "role": "danger",
+    "trackId": 114,
+    "urgency": "danger",
+    "clock": 10
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.1",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T15:30:54Z",
+   "updatedAt": "2026-10-16T15:31:28Z"
+  },
+  {
+   "id": "a22eb54f",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "Already referenced before, not enough change to reference again. ",
+   "t": 18.8522,
+   "event": {
+    "t": 18.8522,
+    "text": "parked car at 12 o'clock",
+    "role": "context",
+    "trackId": 146,
+    "urgency": "none",
+    "clock": 12
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.1",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T15:31:44Z",
+   "updatedAt": "2026-10-16T15:32:04Z"
+  },
+  {
+   "id": "ba085ec6",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "missing object location. this was a false detection, try second frame validation before notifying like this.",
+   "t": 29.1542,
+   "event": {
+    "t": 29.1542,
+    "text": "person, 3 steps",
+    "role": "final",
+    "trackId": 295,
+    "urgency": "final",
+    "clock": 12
+   },
+   "runId": "7b9d5ac14e14",
+   "collisionVersion": "v26.1.1",
+   "analysisVersion": 2,
+   "modelName": "Yolo26m-sem-HackEye20261012-544.pt",
+   "createdAt": "2026-10-16T15:33:18Z",
+   "updatedAt": "2026-10-16T15:39:59Z"
+  }
+ ]
+}

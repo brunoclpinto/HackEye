@@ -1,0 +1,109 @@
+{
+ "source": "Crosswalk fixture for v26.1.14 (no review): Lab run 341fd5511f4d, recording Chest-center-0002 (the footage formerly named 4929), 0-1062 s, fps 6, Yolo26m-sem-HackEye20261011-1280.pt, 736p, depth da2-metric-outdoor-small. Six windows with crossings: 36-66 s (long crossing 41-49 s + a short one at 61 s), 136-160 (two short crossings), 350-358 (a single-frame crosswalk flicker, must not trigger), 384-410, 580-590, 1034-1056. Windows are cold runs; the crosswalk rule needs only the grids and the stationary flag. Kept in the repo because version bumps wipe Lab runs. Depth maps 68x120 float16, two lowest mantissa bits cleared.",
+ "windows": [
+  {
+   "key": "w0",
+   "start": 36.0,
+   "end": 66.0
+  },
+  {
+   "key": "w1",
+   "start": 136.0,
+   "end": 160.0
+  },
+  {
+   "key": "w2",
+   "start": 350.0,
+   "end": 358.0
+  },
+  {
+   "key": "w3",
+   "start": 384.0,
+   "end": 410.0
+  },
+  {
+   "key": "w4",
+   "start": 580.0,
+   "end": 590.0
+  },
+  {
+   "key": "w5",
+   "start": 1034.0,
+   "end": 1056.0
+  }
+ ],
+ "classNames": [
+  "animal",
+  "barrier",
+  "curb",
+  "barrier fence",
+  "barrier guard-rail",
+  "divider",
+  "barrier wall",
+  "flat bike-lane",
+  "crosswalk",
+  "flat driveway",
+  "parking",
+  "flat pedestrian-area",
+  "flat rail-track",
+  "flat road",
+  "flat road-shoulder",
+  "flat service-lane",
+  "flat sidewalk",
+  "flat traffic-island",
+  "structure bridge",
+  "building",
+  "structure tunnel",
+  "person",
+  "rider",
+  "lane-line-dashed",
+  "continuous solid",
+  "marking-other",
+  "discrete stop-line",
+  "symbol bicycle",
+  "nature mountain",
+  "terrain",
+  "nature sky",
+  "nature snow",
+  "nature vegetation",
+  "nature water",
+  "sign",
+  "sidewalk-obstacle",
+  "utility-cover",
+  "pole",
+  "object pothole",
+  "traffic-light",
+  "traffic-light pedestrians",
+  "traffic-sign",
+  "vehicle",
+  "ego-vehicle",
+  "void dynamic",
+  "void ground",
+  "void static",
+  "void unlabeled"
+ ],
+ "gridW": 240,
+ "gridH": 135,
+ "srcW": 1920,
+ "srcH": 1080,
+ "depth": {
+  "model": "da2-metric-outdoor-small",
+  "units": "metric",
+  "shape": [
+   68,
+   120
+  ],
+  "anchor": "plane"
+ },
+ "settings": {
+  "mount": "chest",
+  "hfovDeg": null,
+  "cameraHeightM": null,
+  "stepLengthM": null,
+  "projection": "auto",
+  "distanceSource": "depth",
+  "userHeightM": 1.78,
+  "cameraLocation": "chest",
+  "cameraSide": "center"
+ }
+}

@@ -1,0 +1,7398 @@
+{
+ "source": "User's fifth Lab review (Lab v26.1.11, collision v26.1.11) on recording 4929, run 2ced2e0f2909 (0-120 s, fps 6, Yolo26m-sem-HackEye20261011-1280.pt, default 960w profile, no depth maps, chest mount defaults), reviewed up to 105 s. Kept in the repo because version bumps wipe Lab runs/reviews. One window 0-110 s with grids and 24 Hz motion incl. resid; no depth (the run had none, so distances are the ground-plane ones). Review done on the Mac with the system voice.",
+ "windows": [
+  {
+   "key": "w0",
+   "start": 0.0,
+   "end": 110.0
+  }
+ ],
+ "classNames": [
+  "animal",
+  "barrier",
+  "curb",
+  "barrier fence",
+  "barrier guard-rail",
+  "divider",
+  "barrier wall",
+  "flat bike-lane",
+  "crosswalk",
+  "flat driveway",
+  "parking",
+  "flat pedestrian-area",
+  "flat rail-track",
+  "flat road",
+  "flat road-shoulder",
+  "flat service-lane",
+  "flat sidewalk",
+  "flat traffic-island",
+  "structure bridge",
+  "building",
+  "structure tunnel",
+  "person",
+  "rider",
+  "lane-line-dashed",
+  "continuous solid",
+  "marking-other",
+  "discrete stop-line",
+  "symbol bicycle",
+  "nature mountain",
+  "terrain",
+  "nature sky",
+  "nature snow",
+  "nature vegetation",
+  "nature water",
+  "sign",
+  "sidewalk-obstacle",
+  "utility-cover",
+  "pole",
+  "object pothole",
+  "traffic-light",
+  "traffic-light pedestrians",
+  "traffic-sign",
+  "vehicle",
+  "ego-vehicle",
+  "void dynamic",
+  "void ground",
+  "void static",
+  "void unlabeled"
+ ],
+ "gridW": 240,
+ "gridH": 135,
+ "srcW": 1920,
+ "srcH": 1080,
+ "depth": null,
+ "settings": {
+  "mount": "chest",
+  "hfovDeg": null,
+  "cameraHeightM": null,
+  "stepLengthM": null,
+  "projection": "auto",
+  "distanceSource": "depth",
+  "userHeightM": 1.78,
+  "cameraLocation": "chest",
+  "cameraSide": "center"
+ },
+ "systemEventsV26_1_11": [
+  {
+   "t": 0.6673,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 11:15 in 5",
+   "trackId": 1,
+   "urgency": "none",
+   "clock": 11,
+   "clockText": "11:15",
+   "pan": -0.4199
+  },
+  {
+   "t": 3.1698,
+   "type": "speech",
+   "role": "context",
+   "text": "building at 12:45 in 4",
+   "trackId": 24,
+   "urgency": "none",
+   "clock": 1,
+   "clockText": "12:45",
+   "pan": 0.3806
+  },
+  {
+   "t": 15.5155,
+   "type": "speech",
+   "role": "feature",
+   "text": "pole at 12:15 in 11",
+   "trackId": 84,
+   "urgency": "none",
+   "clock": 12,
+   "clockText": "12:15",
+   "pan": 0.0985
+  },
+  {
+   "t": 18.3517,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 12:45 in 4",
+   "trackId": 95,
+   "urgency": "none",
+   "clock": 1,
+   "clockText": "12:45",
+   "pan": 0.3806
+  },
+  {
+   "t": 28.8205,
+   "type": "speech",
+   "role": "danger",
+   "text": "pole at 12 in 8",
+   "trackId": 222,
+   "urgency": "danger",
+   "clock": 12,
+   "clockText": "12",
+   "pan": 0.0472
+  },
+  {
+   "t": 28.8205,
+   "tEnd": 28.9005,
+   "type": "beeps",
+   "role": "danger",
+   "trackId": 222,
+   "label": "pole",
+   "clock": 12,
+   "clockText": "12",
+   "minSteps": 8.2,
+   "urgency": "danger",
+   "text": "beeps \u00b7 pole at 12 \u00b7 8 steps"
+  },
+  {
+   "t": 28.8205,
+   "type": "tone",
+   "role": "danger",
+   "trackId": 222,
+   "urgency": "danger",
+   "pan": 0.0472,
+   "frequencyHz": 880.0,
+   "durationSeconds": 0.08
+  },
+  {
+   "t": 30.322,
+   "type": "speech",
+   "role": "danger",
+   "text": "person moving away at 11:45",
+   "trackId": 265,
+   "urgency": "danger",
+   "clock": 12,
+   "clockText": "11:45",
+   "pan": -0.0729
+  },
+  {
+   "t": 37.9963,
+   "type": "speech",
+   "role": "feature",
+   "text": "crosswalk at 12 in 4",
+   "trackId": 630,
+   "urgency": "none",
+   "clock": 12,
+   "clockText": "12",
+   "pan": -0.0557
+  },
+  {
+   "t": 39.331,
+   "type": "speech",
+   "role": "feature",
+   "text": "curb at 12 in 3",
+   "trackId": 746,
+   "urgency": "none",
+   "clock": 12,
+   "clockText": "12",
+   "pan": -0.0472
+  },
+  {
+   "t": 39.4978,
+   "tEnd": 39.9708,
+   "type": "beeps",
+   "role": "danger",
+   "trackId": 652,
+   "label": "obstacle",
+   "clock": 12,
+   "clockText": "12",
+   "minSteps": 4.7,
+   "urgency": "danger",
+   "text": "beeps \u00b7 obstacle at 12 \u00b7 5 steps"
+  },
+  {
+   "t": 39.4978,
+   "type": "tone",
+   "role": "danger",
+   "trackId": 652,
+   "urgency": "danger",
+   "pan": 0.03,
+   "frequencyHz": 880.0,
+   "durationSeconds": 0.08
+  },
+  {
+   "t": 39.8908,
+   "type": "tone",
+   "role": "danger",
+   "trackId": 652,
+   "urgency": "danger",
+   "pan": 0.0643,
+   "frequencyHz": 880.0,
+   "durationSeconds": 0.08
+  },
+  {
+   "t": 41.8335,
+   "type": "speech",
+   "role": "danger",
+   "text": "person standing at 1 in 4",
+   "trackId": 743,
+   "urgency": "danger",
+   "clock": 1,
+   "clockText": "1",
+   "pan": 0.511
+  },
+  {
+   "t": 43.1682,
+   "tEnd": 43.6971,
+   "type": "beeps",
+   "role": "danger",
+   "trackId": 823,
+   "label": "person",
+   "clock": 12,
+   "clockText": "12",
+   "minSteps": 5.4,
+   "urgency": "danger",
+   "text": "beeps \u00b7 person at 12 \u00b7 6\u21925 steps"
+  },
+  {
+   "t": 43.1682,
+   "type": "tone",
+   "role": "danger",
+   "trackId": 823,
+   "urgency": "danger",
+   "pan": -0.0215,
+   "frequencyHz": 880.0,
+   "durationSeconds": 0.08
+  },
+  {
+   "t": 43.6171,
+   "type": "tone",
+   "role": "danger",
+   "trackId": 823,
+   "urgency": "danger",
+   "pan": 0.0129,
+   "frequencyHz": 880.0,
+   "durationSeconds": 0.08
+  },
+  {
+   "t": 49.8415,
+   "type": "speech",
+   "role": "context",
+   "text": "obstacle at 11 in 3",
+   "trackId": 960,
+   "urgency": "none",
+   "clock": 11,
+   "clockText": "11",
+   "pan": -0.511
+  },
+  {
+   "t": 52.344,
+   "type": "speech",
+   "role": "feature",
+   "text": "crosswalk at 10:15 in 4",
+   "trackId": 1083,
+   "urgency": "none",
+   "clock": 10,
+   "clockText": "10:15",
+   "pan": -0.8124
+  },
+  {
+   "t": 54.6797,
+   "type": "speech",
+   "role": "danger",
+   "text": "person moving away at 12",
+   "trackId": 1191,
+   "urgency": "danger",
+   "clock": 12,
+   "clockText": "12",
+   "pan": 0.03
+  },
+  {
+   "t": 63.4801,
+   "type": "speech",
+   "role": "danger",
+   "text": "person moving away at 12",
+   "trackId": 1504,
+   "urgency": "danger",
+   "clock": 12,
+   "clockText": "12",
+   "pan": 0.03
+  },
+  {
+   "t": 76.4932,
+   "tEnd": 76.5732,
+   "type": "beeps",
+   "role": "danger",
+   "trackId": 1504,
+   "label": "person",
+   "clock": 12,
+   "clockText": "12:15",
+   "minSteps": 8.6,
+   "urgency": "danger",
+   "text": "beeps \u00b7 person at 12:15 \u00b7 9 steps"
+  },
+  {
+   "t": 76.4932,
+   "type": "tone",
+   "role": "danger",
+   "trackId": 1504,
+   "urgency": "danger",
+   "pan": 0.1326,
+   "frequencyHz": 880.0,
+   "durationSeconds": 0.08
+  },
+  {
+   "t": 90.8408,
+   "type": "speech",
+   "role": "danger",
+   "text": "person at 12:45 in 5",
+   "trackId": 2147,
+   "urgency": "danger",
+   "clock": 1,
+   "clockText": "12:45",
+   "pan": 0.3647
+  },
+  {
+   "t": 105.1468,
+   "type": "speech",
+   "role": "danger",
+   "text": "person standing at 12:15 in 14",
+   "trackId": 2286,
+   "urgency": "danger",
+   "clock": 12,
+   "clockText": "12:15",
+   "pan": 0.1071
+  }
+ ],
+ "annotations": [
+  {
+   "id": "fff80fc2",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 0.6673,
+   "event": {
+    "t": 0.6673,
+    "text": "obstacle at 11:15 in 5",
+    "role": "context",
+    "trackId": 1,
+    "urgency": "none",
+    "clock": 11,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:28Z",
+   "updatedAt": "2026-10-19T11:16:28Z",
+   "context": {
+    "frameT": 0.6673,
+    "items": [
+     {
+      "trackId": 1,
+      "className": "sidewalk-obstacle",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.2,
+       0.563,
+       0.6125,
+       0.7926
+      ],
+      "contactY": 0.7926,
+      "bearingDeg": -24.83,
+      "clock": 11,
+      "clockText": "11:15",
+      "pan": -0.4199,
+      "distanceM": 3.45,
+      "lateralM": -2.41,
+      "stepsTo": 4.7,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.05852,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.3292,
+        0.563
+       ],
+       [
+        0.6125,
+        0.563
+       ],
+       [
+        0.6125,
+        0.5926
+       ],
+       [
+        0.6083,
+        0.6074
+       ],
+       [
+        0.5792,
+        0.6148
+       ],
+       [
+        0.5583,
+        0.637
+       ],
+       [
+        0.5292,
+        0.637
+       ],
+       [
+        0.5208,
+        0.6593
+       ],
+       [
+        0.5083,
+        0.6593
+       ],
+       [
+        0.5083,
+        0.6667
+       ],
+       [
+        0.4542,
+        0.6815
+       ],
+       [
+        0.4542,
+        0.6963
+       ],
+       [
+        0.4083,
+        0.7185
+       ],
+       [
+        0.4083,
+        0.7259
+       ],
+       [
+        0.3375,
+        0.7333
+       ],
+       [
+        0.3333,
+        0.7556
+       ],
+       [
+        0.325,
+        0.7556
+       ],
+       [
+        0.3167,
+        0.7778
+       ],
+       [
+        0.3042,
+        0.7778
+       ],
+       [
+        0.2917,
+        0.7926
+       ],
+       [
+        0.2125,
+        0.7926
+       ],
+       [
+        0.2,
+        0.6222
+       ],
+       [
+        0.2417,
+        0.5778
+       ],
+       [
+        0.3,
+        0.5704
+       ],
+       [
+        0.3042,
+        0.5852
+       ],
+       [
+        0.3125,
+        0.5852
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": null,
+     "cadenceHz": null,
+     "stepLengthM": 0.74,
+     "headingDeg": 8.5,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.0,
+     "scaleSource": "none",
+     "estimated": {
+      "speed": false,
+      "cadence": false,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.5643,
+    "nearbySpeech": [
+     {
+      "t": 0.6673,
+      "type": "speech",
+      "role": "context",
+      "text": "obstacle at 11:15 in 5",
+      "trackId": 1,
+      "urgency": "none",
+      "clock": 11,
+      "clockText": "11:15",
+      "pan": -0.4199
+     },
+     {
+      "t": 3.1698,
+      "type": "speech",
+      "role": "context",
+      "text": "building at 12:45 in 4",
+      "trackId": 24,
+      "urgency": "none",
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3806
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "90ee8f4d",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 3.1698,
+   "event": {
+    "t": 3.1698,
+    "text": "building at 12:45 in 4",
+    "role": "context",
+    "trackId": 24,
+    "urgency": "none",
+    "clock": 1,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:30Z",
+   "updatedAt": "2026-10-19T11:16:30Z",
+   "context": {
+    "frameT": 3.1698,
+    "items": [
+     {
+      "trackId": 1,
+      "className": "sidewalk-obstacle",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.0,
+       0.5926,
+       0.4583,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": -28.76,
+      "clock": 11,
+      "clockText": "11",
+      "pan": -0.4812,
+      "distanceM": 1.68,
+      "lateralM": -1.36,
+      "stepsTo": 2.3,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.12173,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.3958,
+        0.5926
+       ],
+       [
+        0.4375,
+        0.6
+       ],
+       [
+        0.4542,
+        0.6222
+       ],
+       [
+        0.4583,
+        0.7481
+       ],
+       [
+        0.45,
+        0.7778
+       ],
+       [
+        0.4292,
+        0.7926
+       ],
+       [
+        0.4125,
+        0.7852
+       ],
+       [
+        0.3875,
+        0.8222
+       ],
+       [
+        0.3417,
+        0.837
+       ],
+       [
+        0.3417,
+        0.8444
+       ],
+       [
+        0.3125,
+        0.837
+       ],
+       [
+        0.3083,
+        0.8444
+       ],
+       [
+        0.3125,
+        0.9037
+       ],
+       [
+        0.2958,
+        0.9185
+       ],
+       [
+        0.2833,
+        0.9481
+       ],
+       [
+        0.275,
+        0.9481
+       ],
+       [
+        0.2583,
+        0.9852
+       ],
+       [
+        0.2583,
+        1.0
+       ],
+       [
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.7407
+       ],
+       [
+        0.0208,
+        0.7481
+       ],
+       [
+        0.0375,
+        0.7333
+       ],
+       [
+        0.1083,
+        0.7259
+       ],
+       [
+        0.1292,
+        0.7111
+       ],
+       [
+        0.1542,
+        0.6741
+       ],
+       [
+        0.1875,
+        0.6741
+       ],
+       [
+        0.1875,
+        0.6667
+       ],
+       [
+        0.2542,
+        0.6741
+       ],
+       [
+        0.2792,
+        0.6444
+       ],
+       [
+        0.3083,
+        0.637
+       ],
+       [
+        0.3167,
+        0.6222
+       ],
+       [
+        0.3583,
+        0.6222
+       ]
+      ]
+     },
+     {
+      "trackId": 24,
+      "className": "building",
+      "group": "static",
+      "label": "building",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.6333,
+       0.5852,
+       1.0,
+       0.8148
+      ],
+      "contactY": 0.8148,
+      "bearingDeg": 22.37,
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3806,
+      "distanceM": 3.01,
+      "lateralM": 1.9,
+      "stepsTo": 4.1,
+      "closingMps": 0.39,
+      "urgency": "none",
+      "areaFrac": 0.06167,
+      "collision": false,
+      "latVelMps": -2.56,
+      "outline": [
+       [
+        0.6333,
+        0.5852
+       ],
+       [
+        1.0,
+        0.5852
+       ],
+       [
+        1.0,
+        0.7556
+       ],
+       [
+        0.9417,
+        0.7407
+       ],
+       [
+        0.9292,
+        0.7259
+       ],
+       [
+        0.8958,
+        0.7259
+       ],
+       [
+        0.8958,
+        0.7333
+       ],
+       [
+        0.8625,
+        0.7407
+       ],
+       [
+        0.85,
+        0.7556
+       ],
+       [
+        0.8292,
+        0.7556
+       ],
+       [
+        0.8125,
+        0.7704
+       ],
+       [
+        0.7917,
+        0.7704
+       ],
+       [
+        0.775,
+        0.7852
+       ],
+       [
+        0.6875,
+        0.8148
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": null,
+     "cadenceHz": 1.82,
+     "stepLengthM": 0.74,
+     "headingDeg": 24.6,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.0,
+     "scaleSource": "none",
+     "estimated": {
+      "speed": false,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.5925,
+    "nearbySpeech": [
+     {
+      "t": 0.6673,
+      "type": "speech",
+      "role": "context",
+      "text": "obstacle at 11:15 in 5",
+      "trackId": 1,
+      "urgency": "none",
+      "clock": 11,
+      "clockText": "11:15",
+      "pan": -0.4199
+     },
+     {
+      "t": 3.1698,
+      "type": "speech",
+      "role": "context",
+      "text": "building at 12:45 in 4",
+      "trackId": 24,
+      "urgency": "none",
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3806
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "08d9e0e0",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 15.5155,
+   "event": {
+    "t": 15.5155,
+    "text": "pole at 12:15 in 11",
+    "role": "feature",
+    "trackId": 84,
+    "urgency": "none",
+    "clock": 12,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:31Z",
+   "updatedAt": "2026-10-19T11:16:31Z",
+   "context": {
+    "frameT": 15.5155,
+    "items": [
+     {
+      "trackId": 24,
+      "className": "building",
+      "group": "static",
+      "label": "building",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.55,
+       0.5185,
+       1.0,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": 41.05,
+      "clock": 1,
+      "clockText": "1:15",
+      "pan": 0.6568,
+      "distanceM": 1.43,
+      "lateralM": 1.65,
+      "stepsTo": 1.9,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.15704,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.55,
+        0.5185
+       ],
+       [
+        1.0,
+        0.5185
+       ],
+       [
+        1.0,
+        1.0
+       ],
+       [
+        0.8458,
+        1.0
+       ],
+       [
+        0.8417,
+        0.9778
+       ],
+       [
+        0.8125,
+        0.963
+       ],
+       [
+        0.7917,
+        0.9259
+       ],
+       [
+        0.7792,
+        0.9259
+       ],
+       [
+        0.7583,
+        0.8815
+       ],
+       [
+        0.7417,
+        0.8741
+       ],
+       [
+        0.725,
+        0.837
+       ],
+       [
+        0.6917,
+        0.8074
+       ],
+       [
+        0.6917,
+        0.7926
+       ],
+       [
+        0.675,
+        0.7852
+       ],
+       [
+        0.6708,
+        0.7704
+       ],
+       [
+        0.6375,
+        0.7407
+       ],
+       [
+        0.625,
+        0.7111
+       ],
+       [
+        0.6042,
+        0.6963
+       ],
+       [
+        0.5917,
+        0.6741
+       ],
+       [
+        0.575,
+        0.5481
+       ],
+       [
+        0.5667,
+        0.5333
+       ],
+       [
+        0.55,
+        0.5333
+       ]
+      ]
+     },
+     {
+      "trackId": 71,
+      "className": "vehicle",
+      "group": "moving",
+      "label": "vehicle",
+      "role": "context",
+      "moving": null,
+      "bbox": [
+       0.0,
+       0.5259,
+       0.4708,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": -27.29,
+      "clock": 11,
+      "clockText": "11",
+      "pan": -0.4585,
+      "distanceM": 1.43,
+      "lateralM": -1.1,
+      "stepsTo": 1.9,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.13898,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.45,
+        0.5259
+       ],
+       [
+        0.4708,
+        0.5481
+       ],
+       [
+        0.4708,
+        0.5778
+       ],
+       [
+        0.4458,
+        0.6148
+       ],
+       [
+        0.4458,
+        0.6296
+       ],
+       [
+        0.3875,
+        0.6444
+       ],
+       [
+        0.3917,
+        0.7259
+       ],
+       [
+        0.3625,
+        0.7333
+       ],
+       [
+        0.3583,
+        0.7852
+       ],
+       [
+        0.3375,
+        0.8
+       ],
+       [
+        0.2875,
+        0.7704
+       ],
+       [
+        0.2875,
+        0.8148
+       ],
+       [
+        0.275,
+        0.8593
+       ],
+       [
+        0.2792,
+        0.963
+       ],
+       [
+        0.2708,
+        1.0
+       ],
+       [
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.6593
+       ],
+       [
+        0.025,
+        0.6519
+       ],
+       [
+        0.0333,
+        0.6296
+       ],
+       [
+        0.0542,
+        0.6148
+       ],
+       [
+        0.175,
+        0.6148
+       ],
+       [
+        0.1792,
+        0.5926
+       ],
+       [
+        0.2083,
+        0.5926
+       ],
+       [
+        0.2208,
+        0.5778
+       ],
+       [
+        0.2417,
+        0.5778
+       ],
+       [
+        0.25,
+        0.6
+       ],
+       [
+        0.2667,
+        0.5926
+       ],
+       [
+        0.275,
+        0.5704
+       ],
+       [
+        0.3708,
+        0.5704
+       ],
+       [
+        0.375,
+        0.5852
+       ],
+       [
+        0.3917,
+        0.5407
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": null,
+     "cadenceHz": 2.01,
+     "stepLengthM": 0.74,
+     "headingDeg": 45.8,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.0,
+     "scaleSource": "none",
+     "estimated": {
+      "speed": false,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.5202,
+    "nearbySpeech": [
+     {
+      "t": 15.5155,
+      "type": "speech",
+      "role": "feature",
+      "text": "pole at 12:15 in 11",
+      "trackId": 84,
+      "urgency": "none",
+      "clock": 12,
+      "clockText": "12:15",
+      "pan": 0.0985
+     },
+     {
+      "t": 18.3517,
+      "type": "speech",
+      "role": "context",
+      "text": "obstacle at 12:45 in 4",
+      "trackId": 95,
+      "urgency": "none",
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3806
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "59d4847f",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 18.3517,
+   "event": {
+    "t": 18.3517,
+    "text": "obstacle at 12:45 in 4",
+    "role": "context",
+    "trackId": 95,
+    "urgency": "none",
+    "clock": 1,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:34Z",
+   "updatedAt": "2026-10-19T11:16:34Z",
+   "context": {
+    "frameT": 18.3517,
+    "items": [
+     {
+      "trackId": 24,
+      "className": "building",
+      "group": "static",
+      "label": "building",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.7,
+       0.5259,
+       1.0,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": 42.04,
+      "clock": 1,
+      "clockText": "1:30",
+      "pan": 0.6696,
+      "distanceM": 1.41,
+      "lateralM": 1.67,
+      "stepsTo": 1.9,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.11935,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.7,
+        0.5259
+       ],
+       [
+        1.0,
+        0.5259
+       ],
+       [
+        1.0,
+        1.0
+       ],
+       [
+        0.8542,
+        1.0
+       ],
+       [
+        0.8542,
+        0.9926
+       ],
+       [
+        0.8458,
+        0.9926
+       ],
+       [
+        0.8458,
+        0.9778
+       ],
+       [
+        0.8375,
+        0.963
+       ],
+       [
+        0.8292,
+        0.963
+       ],
+       [
+        0.7833,
+        0.8815
+       ],
+       [
+        0.7583,
+        0.8667
+       ],
+       [
+        0.7458,
+        0.8444
+       ],
+       [
+        0.7458,
+        0.8296
+       ],
+       [
+        0.7333,
+        0.8222
+       ],
+       [
+        0.7125,
+        0.7852
+       ],
+       [
+        0.7167,
+        0.7778
+       ],
+       [
+        0.7167,
+        0.6296
+       ],
+       [
+        0.7208,
+        0.6296
+       ],
+       [
+        0.725,
+        0.5481
+       ],
+       [
+        0.7167,
+        0.5333
+       ],
+       [
+        0.7,
+        0.5333
+       ]
+      ]
+     },
+     {
+      "trackId": 71,
+      "className": "vehicle",
+      "group": "moving",
+      "label": "vehicle",
+      "role": "context",
+      "moving": null,
+      "bbox": [
+       0.0,
+       0.5259,
+       0.3333,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": -38.1,
+      "clock": 11,
+      "clockText": "10:45",
+      "pan": -0.6171,
+      "distanceM": 1.41,
+      "lateralM": -1.51,
+      "stepsTo": 1.9,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.13883,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.1125,
+        0.5259
+       ],
+       [
+        0.3208,
+        0.5259
+       ],
+       [
+        0.3125,
+        0.5926
+       ],
+       [
+        0.325,
+        0.6074
+       ],
+       [
+        0.3292,
+        0.6667
+       ],
+       [
+        0.3333,
+        0.6667
+       ],
+       [
+        0.3333,
+        0.8296
+       ],
+       [
+        0.3292,
+        0.8296
+       ],
+       [
+        0.325,
+        0.8889
+       ],
+       [
+        0.2792,
+        0.9037
+       ],
+       [
+        0.2708,
+        0.8741
+       ],
+       [
+        0.2542,
+        0.8741
+       ],
+       [
+        0.25,
+        0.8889
+       ],
+       [
+        0.2167,
+        0.9185
+       ],
+       [
+        0.1958,
+        0.963
+       ],
+       [
+        0.1875,
+        0.963
+       ],
+       [
+        0.1792,
+        0.9778
+       ],
+       [
+        0.1792,
+        1.0
+       ],
+       [
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.5926
+       ],
+       [
+        0.0167,
+        0.5852
+       ],
+       [
+        0.0375,
+        0.5556
+       ],
+       [
+        0.05,
+        0.5556
+       ],
+       [
+        0.0625,
+        0.5407
+       ],
+       [
+        0.1125,
+        0.5333
+       ]
+      ]
+     },
+     {
+      "trackId": 95,
+      "className": "sidewalk-obstacle",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.6458,
+       0.5259,
+       0.725,
+       0.7852
+      ],
+      "contactY": 0.7852,
+      "bearingDeg": 22.37,
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3806,
+      "distanceM": 3.05,
+      "lateralM": 1.93,
+      "stepsTo": 4.1,
+      "closingMps": 1.08,
+      "urgency": "none",
+      "areaFrac": 0.01401,
+      "collision": false,
+      "latVelMps": 0.2,
+      "outline": [
+       [
+        0.65,
+        0.5259
+       ],
+       [
+        0.6625,
+        0.5259
+       ],
+       [
+        0.6625,
+        0.5333
+       ],
+       [
+        0.6958,
+        0.5333
+       ],
+       [
+        0.7,
+        0.5259
+       ],
+       [
+        0.7,
+        0.5333
+       ],
+       [
+        0.7167,
+        0.5333
+       ],
+       [
+        0.725,
+        0.5481
+       ],
+       [
+        0.7208,
+        0.6296
+       ],
+       [
+        0.7167,
+        0.6296
+       ],
+       [
+        0.7167,
+        0.7778
+       ],
+       [
+        0.7125,
+        0.7852
+       ],
+       [
+        0.6792,
+        0.7778
+       ],
+       [
+        0.6833,
+        0.7556
+       ],
+       [
+        0.7083,
+        0.763
+       ],
+       [
+        0.7083,
+        0.7259
+       ],
+       [
+        0.7042,
+        0.7333
+       ],
+       [
+        0.6875,
+        0.7333
+       ],
+       [
+        0.6833,
+        0.7556
+       ],
+       [
+        0.6792,
+        0.7556
+       ],
+       [
+        0.675,
+        0.6889
+       ],
+       [
+        0.6583,
+        0.6815
+       ],
+       [
+        0.6583,
+        0.6667
+       ],
+       [
+        0.6458,
+        0.6667
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.43,
+     "cadenceHz": 1.93,
+     "stepLengthM": 0.74,
+     "headingDeg": 43.0,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 0.92,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.533,
+    "nearbySpeech": [
+     {
+      "t": 15.5155,
+      "type": "speech",
+      "role": "feature",
+      "text": "pole at 12:15 in 11",
+      "trackId": 84,
+      "urgency": "none",
+      "clock": 12,
+      "clockText": "12:15",
+      "pan": 0.0985
+     },
+     {
+      "t": 18.3517,
+      "type": "speech",
+      "role": "context",
+      "text": "obstacle at 12:45 in 4",
+      "trackId": 95,
+      "urgency": "none",
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3806
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "312da2f8",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 28.8205,
+   "event": {
+    "t": 28.8205,
+    "text": "pole at 12 in 8",
+    "role": "danger",
+    "trackId": 222,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:42Z",
+   "updatedAt": "2026-10-19T11:16:42Z",
+   "context": {
+    "frameT": 28.8205,
+    "items": [
+     {
+      "trackId": 173,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.6875,
+       0.7926,
+       1.0,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": 35.15,
+      "clock": 1,
+      "clockText": "1:15",
+      "pan": 0.5758,
+      "distanceM": 1.22,
+      "lateralM": 1.21,
+      "stepsTo": 1.6,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.02417,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.6875,
+        0.7926
+       ],
+       [
+        0.7,
+        0.7926
+       ],
+       [
+        0.7042,
+        0.8074
+       ],
+       [
+        0.7125,
+        0.8074
+       ],
+       [
+        0.7125,
+        0.8222
+       ],
+       [
+        0.7167,
+        0.8148
+       ],
+       [
+        0.7792,
+        0.8222
+       ],
+       [
+        0.8083,
+        0.8741
+       ],
+       [
+        0.8458,
+        0.8815
+       ],
+       [
+        0.8542,
+        0.8963
+       ],
+       [
+        0.875,
+        0.8963
+       ],
+       [
+        0.875,
+        0.9037
+       ],
+       [
+        0.9083,
+        0.9111
+       ],
+       [
+        0.9083,
+        0.9259
+       ],
+       [
+        0.9167,
+        0.9333
+       ],
+       [
+        0.9208,
+        0.9556
+       ],
+       [
+        0.9292,
+        0.9407
+       ],
+       [
+        0.95,
+        0.9481
+       ],
+       [
+        0.9542,
+        0.963
+       ],
+       [
+        0.9875,
+        0.963
+       ],
+       [
+        0.9875,
+        0.9704
+       ],
+       [
+        1.0,
+        0.9556
+       ],
+       [
+        1.0,
+        1.0
+       ],
+       [
+        0.975,
+        1.0
+       ],
+       [
+        0.9625,
+        0.9778
+       ],
+       [
+        0.9542,
+        0.9778
+       ],
+       [
+        0.95,
+        1.0
+       ],
+       [
+        0.9125,
+        1.0
+       ],
+       [
+        0.9125,
+        0.9926
+       ],
+       [
+        0.7958,
+        1.0
+       ],
+       [
+        0.7917,
+        0.9778
+       ]
+      ]
+     },
+     {
+      "trackId": 93,
+      "className": "vehicle",
+      "group": "moving",
+      "label": "vehicle",
+      "role": "context",
+      "moving": null,
+      "bbox": [
+       0.0,
+       0.5037,
+       0.4083,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": -37.61,
+      "clock": 11,
+      "clockText": "10:45",
+      "pan": -0.6103,
+      "distanceM": 1.22,
+      "lateralM": -1.29,
+      "stepsTo": 1.6,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.13657,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.0,
+        0.5037
+       ],
+       [
+        0.0417,
+        0.5111
+       ],
+       [
+        0.1458,
+        0.5926
+       ],
+       [
+        0.1833,
+        0.6
+       ],
+       [
+        0.2167,
+        0.5778
+       ],
+       [
+        0.2583,
+        0.5185
+       ],
+       [
+        0.3625,
+        0.5111
+       ],
+       [
+        0.3875,
+        0.5407
+       ],
+       [
+        0.3958,
+        0.5778
+       ],
+       [
+        0.4042,
+        0.5778
+       ],
+       [
+        0.4083,
+        0.6667
+       ],
+       [
+        0.375,
+        0.7185
+       ],
+       [
+        0.3542,
+        0.7333
+       ],
+       [
+        0.3208,
+        0.7926
+       ],
+       [
+        0.3,
+        0.7778
+       ],
+       [
+        0.225,
+        0.7852
+       ],
+       [
+        0.2083,
+        0.8296
+       ],
+       [
+        0.1958,
+        0.963
+       ],
+       [
+        0.1833,
+        1.0
+       ],
+       [
+        0.0375,
+        1.0
+       ],
+       [
+        0.0,
+        0.9778
+       ]
+      ]
+     },
+     {
+      "trackId": 242,
+      "className": "building",
+      "group": "static",
+      "label": "building",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.6167,
+       0.4815,
+       1.0,
+       0.9704
+      ],
+      "contactY": 0.9704,
+      "bearingDeg": 57.77,
+      "clock": 2,
+      "clockText": "2",
+      "pan": 0.8459,
+      "distanceM": 1.45,
+      "lateralM": 2.37,
+      "stepsTo": 2.0,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.14281,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.6208,
+        0.4815
+       ],
+       [
+        1.0,
+        0.4815
+       ],
+       [
+        1.0,
+        0.9556
+       ],
+       [
+        0.9917,
+        0.9704
+       ],
+       [
+        0.9542,
+        0.963
+       ],
+       [
+        0.95,
+        0.9481
+       ],
+       [
+        0.9375,
+        0.9481
+       ],
+       [
+        0.9375,
+        0.9407
+       ],
+       [
+        0.9208,
+        0.9556
+       ],
+       [
+        0.9083,
+        0.9111
+       ],
+       [
+        0.8083,
+        0.8741
+       ],
+       [
+        0.7792,
+        0.8222
+       ],
+       [
+        0.7458,
+        0.8222
+       ],
+       [
+        0.7458,
+        0.8148
+       ],
+       [
+        0.7125,
+        0.8222
+       ],
+       [
+        0.7125,
+        0.8074
+       ],
+       [
+        0.7042,
+        0.8074
+       ],
+       [
+        0.7,
+        0.7926
+       ],
+       [
+        0.6833,
+        0.7926
+       ],
+       [
+        0.6167,
+        0.6667
+       ]
+      ]
+     },
+     {
+      "trackId": 265,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": null,
+      "bbox": [
+       0.4333,
+       0.5704,
+       0.45,
+       0.6444
+      ],
+      "contactY": 0.6444,
+      "bearingDeg": -6.15,
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.1071,
+      "distanceM": 4.04,
+      "lateralM": -0.7,
+      "stepsTo": 5.5,
+      "closingMps": null,
+      "urgency": "danger",
+      "areaFrac": 0.00099,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4375,
+        0.5704
+       ],
+       [
+        0.45,
+        0.5778
+       ],
+       [
+        0.45,
+        0.6074
+       ],
+       [
+        0.4458,
+        0.6074
+       ],
+       [
+        0.45,
+        0.6444
+       ],
+       [
+        0.4375,
+        0.6444
+       ],
+       [
+        0.4375,
+        0.6296
+       ],
+       [
+        0.4333,
+        0.6296
+       ],
+       [
+        0.4333,
+        0.5778
+       ]
+      ]
+     },
+     {
+      "trackId": 222,
+      "className": "pole",
+      "group": "static",
+      "label": "pole",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.5167,
+       0.4815,
+       0.525,
+       0.6
+      ],
+      "contactY": 0.6,
+      "bearingDeg": 2.7,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0472,
+      "distanceM": 6.09,
+      "lateralM": 0.46,
+      "stepsTo": 8.2,
+      "closingMps": 2.31,
+      "urgency": "danger",
+      "areaFrac": 0.00096,
+      "collision": true,
+      "latVelMps": 0.28,
+      "outline": [
+       [
+        0.5167,
+        0.4815
+       ],
+       [
+        0.525,
+        0.4815
+       ],
+       [
+        0.525,
+        0.6
+       ],
+       [
+        0.5167,
+        0.5926
+       ]
+      ]
+     },
+     {
+      "trackId": 271,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.4625,
+       0.5778,
+       0.5167,
+       0.5926
+      ],
+      "contactY": 0.5926,
+      "bearingDeg": 1.23,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0215,
+      "distanceM": 6.19,
+      "lateralM": 0.21,
+      "stepsTo": 8.4,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00049,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4625,
+        0.5778
+       ],
+       [
+        0.5167,
+        0.5778
+       ],
+       [
+        0.5167,
+        0.5926
+       ],
+       [
+        0.5083,
+        0.5926
+       ],
+       [
+        0.5083,
+        0.5852
+       ],
+       [
+        0.4833,
+        0.5852
+       ],
+       [
+        0.4792,
+        0.5926
+       ],
+       [
+        0.4792,
+        0.5852
+       ],
+       [
+        0.4625,
+        0.5852
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.57,
+     "cadenceHz": 2.12,
+     "stepLengthM": 0.74,
+     "headingDeg": 48.4,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 0.91,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.4883,
+    "nearbySpeech": [
+     {
+      "t": 28.8205,
+      "type": "speech",
+      "role": "danger",
+      "text": "pole at 12 in 8",
+      "trackId": 222,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0472
+     },
+     {
+      "t": 30.322,
+      "type": "speech",
+      "role": "danger",
+      "text": "person moving away at 11:45",
+      "trackId": 265,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.0729
+     }
+    ],
+    "nearbyBeeps": [
+     {
+      "t": 28.8205,
+      "tEnd": 28.9005,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 222,
+      "label": "pole",
+      "clock": 12,
+      "clockText": "12",
+      "minSteps": 8.2,
+      "urgency": "danger",
+      "text": "beeps \u00b7 pole at 12 \u00b7 8 steps"
+     }
+    ]
+   }
+  },
+  {
+   "id": "d55689ec",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 28.8205,
+   "event": {
+    "t": 28.8205,
+    "text": "beeps \u00b7 pole at 12 \u00b7 8 steps",
+    "role": "danger",
+    "trackId": 222,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "beeps",
+    "tEnd": 28.9005,
+    "label": "pole",
+    "minSteps": 8.2
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:45Z",
+   "updatedAt": "2026-10-19T11:16:45Z",
+   "context": {
+    "frameT": 28.8205,
+    "items": [
+     {
+      "trackId": 173,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.6875,
+       0.7926,
+       1.0,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": 35.15,
+      "clock": 1,
+      "clockText": "1:15",
+      "pan": 0.5758,
+      "distanceM": 1.22,
+      "lateralM": 1.21,
+      "stepsTo": 1.6,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.02417,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.6875,
+        0.7926
+       ],
+       [
+        0.7,
+        0.7926
+       ],
+       [
+        0.7042,
+        0.8074
+       ],
+       [
+        0.7125,
+        0.8074
+       ],
+       [
+        0.7125,
+        0.8222
+       ],
+       [
+        0.7167,
+        0.8148
+       ],
+       [
+        0.7792,
+        0.8222
+       ],
+       [
+        0.8083,
+        0.8741
+       ],
+       [
+        0.8458,
+        0.8815
+       ],
+       [
+        0.8542,
+        0.8963
+       ],
+       [
+        0.875,
+        0.8963
+       ],
+       [
+        0.875,
+        0.9037
+       ],
+       [
+        0.9083,
+        0.9111
+       ],
+       [
+        0.9083,
+        0.9259
+       ],
+       [
+        0.9167,
+        0.9333
+       ],
+       [
+        0.9208,
+        0.9556
+       ],
+       [
+        0.9292,
+        0.9407
+       ],
+       [
+        0.95,
+        0.9481
+       ],
+       [
+        0.9542,
+        0.963
+       ],
+       [
+        0.9875,
+        0.963
+       ],
+       [
+        0.9875,
+        0.9704
+       ],
+       [
+        1.0,
+        0.9556
+       ],
+       [
+        1.0,
+        1.0
+       ],
+       [
+        0.975,
+        1.0
+       ],
+       [
+        0.9625,
+        0.9778
+       ],
+       [
+        0.9542,
+        0.9778
+       ],
+       [
+        0.95,
+        1.0
+       ],
+       [
+        0.9125,
+        1.0
+       ],
+       [
+        0.9125,
+        0.9926
+       ],
+       [
+        0.7958,
+        1.0
+       ],
+       [
+        0.7917,
+        0.9778
+       ]
+      ]
+     },
+     {
+      "trackId": 93,
+      "className": "vehicle",
+      "group": "moving",
+      "label": "vehicle",
+      "role": "context",
+      "moving": null,
+      "bbox": [
+       0.0,
+       0.5037,
+       0.4083,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": -37.61,
+      "clock": 11,
+      "clockText": "10:45",
+      "pan": -0.6103,
+      "distanceM": 1.22,
+      "lateralM": -1.29,
+      "stepsTo": 1.6,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.13657,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.0,
+        0.5037
+       ],
+       [
+        0.0417,
+        0.5111
+       ],
+       [
+        0.1458,
+        0.5926
+       ],
+       [
+        0.1833,
+        0.6
+       ],
+       [
+        0.2167,
+        0.5778
+       ],
+       [
+        0.2583,
+        0.5185
+       ],
+       [
+        0.3625,
+        0.5111
+       ],
+       [
+        0.3875,
+        0.5407
+       ],
+       [
+        0.3958,
+        0.5778
+       ],
+       [
+        0.4042,
+        0.5778
+       ],
+       [
+        0.4083,
+        0.6667
+       ],
+       [
+        0.375,
+        0.7185
+       ],
+       [
+        0.3542,
+        0.7333
+       ],
+       [
+        0.3208,
+        0.7926
+       ],
+       [
+        0.3,
+        0.7778
+       ],
+       [
+        0.225,
+        0.7852
+       ],
+       [
+        0.2083,
+        0.8296
+       ],
+       [
+        0.1958,
+        0.963
+       ],
+       [
+        0.1833,
+        1.0
+       ],
+       [
+        0.0375,
+        1.0
+       ],
+       [
+        0.0,
+        0.9778
+       ]
+      ]
+     },
+     {
+      "trackId": 242,
+      "className": "building",
+      "group": "static",
+      "label": "building",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.6167,
+       0.4815,
+       1.0,
+       0.9704
+      ],
+      "contactY": 0.9704,
+      "bearingDeg": 57.77,
+      "clock": 2,
+      "clockText": "2",
+      "pan": 0.8459,
+      "distanceM": 1.45,
+      "lateralM": 2.37,
+      "stepsTo": 2.0,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.14281,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.6208,
+        0.4815
+       ],
+       [
+        1.0,
+        0.4815
+       ],
+       [
+        1.0,
+        0.9556
+       ],
+       [
+        0.9917,
+        0.9704
+       ],
+       [
+        0.9542,
+        0.963
+       ],
+       [
+        0.95,
+        0.9481
+       ],
+       [
+        0.9375,
+        0.9481
+       ],
+       [
+        0.9375,
+        0.9407
+       ],
+       [
+        0.9208,
+        0.9556
+       ],
+       [
+        0.9083,
+        0.9111
+       ],
+       [
+        0.8083,
+        0.8741
+       ],
+       [
+        0.7792,
+        0.8222
+       ],
+       [
+        0.7458,
+        0.8222
+       ],
+       [
+        0.7458,
+        0.8148
+       ],
+       [
+        0.7125,
+        0.8222
+       ],
+       [
+        0.7125,
+        0.8074
+       ],
+       [
+        0.7042,
+        0.8074
+       ],
+       [
+        0.7,
+        0.7926
+       ],
+       [
+        0.6833,
+        0.7926
+       ],
+       [
+        0.6167,
+        0.6667
+       ]
+      ]
+     },
+     {
+      "trackId": 265,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": null,
+      "bbox": [
+       0.4333,
+       0.5704,
+       0.45,
+       0.6444
+      ],
+      "contactY": 0.6444,
+      "bearingDeg": -6.15,
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.1071,
+      "distanceM": 4.04,
+      "lateralM": -0.7,
+      "stepsTo": 5.5,
+      "closingMps": null,
+      "urgency": "danger",
+      "areaFrac": 0.00099,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4375,
+        0.5704
+       ],
+       [
+        0.45,
+        0.5778
+       ],
+       [
+        0.45,
+        0.6074
+       ],
+       [
+        0.4458,
+        0.6074
+       ],
+       [
+        0.45,
+        0.6444
+       ],
+       [
+        0.4375,
+        0.6444
+       ],
+       [
+        0.4375,
+        0.6296
+       ],
+       [
+        0.4333,
+        0.6296
+       ],
+       [
+        0.4333,
+        0.5778
+       ]
+      ]
+     },
+     {
+      "trackId": 222,
+      "className": "pole",
+      "group": "static",
+      "label": "pole",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.5167,
+       0.4815,
+       0.525,
+       0.6
+      ],
+      "contactY": 0.6,
+      "bearingDeg": 2.7,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0472,
+      "distanceM": 6.09,
+      "lateralM": 0.46,
+      "stepsTo": 8.2,
+      "closingMps": 2.31,
+      "urgency": "danger",
+      "areaFrac": 0.00096,
+      "collision": true,
+      "latVelMps": 0.28,
+      "outline": [
+       [
+        0.5167,
+        0.4815
+       ],
+       [
+        0.525,
+        0.4815
+       ],
+       [
+        0.525,
+        0.6
+       ],
+       [
+        0.5167,
+        0.5926
+       ]
+      ]
+     },
+     {
+      "trackId": 271,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.4625,
+       0.5778,
+       0.5167,
+       0.5926
+      ],
+      "contactY": 0.5926,
+      "bearingDeg": 1.23,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0215,
+      "distanceM": 6.19,
+      "lateralM": 0.21,
+      "stepsTo": 8.4,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00049,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4625,
+        0.5778
+       ],
+       [
+        0.5167,
+        0.5778
+       ],
+       [
+        0.5167,
+        0.5926
+       ],
+       [
+        0.5083,
+        0.5926
+       ],
+       [
+        0.5083,
+        0.5852
+       ],
+       [
+        0.4833,
+        0.5852
+       ],
+       [
+        0.4792,
+        0.5926
+       ],
+       [
+        0.4792,
+        0.5852
+       ],
+       [
+        0.4625,
+        0.5852
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.57,
+     "cadenceHz": 2.12,
+     "stepLengthM": 0.74,
+     "headingDeg": 48.4,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 0.91,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.4883,
+    "nearbySpeech": [
+     {
+      "t": 28.8205,
+      "type": "speech",
+      "role": "danger",
+      "text": "pole at 12 in 8",
+      "trackId": 222,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0472
+     },
+     {
+      "t": 30.322,
+      "type": "speech",
+      "role": "danger",
+      "text": "person moving away at 11:45",
+      "trackId": 265,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.0729
+     }
+    ],
+    "nearbyBeeps": [
+     {
+      "t": 28.8205,
+      "tEnd": 28.9005,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 222,
+      "label": "pole",
+      "clock": 12,
+      "clockText": "12",
+      "minSteps": 8.2,
+      "urgency": "danger",
+      "text": "beeps \u00b7 pole at 12 \u00b7 8 steps"
+     }
+    ]
+   }
+  },
+  {
+   "id": "62288015",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "text says curb, speech says tarmack... speech shpid match text.",
+   "t": 39.331,
+   "event": {
+    "t": 39.331,
+    "text": "curb at 12 in 3",
+    "role": "feature",
+    "trackId": 746,
+    "urgency": "none",
+    "clock": 12,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:17:34Z",
+   "updatedAt": "2026-10-19T11:18:13Z",
+   "context": {
+    "frameT": 39.331,
+    "items": [
+     {
+      "trackId": 752,
+      "className": "pole",
+      "group": "static",
+      "label": "pole",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.3042,
+       0.4593,
+       0.3625,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": -16.47,
+      "clock": 11,
+      "clockText": "11:30",
+      "pan": -0.2835,
+      "distanceM": 1.18,
+      "lateralM": -0.55,
+      "stepsTo": 1.6,
+      "closingMps": null,
+      "urgency": "final",
+      "areaFrac": 0.00991,
+      "collision": true,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.3042,
+        0.4593
+       ],
+       [
+        0.3208,
+        0.4593
+       ],
+       [
+        0.3292,
+        0.8444
+       ],
+       [
+        0.3333,
+        0.8444
+       ],
+       [
+        0.3333,
+        0.8667
+       ],
+       [
+        0.3417,
+        0.8741
+       ],
+       [
+        0.3417,
+        0.9037
+       ],
+       [
+        0.35,
+        0.9111
+       ],
+       [
+        0.35,
+        0.9407
+       ],
+       [
+        0.3583,
+        0.9556
+       ],
+       [
+        0.3583,
+        0.9926
+       ],
+       [
+        0.3625,
+        1.0
+       ],
+       [
+        0.3375,
+        1.0
+       ],
+       [
+        0.3375,
+        0.9778
+       ],
+       [
+        0.3333,
+        0.9778
+       ],
+       [
+        0.3333,
+        0.9556
+       ],
+       [
+        0.3292,
+        0.9556
+       ],
+       [
+        0.3292,
+        0.9111
+       ],
+       [
+        0.325,
+        0.9111
+       ],
+       [
+        0.325,
+        0.8889
+       ],
+       [
+        0.3208,
+        0.8889
+       ],
+       [
+        0.3208,
+        0.8296
+       ],
+       [
+        0.3125,
+        0.8222
+       ],
+       [
+        0.3125,
+        0.7926
+       ],
+       [
+        0.3083,
+        0.7926
+       ]
+      ]
+     },
+     {
+      "trackId": 395,
+      "className": "sidewalk-obstacle",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.7625,
+       0.4741,
+       1.0,
+       0.9556
+      ],
+      "contactY": 0.9556,
+      "bearingDeg": 58.26,
+      "clock": 2,
+      "clockText": "2",
+      "pan": 0.8505,
+      "distanceM": 1.49,
+      "lateralM": 2.44,
+      "stepsTo": 2.0,
+      "closingMps": 0.38,
+      "urgency": "none",
+      "areaFrac": 0.04642,
+      "collision": false,
+      "latVelMps": -0.68,
+      "outline": [
+       [
+        0.9542,
+        0.4741
+       ],
+       [
+        1.0,
+        0.4741
+       ],
+       [
+        1.0,
+        0.9556
+       ],
+       [
+        0.9542,
+        0.9333
+       ],
+       [
+        0.9542,
+        0.6667
+       ],
+       [
+        0.9083,
+        0.6963
+       ],
+       [
+        0.9,
+        0.7852
+       ],
+       [
+        0.8875,
+        0.7407
+       ],
+       [
+        0.8625,
+        0.7852
+       ],
+       [
+        0.8542,
+        0.8519
+       ],
+       [
+        0.7625,
+        0.8074
+       ],
+       [
+        0.7625,
+        0.7259
+       ],
+       [
+        0.7833,
+        0.7111
+       ],
+       [
+        0.8083,
+        0.763
+       ],
+       [
+        0.8167,
+        0.6889
+       ],
+       [
+        0.8292,
+        0.6963
+       ],
+       [
+        0.8333,
+        0.8
+       ],
+       [
+        0.85,
+        0.8222
+       ],
+       [
+        0.85,
+        0.763
+       ],
+       [
+        0.8792,
+        0.7481
+       ],
+       [
+        0.8792,
+        0.7037
+       ],
+       [
+        0.9,
+        0.7111
+       ],
+       [
+        0.9,
+        0.6667
+       ],
+       [
+        0.8833,
+        0.6667
+       ],
+       [
+        0.8792,
+        0.6963
+       ],
+       [
+        0.875,
+        0.563
+       ],
+       [
+        0.8542,
+        0.5778
+       ],
+       [
+        0.8583,
+        0.5259
+       ]
+      ]
+     },
+     {
+      "trackId": 762,
+      "className": "vehicle",
+      "group": "moving",
+      "label": "vehicle",
+      "role": "context",
+      "moving": null,
+      "bbox": [
+       0.9,
+       0.6667,
+       0.9583,
+       0.8148
+      ],
+      "contactY": 0.8148,
+      "bearingDeg": 49.9,
+      "clock": 2,
+      "clockText": "1:45",
+      "pan": 0.765,
+      "distanceM": 1.8,
+      "lateralM": 2.53,
+      "stepsTo": 2.4,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.0066,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.9333,
+        0.6667
+       ],
+       [
+        0.9542,
+        0.6667
+       ],
+       [
+        0.9583,
+        0.6741
+       ],
+       [
+        0.9583,
+        0.8
+       ],
+       [
+        0.9542,
+        0.8074
+       ],
+       [
+        0.925,
+        0.8
+       ],
+       [
+        0.925,
+        0.8148
+       ],
+       [
+        0.9208,
+        0.8148
+       ],
+       [
+        0.9125,
+        0.7852
+       ],
+       [
+        0.9,
+        0.7852
+       ],
+       [
+        0.9,
+        0.7333
+       ],
+       [
+        0.9083,
+        0.7185
+       ],
+       [
+        0.9083,
+        0.6963
+       ],
+       [
+        0.9125,
+        0.6889
+       ],
+       [
+        0.925,
+        0.6963
+       ]
+      ]
+     },
+     {
+      "trackId": 746,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.35,
+       0.7704,
+       0.4792,
+       0.7926
+      ],
+      "contactY": 0.7926,
+      "bearingDeg": -2.7,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0472,
+      "distanceM": 1.97,
+      "lateralM": -0.15,
+      "stepsTo": 2.7,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00173,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.3542,
+        0.7704
+       ],
+       [
+        0.3583,
+        0.7778
+       ],
+       [
+        0.3917,
+        0.7778
+       ],
+       [
+        0.3917,
+        0.7852
+       ],
+       [
+        0.4792,
+        0.7778
+       ],
+       [
+        0.4792,
+        0.7926
+       ],
+       [
+        0.3542,
+        0.7926
+       ],
+       [
+        0.35,
+        0.7852
+       ]
+      ]
+     },
+     {
+      "trackId": 630,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.3583,
+       0.637,
+       0.4833,
+       0.7852
+      ],
+      "contactY": 0.7852,
+      "bearingDeg": -10.08,
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.175,
+      "distanceM": 2.03,
+      "lateralM": -0.58,
+      "stepsTo": 2.8,
+      "closingMps": 0.62,
+      "urgency": "none",
+      "areaFrac": 0.01491,
+      "collision": false,
+      "latVelMps": -1.55,
+      "outline": [
+       [
+        0.45,
+        0.637
+       ],
+       [
+        0.4792,
+        0.637
+       ],
+       [
+        0.4792,
+        0.6963
+       ],
+       [
+        0.4833,
+        0.6963
+       ],
+       [
+        0.4833,
+        0.763
+       ],
+       [
+        0.4792,
+        0.763
+       ],
+       [
+        0.4792,
+        0.7778
+       ],
+       [
+        0.4167,
+        0.7778
+       ],
+       [
+        0.4167,
+        0.7852
+       ],
+       [
+        0.3583,
+        0.7778
+       ],
+       [
+        0.3625,
+        0.7259
+       ],
+       [
+        0.3708,
+        0.7185
+       ],
+       [
+        0.3792,
+        0.6741
+       ],
+       [
+        0.3875,
+        0.6741
+       ],
+       [
+        0.3875,
+        0.6593
+       ],
+       [
+        0.3958,
+        0.6444
+       ],
+       [
+        0.45,
+        0.6444
+       ]
+      ]
+     },
+     {
+      "trackId": 597,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.4875,
+       0.637,
+       0.6292,
+       0.7778
+      ],
+      "contactY": 0.7778,
+      "bearingDeg": -0.25,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0043,
+      "distanceM": 2.1,
+      "lateralM": -0.01,
+      "stepsTo": 2.8,
+      "closingMps": 0.6,
+      "urgency": "none",
+      "areaFrac": 0.01562,
+      "collision": false,
+      "latVelMps": -1.4,
+      "outline": [
+       [
+        0.4917,
+        0.637
+       ],
+       [
+        0.5375,
+        0.637
+       ],
+       [
+        0.5375,
+        0.6444
+       ],
+       [
+        0.55,
+        0.6444
+       ],
+       [
+        0.55,
+        0.6519
+       ],
+       [
+        0.5708,
+        0.6593
+       ],
+       [
+        0.5708,
+        0.6667
+       ],
+       [
+        0.5875,
+        0.6667
+       ],
+       [
+        0.5875,
+        0.6741
+       ],
+       [
+        0.6,
+        0.6741
+       ],
+       [
+        0.6,
+        0.6815
+       ],
+       [
+        0.6208,
+        0.6815
+       ],
+       [
+        0.625,
+        0.7111
+       ],
+       [
+        0.6292,
+        0.7111
+       ],
+       [
+        0.6292,
+        0.7481
+       ],
+       [
+        0.625,
+        0.7481
+       ],
+       [
+        0.625,
+        0.763
+       ],
+       [
+        0.6042,
+        0.763
+       ],
+       [
+        0.6042,
+        0.7704
+       ],
+       [
+        0.5375,
+        0.7704
+       ],
+       [
+        0.5375,
+        0.7778
+       ],
+       [
+        0.5042,
+        0.7704
+       ],
+       [
+        0.5042,
+        0.7778
+       ],
+       [
+        0.4917,
+        0.7778
+       ],
+       [
+        0.4917,
+        0.7037
+       ],
+       [
+        0.4875,
+        0.7037
+       ],
+       [
+        0.4875,
+        0.6815
+       ],
+       [
+        0.4917,
+        0.6815
+       ],
+       [
+        0.4875,
+        0.6519
+       ],
+       [
+        0.4917,
+        0.6519
+       ]
+      ]
+     },
+     {
+      "trackId": 757,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.6333,
+       0.7037,
+       0.6833,
+       0.7556
+      ],
+      "contactY": 0.7556,
+      "bearingDeg": 15.98,
+      "clock": 1,
+      "clockText": "12:30",
+      "pan": 0.2753,
+      "distanceM": 2.27,
+      "lateralM": 1.03,
+      "stepsTo": 3.1,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.0017,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.6333,
+        0.7037
+       ],
+       [
+        0.65,
+        0.7037
+       ],
+       [
+        0.65,
+        0.7111
+       ],
+       [
+        0.6583,
+        0.7111
+       ],
+       [
+        0.6667,
+        0.7259
+       ],
+       [
+        0.6833,
+        0.7259
+       ],
+       [
+        0.6833,
+        0.7407
+       ],
+       [
+        0.6333,
+        0.7556
+       ]
+      ]
+     },
+     {
+      "trackId": 584,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.325,
+       0.6148,
+       0.4792,
+       0.6444
+      ],
+      "contactY": 0.6444,
+      "bearingDeg": -10.08,
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.175,
+      "distanceM": 3.31,
+      "lateralM": -0.94,
+      "stepsTo": 4.5,
+      "closingMps": 0.67,
+      "urgency": "none",
+      "areaFrac": 0.00383,
+      "collision": false,
+      "latVelMps": -2.24,
+      "outline": [
+       [
+        0.325,
+        0.6148
+       ],
+       [
+        0.4792,
+        0.6148
+       ],
+       [
+        0.4792,
+        0.6296
+       ],
+       [
+        0.4417,
+        0.6296
+       ],
+       [
+        0.4417,
+        0.637
+       ],
+       [
+        0.4167,
+        0.637
+       ],
+       [
+        0.4167,
+        0.6444
+       ],
+       [
+        0.325,
+        0.6444
+       ]
+      ]
+     },
+     {
+      "trackId": 764,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.4167,
+       0.6296,
+       0.4792,
+       0.6444
+      ],
+      "contactY": 0.637,
+      "bearingDeg": -2.7,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0472,
+      "distanceM": 3.61,
+      "lateralM": -0.28,
+      "stepsTo": 4.9,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00052,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4417,
+        0.6296
+       ],
+       [
+        0.4792,
+        0.6296
+       ],
+       [
+        0.4792,
+        0.637
+       ],
+       [
+        0.4167,
+        0.6444
+       ],
+       [
+        0.4167,
+        0.637
+       ],
+       [
+        0.4417,
+        0.637
+       ]
+      ]
+     },
+     {
+      "trackId": 652,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.4917,
+       0.5926,
+       0.6292,
+       0.637
+      ],
+      "contactY": 0.637,
+      "bearingDeg": 3.69,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0643,
+      "distanceM": 3.77,
+      "lateralM": 0.39,
+      "stepsTo": 5.1,
+      "closingMps": 0.66,
+      "urgency": "danger",
+      "areaFrac": 0.00358,
+      "collision": true,
+      "latVelMps": -1.57,
+      "outline": [
+       [
+        0.6,
+        0.5926
+       ],
+       [
+        0.6042,
+        0.6
+       ],
+       [
+        0.6292,
+        0.6
+       ],
+       [
+        0.625,
+        0.6296
+       ],
+       [
+        0.5792,
+        0.6296
+       ],
+       [
+        0.5792,
+        0.637
+       ],
+       [
+        0.4917,
+        0.6296
+       ],
+       [
+        0.4917,
+        0.6148
+       ],
+       [
+        0.5125,
+        0.6148
+       ],
+       [
+        0.5125,
+        0.6074
+       ],
+       [
+        0.575,
+        0.6074
+       ],
+       [
+        0.575,
+        0.6
+       ],
+       [
+        0.5917,
+        0.6074
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.42,
+     "cadenceHz": 1.92,
+     "stepLengthM": 0.74,
+     "headingDeg": -11.8,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 0.933,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.4603,
+    "nearbySpeech": [
+     {
+      "t": 37.9963,
+      "type": "speech",
+      "role": "feature",
+      "text": "crosswalk at 12 in 4",
+      "trackId": 630,
+      "urgency": "none",
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0557
+     },
+     {
+      "t": 39.331,
+      "type": "speech",
+      "role": "feature",
+      "text": "curb at 12 in 3",
+      "trackId": 746,
+      "urgency": "none",
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0472
+     },
+     {
+      "t": 41.8335,
+      "type": "speech",
+      "role": "danger",
+      "text": "person standing at 1 in 4",
+      "trackId": 743,
+      "urgency": "danger",
+      "clock": 1,
+      "clockText": "1",
+      "pan": 0.511
+     }
+    ],
+    "nearbyBeeps": [
+     {
+      "t": 39.4978,
+      "tEnd": 39.9708,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 652,
+      "label": "obstacle",
+      "clock": 12,
+      "clockText": "12",
+      "minSteps": 4.7,
+      "urgency": "danger",
+      "text": "beeps \u00b7 obstacle at 12 \u00b7 5 steps"
+     }
+    ]
+   }
+  },
+  {
+   "id": "aa065859",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 39.4978,
+   "event": {
+    "t": 39.4978,
+    "text": "beeps \u00b7 obstacle at 12 \u00b7 5 steps",
+    "role": "danger",
+    "trackId": 652,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "beeps",
+    "tEnd": 39.9708,
+    "label": "obstacle",
+    "minSteps": 4.7
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:18:19Z",
+   "updatedAt": "2026-10-19T11:18:19Z",
+   "context": {
+    "frameT": 39.4978,
+    "items": [
+     {
+      "trackId": 752,
+      "className": "pole",
+      "group": "static",
+      "label": "pole",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.3042,
+       0.4593,
+       0.3458,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": -18.44,
+      "clock": 11,
+      "clockText": "11:30",
+      "pan": -0.3163,
+      "distanceM": 1.18,
+      "lateralM": -0.62,
+      "stepsTo": 1.6,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.01099,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.3042,
+        0.4593
+       ],
+       [
+        0.325,
+        0.4593
+       ],
+       [
+        0.325,
+        0.563
+       ],
+       [
+        0.3208,
+        0.563
+       ],
+       [
+        0.325,
+        0.5704
+       ],
+       [
+        0.325,
+        0.6074
+       ],
+       [
+        0.3208,
+        0.6074
+       ],
+       [
+        0.3208,
+        0.6222
+       ],
+       [
+        0.325,
+        0.6222
+       ],
+       [
+        0.325,
+        0.6741
+       ],
+       [
+        0.3208,
+        0.6741
+       ],
+       [
+        0.3208,
+        0.7704
+       ],
+       [
+        0.325,
+        0.7704
+       ],
+       [
+        0.325,
+        0.7926
+       ],
+       [
+        0.3208,
+        0.8
+       ],
+       [
+        0.325,
+        0.8
+       ],
+       [
+        0.325,
+        0.8519
+       ],
+       [
+        0.3292,
+        0.8519
+       ],
+       [
+        0.3292,
+        0.8741
+       ],
+       [
+        0.3333,
+        0.8741
+       ],
+       [
+        0.3333,
+        0.9185
+       ],
+       [
+        0.3417,
+        0.9333
+       ],
+       [
+        0.3458,
+        1.0
+       ],
+       [
+        0.3167,
+        1.0
+       ],
+       [
+        0.3208,
+        0.9778
+       ],
+       [
+        0.3167,
+        0.9778
+       ],
+       [
+        0.3167,
+        0.9407
+       ],
+       [
+        0.3125,
+        0.9407
+       ],
+       [
+        0.3125,
+        0.8741
+       ],
+       [
+        0.3083,
+        0.8741
+       ],
+       [
+        0.3083,
+        0.8074
+       ],
+       [
+        0.3042,
+        0.8074
+       ]
+      ]
+     },
+     {
+      "trackId": 762,
+      "className": "vehicle",
+      "group": "moving",
+      "label": "vehicle",
+      "role": "context",
+      "moving": null,
+      "bbox": [
+       0.9333,
+       0.6741,
+       1.0,
+       0.8444
+      ],
+      "contactY": 0.8444,
+      "bearingDeg": 57.77,
+      "clock": 2,
+      "clockText": "2",
+      "pan": 0.8459,
+      "distanceM": 1.73,
+      "lateralM": 2.82,
+      "stepsTo": 2.3,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00861,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.9708,
+        0.6741
+       ],
+       [
+        1.0,
+        0.6815
+       ],
+       [
+        1.0,
+        0.8444
+       ],
+       [
+        0.9875,
+        0.8444
+       ],
+       [
+        0.9875,
+        0.837
+       ],
+       [
+        0.975,
+        0.837
+       ],
+       [
+        0.975,
+        0.8296
+       ],
+       [
+        0.9708,
+        0.837
+       ],
+       [
+        0.9333,
+        0.8296
+       ],
+       [
+        0.9333,
+        0.8
+       ],
+       [
+        0.9375,
+        0.8
+       ],
+       [
+        0.9375,
+        0.7852
+       ],
+       [
+        0.9458,
+        0.7704
+       ],
+       [
+        0.9458,
+        0.7481
+       ],
+       [
+        0.95,
+        0.7481
+       ],
+       [
+        0.9458,
+        0.7037
+       ],
+       [
+        0.9667,
+        0.6963
+       ]
+      ]
+     },
+     {
+      "trackId": 630,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.3583,
+       0.6444,
+       0.4875,
+       0.7852
+      ],
+      "contactY": 0.7852,
+      "bearingDeg": -2.21,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0386,
+      "distanceM": 2.0,
+      "lateralM": -0.12,
+      "stepsTo": 2.7,
+      "closingMps": 0.56,
+      "urgency": "none",
+      "areaFrac": 0.01599,
+      "collision": false,
+      "latVelMps": -1.46,
+      "outline": [
+       [
+        0.3917,
+        0.6444
+       ],
+       [
+        0.4875,
+        0.6444
+       ],
+       [
+        0.4875,
+        0.7778
+       ],
+       [
+        0.4833,
+        0.7852
+       ],
+       [
+        0.3917,
+        0.7852
+       ],
+       [
+        0.3917,
+        0.7778
+       ],
+       [
+        0.3625,
+        0.7778
+       ],
+       [
+        0.3583,
+        0.7704
+       ],
+       [
+        0.3625,
+        0.7259
+       ],
+       [
+        0.3708,
+        0.7185
+       ],
+       [
+        0.375,
+        0.6889
+       ],
+       [
+        0.3875,
+        0.6741
+       ]
+      ]
+     },
+     {
+      "trackId": 597,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.4917,
+       0.6444,
+       0.6375,
+       0.7852
+      ],
+      "contactY": 0.7852,
+      "bearingDeg": -0.25,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0043,
+      "distanceM": 2.03,
+      "lateralM": -0.01,
+      "stepsTo": 2.8,
+      "closingMps": 0.59,
+      "urgency": "none",
+      "areaFrac": 0.01657,
+      "collision": false,
+      "latVelMps": -1.43,
+      "outline": [
+       [
+        0.4958,
+        0.6444
+       ],
+       [
+        0.5417,
+        0.6444
+       ],
+       [
+        0.5417,
+        0.6519
+       ],
+       [
+        0.5667,
+        0.6593
+       ],
+       [
+        0.575,
+        0.6741
+       ],
+       [
+        0.5875,
+        0.6741
+       ],
+       [
+        0.5875,
+        0.6815
+       ],
+       [
+        0.6,
+        0.6815
+       ],
+       [
+        0.6,
+        0.6889
+       ],
+       [
+        0.6125,
+        0.6889
+       ],
+       [
+        0.6125,
+        0.6963
+       ],
+       [
+        0.6333,
+        0.6963
+       ],
+       [
+        0.6375,
+        0.7037
+       ],
+       [
+        0.6375,
+        0.7778
+       ],
+       [
+        0.4958,
+        0.7852
+       ],
+       [
+        0.4958,
+        0.7259
+       ],
+       [
+        0.4917,
+        0.7259
+       ]
+      ]
+     },
+     {
+      "trackId": 757,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.6458,
+       0.7185,
+       0.7,
+       0.7704
+      ],
+      "contactY": 0.7704,
+      "bearingDeg": 17.45,
+      "clock": 1,
+      "clockText": "12:30",
+      "pan": 0.2999,
+      "distanceM": 2.16,
+      "lateralM": 1.06,
+      "stepsTo": 2.9,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00207,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.65,
+        0.7185
+       ],
+       [
+        0.6833,
+        0.7333
+       ],
+       [
+        0.6833,
+        0.7407
+       ],
+       [
+        0.6958,
+        0.7407
+       ],
+       [
+        0.7,
+        0.763
+       ],
+       [
+        0.6958,
+        0.7704
+       ],
+       [
+        0.6458,
+        0.7704
+       ],
+       [
+        0.6458,
+        0.7259
+       ]
+      ]
+     },
+     {
+      "trackId": 584,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.3208,
+       0.6074,
+       0.4833,
+       0.637
+      ],
+      "contactY": 0.637,
+      "bearingDeg": -7.13,
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.1241,
+      "distanceM": 3.46,
+      "lateralM": -0.7,
+      "stepsTo": 4.7,
+      "closingMps": 0.42,
+      "urgency": "none",
+      "areaFrac": 0.00383,
+      "collision": false,
+      "latVelMps": -1.82,
+      "outline": [
+       [
+        0.3208,
+        0.6074
+       ],
+       [
+        0.425,
+        0.6074
+       ],
+       [
+        0.425,
+        0.6148
+       ],
+       [
+        0.4833,
+        0.6148
+       ],
+       [
+        0.4833,
+        0.6222
+       ],
+       [
+        0.4583,
+        0.6222
+       ],
+       [
+        0.4583,
+        0.6296
+       ],
+       [
+        0.4417,
+        0.6296
+       ],
+       [
+        0.4417,
+        0.637
+       ],
+       [
+        0.325,
+        0.637
+       ]
+      ]
+     },
+     {
+      "trackId": 764,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.3625,
+       0.6222,
+       0.4917,
+       0.6444
+      ],
+      "contactY": 0.6444,
+      "bearingDeg": -1.72,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.03,
+      "distanceM": 3.54,
+      "lateralM": -0.17,
+      "stepsTo": 4.8,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00151,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4583,
+        0.6222
+       ],
+       [
+        0.4917,
+        0.6222
+       ],
+       [
+        0.4875,
+        0.6444
+       ],
+       [
+        0.3625,
+        0.6444
+       ],
+       [
+        0.3625,
+        0.637
+       ],
+       [
+        0.4417,
+        0.637
+       ],
+       [
+        0.4417,
+        0.6296
+       ],
+       [
+        0.4583,
+        0.6296
+       ]
+      ]
+     },
+     {
+      "trackId": 652,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.4917,
+       0.6074,
+       0.7208,
+       0.6444
+      ],
+      "contactY": 0.6444,
+      "bearingDeg": 1.72,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.03,
+      "distanceM": 3.61,
+      "lateralM": 0.18,
+      "stepsTo": 4.9,
+      "closingMps": 0.54,
+      "urgency": "danger",
+      "areaFrac": 0.00636,
+      "collision": true,
+      "latVelMps": -1.78,
+      "outline": [
+       [
+        0.5792,
+        0.6074
+       ],
+       [
+        0.5833,
+        0.6148
+       ],
+       [
+        0.6125,
+        0.6148
+       ],
+       [
+        0.6125,
+        0.6074
+       ],
+       [
+        0.7167,
+        0.6074
+       ],
+       [
+        0.7208,
+        0.637
+       ],
+       [
+        0.6542,
+        0.637
+       ],
+       [
+        0.65,
+        0.6444
+       ],
+       [
+        0.65,
+        0.6222
+       ],
+       [
+        0.6417,
+        0.6222
+       ],
+       [
+        0.6375,
+        0.6444
+       ],
+       [
+        0.6167,
+        0.6444
+       ],
+       [
+        0.6167,
+        0.637
+       ],
+       [
+        0.6125,
+        0.6444
+       ],
+       [
+        0.5125,
+        0.6444
+       ],
+       [
+        0.5083,
+        0.6296
+       ],
+       [
+        0.4917,
+        0.6296
+       ],
+       [
+        0.4917,
+        0.6222
+       ],
+       [
+        0.5083,
+        0.6222
+       ],
+       [
+        0.5083,
+        0.6148
+       ],
+       [
+        0.5792,
+        0.6148
+       ]
+      ]
+     },
+     {
+      "trackId": 742,
+      "className": "nature vegetation",
+      "group": "static",
+      "label": "vegetation",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.325,
+       0.563,
+       0.4833,
+       0.6148
+      ],
+      "contactY": 0.6148,
+      "bearingDeg": -2.21,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0386,
+      "distanceM": 4.05,
+      "lateralM": -0.25,
+      "stepsTo": 5.5,
+      "closingMps": null,
+      "urgency": "danger",
+      "areaFrac": 0.00552,
+      "collision": true,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.3542,
+        0.563
+       ],
+       [
+        0.3583,
+        0.5704
+       ],
+       [
+        0.45,
+        0.5704
+       ],
+       [
+        0.4583,
+        0.5926
+       ],
+       [
+        0.4792,
+        0.5926
+       ],
+       [
+        0.4833,
+        0.6148
+       ],
+       [
+        0.325,
+        0.6074
+       ],
+       [
+        0.325,
+        0.5778
+       ],
+       [
+        0.3542,
+        0.5704
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.4,
+     "cadenceHz": 1.89,
+     "stepLengthM": 0.74,
+     "headingDeg": -12.5,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 0.933,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.4603,
+    "nearbySpeech": [
+     {
+      "t": 37.9963,
+      "type": "speech",
+      "role": "feature",
+      "text": "crosswalk at 12 in 4",
+      "trackId": 630,
+      "urgency": "none",
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0557
+     },
+     {
+      "t": 39.331,
+      "type": "speech",
+      "role": "feature",
+      "text": "curb at 12 in 3",
+      "trackId": 746,
+      "urgency": "none",
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0472
+     },
+     {
+      "t": 41.8335,
+      "type": "speech",
+      "role": "danger",
+      "text": "person standing at 1 in 4",
+      "trackId": 743,
+      "urgency": "danger",
+      "clock": 1,
+      "clockText": "1",
+      "pan": 0.511
+     }
+    ],
+    "nearbyBeeps": [
+     {
+      "t": 39.4978,
+      "tEnd": 39.9708,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 652,
+      "label": "obstacle",
+      "clock": 12,
+      "clockText": "12",
+      "minSteps": 4.7,
+      "urgency": "danger",
+      "text": "beeps \u00b7 obstacle at 12 \u00b7 5 steps"
+     }
+    ]
+   }
+  },
+  {
+   "id": "c0fef823",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "not standing, its moving towards  left",
+   "t": 41.8335,
+   "event": {
+    "t": 41.8335,
+    "text": "person standing at 1 in 4",
+    "role": "danger",
+    "trackId": 743,
+    "urgency": "danger",
+    "clock": 1,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:48Z",
+   "updatedAt": "2026-10-19T11:21:53Z",
+   "context": {
+    "frameT": 41.8335,
+    "items": [
+     {
+      "trackId": 808,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.4125,
+       0.7037,
+       0.4667,
+       0.7185
+      ],
+      "contactY": 0.7185,
+      "bearingDeg": -4.18,
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.0729,
+      "distanceM": 2.59,
+      "lateralM": -0.31,
+      "stepsTo": 3.5,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00071,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4125,
+        0.7037
+       ],
+       [
+        0.4625,
+        0.7037
+       ],
+       [
+        0.4667,
+        0.7185
+       ],
+       [
+        0.4208,
+        0.7185
+       ]
+      ]
+     },
+     {
+      "trackId": 743,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.7417,
+       0.5778,
+       0.7833,
+       0.7111
+      ],
+      "contactY": 0.7111,
+      "bearingDeg": 30.73,
+      "clock": 1,
+      "clockText": "1",
+      "pan": 0.511,
+      "distanceM": 2.85,
+      "lateralM": 2.47,
+      "stepsTo": 3.9,
+      "closingMps": 0.96,
+      "urgency": "danger",
+      "areaFrac": 0.00395,
+      "collision": false,
+      "latVelMps": -0.37,
+      "outline": [
+       [
+        0.7625,
+        0.5778
+       ],
+       [
+        0.775,
+        0.5852
+       ],
+       [
+        0.775,
+        0.6
+       ],
+       [
+        0.7833,
+        0.6148
+       ],
+       [
+        0.7833,
+        0.6519
+       ],
+       [
+        0.7708,
+        0.6741
+       ],
+       [
+        0.7708,
+        0.6889
+       ],
+       [
+        0.7792,
+        0.6889
+       ],
+       [
+        0.7833,
+        0.7037
+       ],
+       [
+        0.7667,
+        0.7037
+       ],
+       [
+        0.7667,
+        0.7111
+       ],
+       [
+        0.7458,
+        0.6963
+       ],
+       [
+        0.7458,
+        0.6222
+       ],
+       [
+        0.7417,
+        0.6222
+       ],
+       [
+        0.7417,
+        0.6
+       ],
+       [
+        0.7625,
+        0.5852
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.32,
+     "cadenceHz": 1.79,
+     "stepLengthM": 0.74,
+     "headingDeg": -11.9,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 0.943,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": null,
+    "surfaceLabel": null,
+    "horizonY": 0.4658,
+    "nearbySpeech": [
+     {
+      "t": 39.331,
+      "type": "speech",
+      "role": "feature",
+      "text": "curb at 12 in 3",
+      "trackId": 746,
+      "urgency": "none",
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0472
+     },
+     {
+      "t": 41.8335,
+      "type": "speech",
+      "role": "danger",
+      "text": "person standing at 1 in 4",
+      "trackId": 743,
+      "urgency": "danger",
+      "clock": 1,
+      "clockText": "1",
+      "pan": 0.511
+     }
+    ],
+    "nearbyBeeps": [
+     {
+      "t": 39.4978,
+      "tEnd": 39.9708,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 652,
+      "label": "obstacle",
+      "clock": 12,
+      "clockText": "12",
+      "minSteps": 4.7,
+      "urgency": "danger",
+      "text": "beeps \u00b7 obstacle at 12 \u00b7 5 steps"
+     },
+     {
+      "t": 43.1682,
+      "tEnd": 43.6971,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 823,
+      "label": "person",
+      "clock": 12,
+      "clockText": "12",
+      "minSteps": 5.4,
+      "urgency": "danger",
+      "text": "beeps \u00b7 person at 12 \u00b7 6\u21925 steps"
+     }
+    ]
+   }
+  },
+  {
+   "id": "b8df7b87",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 43.1682,
+   "event": {
+    "t": 43.1682,
+    "text": "beeps \u00b7 person at 12 \u00b7 6\u21925 steps",
+    "role": "danger",
+    "trackId": 823,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "beeps",
+    "tEnd": 43.6971,
+    "label": "person",
+    "minSteps": 5.4
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:51Z",
+   "updatedAt": "2026-10-19T11:16:51Z",
+   "context": {
+    "frameT": 43.1682,
+    "items": [
+     {
+      "trackId": 808,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.4292,
+       0.6519,
+       0.4875,
+       0.6593
+      ],
+      "contactY": 0.6593,
+      "bearingDeg": -1.72,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.03,
+      "distanceM": 3.22,
+      "lateralM": -0.16,
+      "stepsTo": 4.4,
+      "closingMps": -0.52,
+      "urgency": "none",
+      "areaFrac": 0.00043,
+      "collision": false,
+      "latVelMps": 1.04,
+      "outline": [
+       [
+        0.4292,
+        0.6519
+       ],
+       [
+        0.4875,
+        0.6519
+       ],
+       [
+        0.4875,
+        0.6593
+       ],
+       [
+        0.4292,
+        0.6593
+       ]
+      ]
+     },
+     {
+      "trackId": 823,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": null,
+      "bbox": [
+       0.4625,
+       0.4741,
+       0.5042,
+       0.6148
+      ],
+      "contactY": 0.6148,
+      "bearingDeg": -1.23,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0215,
+      "distanceM": 4.38,
+      "lateralM": -0.15,
+      "stepsTo": 5.9,
+      "closingMps": null,
+      "urgency": "danger",
+      "areaFrac": 0.00423,
+      "collision": true,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.475,
+        0.4741
+       ],
+       [
+        0.4917,
+        0.4741
+       ],
+       [
+        0.5,
+        0.5111
+       ],
+       [
+        0.5042,
+        0.5111
+       ],
+       [
+        0.5,
+        0.563
+       ],
+       [
+        0.4917,
+        0.5704
+       ],
+       [
+        0.4917,
+        0.5926
+       ],
+       [
+        0.4958,
+        0.5926
+       ],
+       [
+        0.4917,
+        0.6148
+       ],
+       [
+        0.475,
+        0.6148
+       ],
+       [
+        0.4708,
+        0.6
+       ],
+       [
+        0.4625,
+        0.6
+       ],
+       [
+        0.4667,
+        0.5926
+       ],
+       [
+        0.4625,
+        0.5259
+       ],
+       [
+        0.4667,
+        0.5259
+       ],
+       [
+        0.4667,
+        0.4889
+       ]
+      ]
+     },
+     {
+      "trackId": 847,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": null,
+      "bbox": [
+       0.425,
+       0.5259,
+       0.45,
+       0.563
+      ],
+      "contactY": 0.563,
+      "bearingDeg": -6.64,
+      "clock": 12,
+      "clockText": "11:45",
+      "pan": -0.1156,
+      "distanceM": 6.68,
+      "lateralM": -1.25,
+      "stepsTo": 9.0,
+      "closingMps": null,
+      "urgency": "danger",
+      "areaFrac": 0.00068,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.4292,
+        0.5259
+       ],
+       [
+        0.4417,
+        0.5259
+       ],
+       [
+        0.45,
+        0.5407
+       ],
+       [
+        0.45,
+        0.5556
+       ],
+       [
+        0.4458,
+        0.563
+       ],
+       [
+        0.4292,
+        0.563
+       ],
+       [
+        0.425,
+        0.5556
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.32,
+     "cadenceHz": 1.79,
+     "stepLengthM": 0.74,
+     "headingDeg": 17.3,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 0.95,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": null,
+    "surfaceLabel": null,
+    "horizonY": 0.4658,
+    "nearbySpeech": [
+     {
+      "t": 41.8335,
+      "type": "speech",
+      "role": "danger",
+      "text": "person standing at 1 in 4",
+      "trackId": 743,
+      "urgency": "danger",
+      "clock": 1,
+      "clockText": "1",
+      "pan": 0.511
+     }
+    ],
+    "nearbyBeeps": [
+     {
+      "t": 43.1682,
+      "tEnd": 43.6971,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 823,
+      "label": "person",
+      "clock": 12,
+      "clockText": "12",
+      "minSteps": 5.4,
+      "urgency": "danger",
+      "text": "beeps \u00b7 person at 12 \u00b7 6\u21925 steps"
+     }
+    ]
+   }
+  },
+  {
+   "id": "68551128",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 49.8415,
+   "event": {
+    "t": 49.8415,
+    "text": "obstacle at 11 in 3",
+    "role": "context",
+    "trackId": 960,
+    "urgency": "none",
+    "clock": 11,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:16:52Z",
+   "updatedAt": "2026-10-19T11:16:52Z",
+   "context": {
+    "frameT": 49.8415,
+    "items": [
+     {
+      "trackId": 960,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.0,
+       0.5926,
+       0.5958,
+       0.7481
+      ],
+      "contactY": 0.7481,
+      "bearingDeg": -30.73,
+      "clock": 11,
+      "clockText": "11",
+      "pan": -0.511,
+      "distanceM": 2.49,
+      "lateralM": -2.16,
+      "stepsTo": 3.4,
+      "closingMps": -0.16,
+      "urgency": "none",
+      "areaFrac": 0.03883,
+      "collision": false,
+      "latVelMps": -0.26,
+      "outline": [
+       [
+        0.5792,
+        0.5926
+       ],
+       [
+        0.5875,
+        0.6074
+       ],
+       [
+        0.5917,
+        0.7037
+       ],
+       [
+        0.55,
+        0.6889
+       ],
+       [
+        0.475,
+        0.7111
+       ],
+       [
+        0.475,
+        0.7259
+       ],
+       [
+        0.2417,
+        0.7481
+       ],
+       [
+        0.1042,
+        0.7481
+       ],
+       [
+        0.0792,
+        0.7259
+       ],
+       [
+        0.0292,
+        0.7259
+       ],
+       [
+        0.0,
+        0.7111
+       ],
+       [
+        0.0,
+        0.6963
+       ],
+       [
+        0.0875,
+        0.6815
+       ],
+       [
+        0.225,
+        0.6889
+       ],
+       [
+        0.225,
+        0.6741
+       ],
+       [
+        0.275,
+        0.6815
+       ],
+       [
+        0.3833,
+        0.6519
+       ],
+       [
+        0.4333,
+        0.6519
+       ],
+       [
+        0.5042,
+        0.6222
+       ],
+       [
+        0.5625,
+        0.6222
+       ],
+       [
+        0.575,
+        0.6148
+       ],
+       [
+        0.5667,
+        0.6
+       ]
+      ]
+     },
+     {
+      "trackId": 985,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.6375,
+       0.5333,
+       0.9708,
+       0.6963
+      ],
+      "contactY": 0.6963,
+      "bearingDeg": 18.93,
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3244,
+      "distanceM": 2.74,
+      "lateralM": 1.46,
+      "stepsTo": 3.7,
+      "closingMps": -0.16,
+      "urgency": "none",
+      "areaFrac": 0.02864,
+      "collision": false,
+      "latVelMps": -0.16,
+      "outline": [
+       [
+        0.925,
+        0.5333
+       ],
+       [
+        0.9542,
+        0.5333
+       ],
+       [
+        0.9625,
+        0.5481
+       ],
+       [
+        0.9708,
+        0.6296
+       ],
+       [
+        0.9583,
+        0.6296
+       ],
+       [
+        0.9583,
+        0.637
+       ],
+       [
+        0.9542,
+        0.6296
+       ],
+       [
+        0.8708,
+        0.637
+       ],
+       [
+        0.8708,
+        0.6444
+       ],
+       [
+        0.8167,
+        0.6519
+       ],
+       [
+        0.8167,
+        0.6593
+       ],
+       [
+        0.6833,
+        0.6815
+       ],
+       [
+        0.6667,
+        0.6963
+       ],
+       [
+        0.6458,
+        0.6889
+       ],
+       [
+        0.6375,
+        0.6741
+       ],
+       [
+        0.6375,
+        0.6519
+       ],
+       [
+        0.6458,
+        0.6444
+       ],
+       [
+        0.6458,
+        0.6074
+       ],
+       [
+        0.8458,
+        0.563
+       ],
+       [
+        0.8458,
+        0.5556
+       ],
+       [
+        0.9,
+        0.5481
+       ],
+       [
+        0.9,
+        0.5407
+       ],
+       [
+        0.925,
+        0.5407
+       ]
+      ]
+     },
+     {
+      "trackId": 1028,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.475,
+       0.6889,
+       0.5792,
+       0.7185
+      ],
+      "contactY": 0.7185,
+      "bearingDeg": -0.25,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0043,
+      "distanceM": 2.87,
+      "lateralM": -0.02,
+      "stepsTo": 3.9,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00154,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.55,
+        0.6889
+       ],
+       [
+        0.5792,
+        0.6963
+       ],
+       [
+        0.5708,
+        0.7111
+       ],
+       [
+        0.475,
+        0.7185
+       ],
+       [
+        0.475,
+        0.7111
+       ],
+       [
+        0.4958,
+        0.7111
+       ],
+       [
+        0.4958,
+        0.7037
+       ],
+       [
+        0.5125,
+        0.7037
+       ],
+       [
+        0.5125,
+        0.6963
+       ],
+       [
+        0.55,
+        0.6963
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.38,
+     "cadenceHz": 1.87,
+     "stepLengthM": 0.74,
+     "headingDeg": -13.8,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.12,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.4523,
+    "nearbySpeech": [
+     {
+      "t": 49.8415,
+      "type": "speech",
+      "role": "context",
+      "text": "obstacle at 11 in 3",
+      "trackId": 960,
+      "urgency": "none",
+      "clock": 11,
+      "clockText": "11",
+      "pan": -0.511
+     },
+     {
+      "t": 52.344,
+      "type": "speech",
+      "role": "feature",
+      "text": "crosswalk at 10:15 in 4",
+      "trackId": 1083,
+      "urgency": "none",
+      "clock": 10,
+      "clockText": "10:15",
+      "pan": -0.8124
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "1454b162",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "",
+   "t": 52.344,
+   "event": {
+    "t": 52.344,
+    "text": "crosswalk at 10:15 in 4",
+    "role": "feature",
+    "trackId": 1083,
+    "urgency": "none",
+    "clock": 10,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:22:39Z",
+   "updatedAt": "2026-10-19T11:22:39Z",
+   "context": {
+    "frameT": 52.344,
+    "items": [
+     {
+      "trackId": 960,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.2375,
+       0.6074,
+       0.925,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": 33.19,
+      "clock": 1,
+      "clockText": "1",
+      "pan": 0.5474,
+      "distanceM": 1.49,
+      "lateralM": 1.39,
+      "stepsTo": 2.0,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.0787,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.2375,
+        0.6074
+       ],
+       [
+        0.2667,
+        0.6148
+       ],
+       [
+        0.2708,
+        0.637
+       ],
+       [
+        0.2833,
+        0.6222
+       ],
+       [
+        0.5083,
+        0.6963
+       ],
+       [
+        0.5667,
+        0.6963
+       ],
+       [
+        0.7792,
+        0.7481
+       ],
+       [
+        0.9167,
+        0.7556
+       ],
+       [
+        0.9125,
+        0.8593
+       ],
+       [
+        0.9208,
+        0.8741
+       ],
+       [
+        0.925,
+        0.9556
+       ],
+       [
+        0.8958,
+        1.0
+       ],
+       [
+        0.7792,
+        1.0
+       ],
+       [
+        0.7958,
+        0.9926
+       ],
+       [
+        0.8083,
+        0.9556
+       ],
+       [
+        0.9,
+        0.963
+       ],
+       [
+        0.9042,
+        0.9259
+       ],
+       [
+        0.8958,
+        0.9111
+       ],
+       [
+        0.8292,
+        0.9111
+       ],
+       [
+        0.8208,
+        0.9333
+       ],
+       [
+        0.7833,
+        0.9259
+       ],
+       [
+        0.725,
+        0.8741
+       ],
+       [
+        0.6625,
+        0.8667
+       ],
+       [
+        0.5875,
+        0.8148
+       ],
+       [
+        0.3458,
+        0.7037
+       ],
+       [
+        0.2958,
+        0.6519
+       ],
+       [
+        0.2542,
+        0.6444
+       ],
+       [
+        0.2375,
+        0.6296
+       ]
+      ]
+     },
+     {
+      "trackId": 889,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": null,
+      "bbox": [
+       0.8792,
+       0.4444,
+       1.0,
+       1.0
+      ],
+      "contactY": 1.0,
+      "bearingDeg": 48.92,
+      "clock": 2,
+      "clockText": "1:45",
+      "pan": 0.7538,
+      "distanceM": 1.49,
+      "lateralM": 2.05,
+      "stepsTo": 2.0,
+      "closingMps": null,
+      "urgency": "danger",
+      "areaFrac": 0.05093,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.9042,
+        0.4444
+       ],
+       [
+        1.0,
+        0.4444
+       ],
+       [
+        1.0,
+        1.0
+       ],
+       [
+        0.9125,
+        1.0
+       ],
+       [
+        0.9125,
+        0.9778
+       ],
+       [
+        0.925,
+        0.9556
+       ],
+       [
+        0.9208,
+        0.8741
+       ],
+       [
+        0.9125,
+        0.8593
+       ],
+       [
+        0.9125,
+        0.837
+       ],
+       [
+        0.9167,
+        0.837
+       ],
+       [
+        0.9167,
+        0.6667
+       ],
+       [
+        0.9125,
+        0.6667
+       ],
+       [
+        0.9125,
+        0.6444
+       ],
+       [
+        0.9042,
+        0.637
+       ],
+       [
+        0.8958,
+        0.6741
+       ],
+       [
+        0.8917,
+        0.6741
+       ],
+       [
+        0.8917,
+        0.6889
+       ],
+       [
+        0.8792,
+        0.6889
+       ],
+       [
+        0.8792,
+        0.6519
+       ],
+       [
+        0.8875,
+        0.6444
+       ],
+       [
+        0.8917,
+        0.6
+       ],
+       [
+        0.8958,
+        0.6
+       ],
+       [
+        0.8958,
+        0.5778
+       ],
+       [
+        0.9,
+        0.5778
+       ],
+       [
+        0.9,
+        0.563
+       ],
+       [
+        0.8958,
+        0.563
+       ],
+       [
+        0.8958,
+        0.4593
+       ]
+      ]
+     },
+     {
+      "trackId": 1083,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.0,
+       0.6667,
+       0.2167,
+       0.7111
+      ],
+      "contactY": 0.7111,
+      "bearingDeg": -54.33,
+      "clock": 10,
+      "clockText": "10:15",
+      "pan": -0.8124,
+      "distanceM": 3.16,
+      "lateralM": -4.84,
+      "stepsTo": 4.3,
+      "closingMps": -0.19,
+      "urgency": "none",
+      "areaFrac": 0.00522,
+      "collision": false,
+      "latVelMps": -0.95,
+      "outline": [
+       [
+        0.15,
+        0.6667
+       ],
+       [
+        0.2167,
+        0.6667
+       ],
+       [
+        0.2167,
+        0.6815
+       ],
+       [
+        0.2,
+        0.6815
+       ],
+       [
+        0.2,
+        0.6889
+       ],
+       [
+        0.0,
+        0.7111
+       ],
+       [
+        0.0,
+        0.6815
+       ],
+       [
+        0.0792,
+        0.6815
+       ],
+       [
+        0.0792,
+        0.6741
+       ],
+       [
+        0.15,
+        0.6741
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.28,
+     "cadenceHz": 1.73,
+     "stepLengthM": 0.74,
+     "headingDeg": -58.1,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.196,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.451,
+    "nearbySpeech": [
+     {
+      "t": 49.8415,
+      "type": "speech",
+      "role": "context",
+      "text": "obstacle at 11 in 3",
+      "trackId": 960,
+      "urgency": "none",
+      "clock": 11,
+      "clockText": "11",
+      "pan": -0.511
+     },
+     {
+      "t": 52.344,
+      "type": "speech",
+      "role": "feature",
+      "text": "crosswalk at 10:15 in 4",
+      "trackId": 1083,
+      "urgency": "none",
+      "clock": 10,
+      "clockText": "10:15",
+      "pan": -0.8124
+     },
+     {
+      "t": 54.6797,
+      "type": "speech",
+      "role": "danger",
+      "text": "person moving away at 12",
+      "trackId": 1191,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.03
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "a39d7f0a",
+   "kind": "verdict",
+   "verdict": "remove",
+   "note": "top far away, warn at 10 steps max.",
+   "t": 54.6797,
+   "event": {
+    "t": 54.6797,
+    "text": "person moving away at 12",
+    "role": "danger",
+    "trackId": 1191,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:22:41Z",
+   "updatedAt": "2026-10-19T11:25:09Z",
+   "context": {
+    "frameT": 54.6797,
+    "items": [
+     {
+      "trackId": 1151,
+      "className": "crosswalk",
+      "group": "feature",
+      "label": "crosswalk",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.2833,
+       0.6074,
+       0.5083,
+       0.6741
+      ],
+      "contactY": 0.6444,
+      "bearingDeg": -3.69,
+      "clock": 12,
+      "clockText": "12",
+      "pan": -0.0643,
+      "distanceM": 4.94,
+      "lateralM": -0.51,
+      "stepsTo": 6.7,
+      "closingMps": 0.15,
+      "urgency": "none",
+      "areaFrac": 0.0058,
+      "collision": false,
+      "latVelMps": 1.13,
+      "outline": [
+       [
+        0.4792,
+        0.6074
+       ],
+       [
+        0.5083,
+        0.6074
+       ],
+       [
+        0.5083,
+        0.637
+       ],
+       [
+        0.4708,
+        0.637
+       ],
+       [
+        0.4708,
+        0.6444
+       ],
+       [
+        0.4375,
+        0.6444
+       ],
+       [
+        0.4375,
+        0.6519
+       ],
+       [
+        0.4042,
+        0.6519
+       ],
+       [
+        0.4042,
+        0.6593
+       ],
+       [
+        0.2833,
+        0.6741
+       ],
+       [
+        0.2917,
+        0.6593
+       ],
+       [
+        0.3167,
+        0.6519
+       ],
+       [
+        0.3167,
+        0.637
+       ],
+       [
+        0.4208,
+        0.6296
+       ],
+       [
+        0.4208,
+        0.6222
+       ],
+       [
+        0.45,
+        0.6222
+       ],
+       [
+        0.45,
+        0.6148
+       ],
+       [
+        0.4792,
+        0.6148
+       ]
+      ]
+     },
+     {
+      "trackId": 1191,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": true,
+      "bbox": [
+       0.5125,
+       0.5259,
+       0.5333,
+       0.5556
+      ],
+      "contactY": 0.5556,
+      "bearingDeg": 1.72,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.03,
+      "distanceM": 9.15,
+      "lateralM": 0.44,
+      "stepsTo": 12.4,
+      "closingMps": 0.58,
+      "urgency": "danger",
+      "areaFrac": 0.00049,
+      "collision": false,
+      "latVelMps": 0.17,
+      "outline": [
+       [
+        0.525,
+        0.5259
+       ],
+       [
+        0.5333,
+        0.5259
+       ],
+       [
+        0.5333,
+        0.5556
+       ],
+       [
+        0.5125,
+        0.5556
+       ],
+       [
+        0.5125,
+        0.5333
+       ],
+       [
+        0.525,
+        0.5407
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.8,
+     "cadenceHz": 2.44,
+     "stepLengthM": 0.74,
+     "headingDeg": -92.2,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.26,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "road",
+    "surfaceLabel": "road",
+    "horizonY": 0.466,
+    "nearbySpeech": [
+     {
+      "t": 52.344,
+      "type": "speech",
+      "role": "feature",
+      "text": "crosswalk at 10:15 in 4",
+      "trackId": 1083,
+      "urgency": "none",
+      "clock": 10,
+      "clockText": "10:15",
+      "pan": -0.8124
+     },
+     {
+      "t": 54.6797,
+      "type": "speech",
+      "role": "danger",
+      "text": "person moving away at 12",
+      "trackId": 1191,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.03
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "8b6e3e3b",
+   "kind": "verdict",
+   "verdict": "remove",
+   "note": "too far away, warn at 10 steps max.",
+   "t": 63.4801,
+   "event": {
+    "t": 63.4801,
+    "text": "person moving away at 12",
+    "role": "danger",
+    "trackId": 1504,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:23:01Z",
+   "updatedAt": "2026-10-19T11:26:51Z",
+   "context": {
+    "frameT": 63.4801,
+    "items": [
+     {
+      "trackId": 1462,
+      "className": "sidewalk-obstacle",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.7083,
+       0.6444,
+       0.7625,
+       0.8296
+      ],
+      "contactY": 0.8296,
+      "bearingDeg": 25.32,
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.4277,
+      "distanceM": 3.29,
+      "lateralM": 2.35,
+      "stepsTo": 4.5,
+      "closingMps": 1.1,
+      "urgency": "none",
+      "areaFrac": 0.00892,
+      "collision": false,
+      "latVelMps": -0.11,
+      "outline": [
+       [
+        0.7125,
+        0.6444
+       ],
+       [
+        0.7583,
+        0.6444
+       ],
+       [
+        0.7625,
+        0.8222
+       ],
+       [
+        0.7542,
+        0.8222
+       ],
+       [
+        0.7542,
+        0.8296
+       ],
+       [
+        0.7125,
+        0.8296
+       ],
+       [
+        0.7125,
+        0.763
+       ],
+       [
+        0.7083,
+        0.763
+       ],
+       [
+        0.7125,
+        0.7556
+       ]
+      ]
+     },
+     {
+      "trackId": 1370,
+      "className": "barrier wall",
+      "group": "static",
+      "label": "obstacle",
+      "role": "context",
+      "moving": false,
+      "bbox": [
+       0.5208,
+       0.5926,
+       0.7125,
+       0.7556
+      ],
+      "contactY": 0.7556,
+      "bearingDeg": 23.35,
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3964,
+      "distanceM": 4.25,
+      "lateralM": 2.8,
+      "stepsTo": 5.8,
+      "closingMps": 1.33,
+      "urgency": "none",
+      "areaFrac": 0.01028,
+      "collision": false,
+      "latVelMps": -0.03,
+      "outline": [
+       [
+        0.5208,
+        0.5926
+       ],
+       [
+        0.625,
+        0.637
+       ],
+       [
+        0.625,
+        0.6444
+       ],
+       [
+        0.6417,
+        0.6444
+       ],
+       [
+        0.6417,
+        0.6519
+       ],
+       [
+        0.6625,
+        0.6519
+       ],
+       [
+        0.6875,
+        0.6741
+       ],
+       [
+        0.7042,
+        0.6741
+       ],
+       [
+        0.7125,
+        0.7556
+       ],
+       [
+        0.6958,
+        0.7556
+       ],
+       [
+        0.6708,
+        0.7259
+       ],
+       [
+        0.6167,
+        0.6963
+       ],
+       [
+        0.5708,
+        0.6519
+       ],
+       [
+        0.55,
+        0.6519
+       ],
+       [
+        0.5208,
+        0.6148
+       ]
+      ]
+     },
+     {
+      "trackId": 1504,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": true,
+      "bbox": [
+       0.4958,
+       0.5704,
+       0.5208,
+       0.6148
+      ],
+      "contactY": 0.6148,
+      "bearingDeg": 1.72,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.03,
+      "distanceM": 9.03,
+      "lateralM": 0.44,
+      "stepsTo": 12.2,
+      "closingMps": -0.0,
+      "urgency": "danger",
+      "areaFrac": 0.00077,
+      "collision": false,
+      "latVelMps": -0.02,
+      "outline": [
+       [
+        0.5125,
+        0.5704
+       ],
+       [
+        0.5208,
+        0.5778
+       ],
+       [
+        0.5208,
+        0.6074
+       ],
+       [
+        0.5167,
+        0.6148
+       ],
+       [
+        0.4958,
+        0.6
+       ],
+       [
+        0.4958,
+        0.5778
+       ],
+       [
+        0.5125,
+        0.5778
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.5,
+     "cadenceHz": 2.03,
+     "stepLengthM": 0.74,
+     "headingDeg": -93.8,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.466,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.5039,
+    "nearbySpeech": [
+     {
+      "t": 63.4801,
+      "type": "speech",
+      "role": "danger",
+      "text": "person moving away at 12",
+      "trackId": 1504,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.03
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "3d2f39e7",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "beep only for collision course. should be speech at this distance. beep at 5 steps or lower",
+   "t": 76.4932,
+   "event": {
+    "t": 76.4932,
+    "text": "beeps \u00b7 person at 12:15 \u00b7 9 steps",
+    "role": "danger",
+    "trackId": 1504,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "beeps",
+    "tEnd": 76.5732,
+    "label": "person",
+    "minSteps": 8.6
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:26:52Z",
+   "updatedAt": "2026-10-19T11:27:56Z",
+   "context": {
+    "frameT": 76.4932,
+    "items": [
+     {
+      "trackId": 1504,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": true,
+      "bbox": [
+       0.55,
+       0.5185,
+       0.6208,
+       0.7037
+      ],
+      "contactY": 0.7037,
+      "bearingDeg": 7.62,
+      "clock": 12,
+      "clockText": "12:15",
+      "pan": 0.1326,
+      "distanceM": 6.32,
+      "lateralM": 1.36,
+      "stepsTo": 8.6,
+      "closingMps": 2.17,
+      "urgency": "danger",
+      "areaFrac": 0.00867,
+      "collision": true,
+      "latVelMps": 0.43,
+      "outline": [
+       [
+        0.5625,
+        0.5185
+       ],
+       [
+        0.575,
+        0.5185
+       ],
+       [
+        0.5792,
+        0.5556
+       ],
+       [
+        0.5917,
+        0.5481
+       ],
+       [
+        0.5958,
+        0.5185
+       ],
+       [
+        0.6083,
+        0.5259
+       ],
+       [
+        0.6208,
+        0.6148
+       ],
+       [
+        0.6083,
+        0.6296
+       ],
+       [
+        0.6083,
+        0.6593
+       ],
+       [
+        0.6042,
+        0.6593
+       ],
+       [
+        0.6083,
+        0.6889
+       ],
+       [
+        0.6042,
+        0.6963
+       ],
+       [
+        0.5917,
+        0.6963
+       ],
+       [
+        0.5917,
+        0.6444
+       ],
+       [
+        0.5875,
+        0.637
+       ],
+       [
+        0.5792,
+        0.637
+       ],
+       [
+        0.575,
+        0.7037
+       ],
+       [
+        0.5542,
+        0.6963
+       ],
+       [
+        0.5542,
+        0.6815
+       ],
+       [
+        0.5583,
+        0.6815
+       ],
+       [
+        0.5583,
+        0.6296
+       ],
+       [
+        0.55,
+        0.6222
+       ],
+       [
+        0.55,
+        0.563
+       ],
+       [
+        0.5542,
+        0.563
+       ],
+       [
+        0.5542,
+        0.5407
+       ],
+       [
+        0.5583,
+        0.5407
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.42,
+     "cadenceHz": 1.92,
+     "stepLengthM": 0.74,
+     "headingDeg": -81.2,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.632,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "road",
+    "surfaceLabel": "road",
+    "horizonY": 0.5206,
+    "nearbySpeech": [],
+    "nearbyBeeps": [
+     {
+      "t": 76.4932,
+      "tEnd": 76.5732,
+      "type": "beeps",
+      "role": "danger",
+      "trackId": 1504,
+      "label": "person",
+      "clock": 12,
+      "clockText": "12:15",
+      "minSteps": 8.6,
+      "urgency": "danger",
+      "text": "beeps \u00b7 person at 12:15 \u00b7 9 steps"
+     }
+    ]
+   }
+  },
+  {
+   "id": "469f4874",
+   "kind": "verdict",
+   "verdict": "correct",
+   "note": "should also beep, lacking movement information, in this case its moving towards me",
+   "t": 90.8408,
+   "event": {
+    "t": 90.8408,
+    "text": "person at 12:45 in 5",
+    "role": "danger",
+    "trackId": 2147,
+    "urgency": "danger",
+    "clock": 1,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:29:45Z",
+   "updatedAt": "2026-10-19T11:30:13Z",
+   "context": {
+    "frameT": 90.8408,
+    "items": [
+     {
+      "trackId": 2147,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": null,
+      "bbox": [
+       0.6,
+       0.5333,
+       0.7333,
+       0.8593
+      ],
+      "contactY": 0.8593,
+      "bearingDeg": 21.39,
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3647,
+      "distanceM": 3.56,
+      "lateralM": 2.15,
+      "stepsTo": 4.8,
+      "closingMps": null,
+      "urgency": "danger",
+      "areaFrac": 0.02608,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.6167,
+        0.5333
+       ],
+       [
+        0.7208,
+        0.5333
+       ],
+       [
+        0.7208,
+        0.5778
+       ],
+       [
+        0.7292,
+        0.6
+       ],
+       [
+        0.725,
+        0.637
+       ],
+       [
+        0.7333,
+        0.6444
+       ],
+       [
+        0.7333,
+        0.6667
+       ],
+       [
+        0.7208,
+        0.6667
+       ],
+       [
+        0.7167,
+        0.7111
+       ],
+       [
+        0.7292,
+        0.7704
+       ],
+       [
+        0.7125,
+        0.7704
+       ],
+       [
+        0.7083,
+        0.7407
+       ],
+       [
+        0.7042,
+        0.763
+       ],
+       [
+        0.6875,
+        0.7704
+       ],
+       [
+        0.6958,
+        0.8593
+       ],
+       [
+        0.6792,
+        0.8593
+       ],
+       [
+        0.6792,
+        0.8148
+       ],
+       [
+        0.6708,
+        0.8
+       ],
+       [
+        0.6583,
+        0.7037
+       ],
+       [
+        0.65,
+        0.7185
+       ],
+       [
+        0.65,
+        0.7704
+       ],
+       [
+        0.6333,
+        0.763
+       ],
+       [
+        0.6333,
+        0.7185
+       ],
+       [
+        0.625,
+        0.7481
+       ],
+       [
+        0.6167,
+        0.7407
+       ],
+       [
+        0.6167,
+        0.6593
+       ],
+       [
+        0.6,
+        0.6667
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.52,
+     "cadenceHz": 2.05,
+     "stepLengthM": 0.74,
+     "headingDeg": -86.0,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.524,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.5358,
+    "nearbySpeech": [
+     {
+      "t": 90.8408,
+      "type": "speech",
+      "role": "danger",
+      "text": "person at 12:45 in 5",
+      "trackId": 2147,
+      "urgency": "danger",
+      "clock": 1,
+      "clockText": "12:45",
+      "pan": 0.3647
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  },
+  {
+   "id": "f7c9faa0",
+   "kind": "verdict",
+   "verdict": "incorrect",
+   "note": "person is moving away.",
+   "t": 105.1468,
+   "event": {
+    "t": 105.1468,
+    "text": "person standing at 12:15 in 14",
+    "role": "danger",
+    "trackId": 2286,
+    "urgency": "danger",
+    "clock": 12,
+    "type": "speech"
+   },
+   "runId": "2ced2e0f2909",
+   "collisionVersion": "v26.1.11",
+   "analysisVersion": 3,
+   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "createdAt": "2026-10-19T11:30:49Z",
+   "updatedAt": "2026-10-19T11:31:06Z",
+   "context": {
+    "frameT": 105.1468,
+    "items": [
+     {
+      "trackId": 2473,
+      "className": "curb",
+      "group": "feature",
+      "label": "curb",
+      "role": "feature",
+      "moving": false,
+      "bbox": [
+       0.5042,
+       0.6296,
+       0.5208,
+       0.7259
+      ],
+      "contactY": 0.7259,
+      "bearingDeg": 0.74,
+      "clock": 12,
+      "clockText": "12",
+      "pan": 0.0129,
+      "distanceM": 5.26,
+      "lateralM": 0.11,
+      "stepsTo": 7.1,
+      "closingMps": null,
+      "urgency": "none",
+      "areaFrac": 0.00105,
+      "collision": false,
+      "latVelMps": null,
+      "outline": [
+       [
+        0.5042,
+        0.6296
+       ],
+       [
+        0.5125,
+        0.6444
+       ],
+       [
+        0.5208,
+        0.7259
+       ],
+       [
+        0.5042,
+        0.7259
+       ]
+      ]
+     },
+     {
+      "trackId": 2286,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.5375,
+       0.5407,
+       0.5625,
+       0.6296
+      ],
+      "contactY": 0.6296,
+      "bearingDeg": 6.15,
+      "clock": 12,
+      "clockText": "12:15",
+      "pan": 0.1071,
+      "distanceM": 10.6,
+      "lateralM": 1.84,
+      "stepsTo": 14.3,
+      "closingMps": 0.91,
+      "urgency": "danger",
+      "areaFrac": 0.00191,
+      "collision": false,
+      "latVelMps": 0.12,
+      "outline": [
+       [
+        0.5375,
+        0.5407
+       ],
+       [
+        0.5625,
+        0.5407
+       ],
+       [
+        0.5583,
+        0.5481
+       ],
+       [
+        0.5625,
+        0.5556
+       ],
+       [
+        0.5625,
+        0.6296
+       ],
+       [
+        0.5458,
+        0.6222
+       ],
+       [
+        0.5458,
+        0.6074
+       ],
+       [
+        0.5375,
+        0.5926
+       ]
+      ]
+     },
+     {
+      "trackId": 2449,
+      "className": "person",
+      "group": "moving",
+      "label": "person",
+      "role": "danger",
+      "moving": false,
+      "bbox": [
+       0.5667,
+       0.5407,
+       0.5917,
+       0.6222
+      ],
+      "contactY": 0.6222,
+      "bearingDeg": 9.1,
+      "clock": 12,
+      "clockText": "12:15",
+      "pan": 0.1581,
+      "distanceM": 11.03,
+      "lateralM": 2.83,
+      "stepsTo": 14.9,
+      "closingMps": 0.0,
+      "urgency": "danger",
+      "areaFrac": 0.00136,
+      "collision": false,
+      "latVelMps": -0.09,
+      "outline": [
+       [
+        0.5667,
+        0.5407
+       ],
+       [
+        0.5917,
+        0.5407
+       ],
+       [
+        0.5875,
+        0.5778
+       ],
+       [
+        0.5833,
+        0.5778
+       ],
+       [
+        0.5875,
+        0.5852
+       ],
+       [
+        0.5875,
+        0.6148
+       ],
+       [
+        0.5833,
+        0.6222
+       ],
+       [
+        0.575,
+        0.6222
+       ]
+      ]
+     }
+    ],
+    "ego": {
+     "speedMps": 1.51,
+     "cadenceHz": 2.04,
+     "stepLengthM": 0.74,
+     "headingDeg": -85.7,
+     "stationary": false,
+     "depthAnchor": null,
+     "depthAnchorMode": null,
+     "depthPitchDeg": null,
+     "depthCameraHeightUnits": null,
+     "depthGaitCheck": null,
+     "depthScale": null,
+     "depthScaleSource": "none",
+     "depthLevel": null,
+     "depthLevelSource": null,
+     "scale": 1.419,
+     "scaleSource": "gait",
+     "estimated": {
+      "speed": true,
+      "cadence": true,
+      "stepLength": false
+     }
+    },
+    "surface": "pedestrian",
+    "surfaceLabel": "sidewalk",
+    "horizonY": 0.5417,
+    "nearbySpeech": [
+     {
+      "t": 105.1468,
+      "type": "speech",
+      "role": "danger",
+      "text": "person standing at 12:15 in 14",
+      "trackId": 2286,
+      "urgency": "danger",
+      "clock": 12,
+      "clockText": "12:15",
+      "pan": 0.1071
+     }
+    ],
+    "nearbyBeeps": []
+   }
+  }
+ ],
+ "summary": {
+  "correct": 12,
+  "incorrect": 3,
+  "remove": 2,
+  "added": 0
+ }
+}

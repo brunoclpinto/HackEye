@@ -85,3 +85,14 @@ They work, paring process and device state communication is spotty but the SDK i
 Did hit a snag, left arm of the glasses is having internal ribbon contact issues after 1 year and 3 months usage.
 Trying to get response from ray-ban for warranty but so far nothing.
 Sad, love the glasses though the lenses suck big time for me... but then again, i'm the one that needs extra special conditions and equipment for confort.
+
+## Licences and thanks
+HackEye's own code is [Apache-2.0](LICENSE), but **its models and app builds are not only Apache-2.0**:
+- The YOLO26 segmentation and detection models come from Ultralytics, which makes them **AGPL-3.0**.
+- Those models are trained on non-commercial datasets: Mapillary Vistas (CC BY-NC-SA), ADE20K and Cityscapes.
+- One of the Lab depth options, UniDepth v2, is CC BY-NC.
+
+HackEye is and will stay free and non-commercial, which fits all of these. If you fork it, read
+**[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)** first: it lists what needs legal handling and
+thanks the many permissively licensed projects this is built on.
+

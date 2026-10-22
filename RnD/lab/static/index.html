@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>HackEye Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <h1>HackEye Lab</h1>
+  <span id="verBadge" class="muted ver"></span>
+  <span id="runBadge" class="muted"></span>
+</header>
+
+<div class="layout">
+  <aside id="sidebar">
+    <details open id="secLib">
+      <summary>Recordings</summary>
+      <ul id="recList" class="list"></ul>
+    </details>
+
+    <details open id="secRun">
+      <summary>Analyse</summary>
+      <div class="form">
+        <label>Range start
+          <span class="row"><input id="rangeStart" inputmode="decimal" placeholder="mm:ss" autocomplete="off">
+          <button type="button" id="startFromHead" title="Use current player position">&#9906;</button></span>
+        </label>
+        <label>Range end
+          <span class="row"><input id="rangeEnd" inputmode="decimal" placeholder="mm:ss" autocomplete="off">
+          <button type="button" id="endFromHead" title="Use current player position">&#9906;</button></span>
+        </label>
+        <p class="hint">Accepts seconds, mm:ss or hh:mm:ss. Default: the whole recording (0 to its end).</p>
+        <label>Model <select id="modelSel"></select></label>
+        <label>Orientation <select id="orientSel" title="Landscape: the full frame. Portrait: the largest 9:16 window of it, placed by Camera side (left / center / right)">
+          <option value="landscape" selected>Landscape</option><option value="portrait">Portrait</option></select></label>
+        <div class="two">
+          <label>Resolution <select id="profileSel"></select></label>
+          <label>FPS <input id="fpsInput" type="number" min="0.5" max="30" step="0.5" value="6"></label>
+        </div>
+        <label id="depthLbl" hidden>Depth <select id="depthSel"></select></label>
+        <label>Device <select id="deviceSel" title="CPU is much slower; use it when the GPU is busy (e.g. training)"><option value="gpu" selected>GPU</option><option value="cpu">CPU</option></select></label>
+        <button type="button" id="analyseBtn" class="primary" disabled>Analyse</button>
+        <div id="reusedNote" class="toast info" hidden><span></span> <button type="button" id="reanalyseBtn">Re-analyse</button></div>
+        <button type="button" id="cancelBtn" hidden>Cancel analysis</button>
+        <div id="runProgress" class="progress" hidden><div></div><span></span></div>
+      </div>
+    </details>
+
+    <details open id="secSettings">
+      <summary>Collision settings</summary>
+      <div class="form">
+        <div class="two">
+          <label>Your height (m) <input id="userHeightInput" type="number" min="1" max="2.3" step="0.01" placeholder="default"></label>
+          <label>Camera side <select id="sideSel">
+            <option value="left">Left</option><option value="center" selected>Center</option><option value="right">Right</option></select></label>
+        </div>
+        <label>Camera location <select id="locSel"></select></label>
+        <p id="bodyHint" class="hint"></p>
+        <label id="mountLbl">Mount <select id="mountSel"></select></label>
+        <label>HFOV (deg) <input id="hfovInput" type="number" min="10" max="179" step="1" placeholder="default"></label>
+        <div class="two">
+          <label>Camera height (m) <input id="camHeightInput" type="number" min="0.5" max="2.5" step="0.05" placeholder="preset"></label>
+          <label>Step length (m) <input id="stepLenInput" type="number" min="0.3" max="2" step="0.05" placeholder="auto"></label>
+        </div>
+        <div class="two">
+          <label>Lens <select id="projSel">
+            <option value="auto">Auto</option><option value="rectilinear">Rectilinear</option><option value="fisheye">Fisheye</option></select></label>
+          <label>Distance <select id="distSel">
+            <option value="ground">Ground</option><option value="depth">Depth</option></select></label>
+        </div>
+        <p class="hint">Empty = preset / estimated from the footage.</p>
+        <button type="button" id="rerunBtn" disabled>Re-run collision</button>
+        <p id="rerunInfo" class="hint"></p>
+      </div>
+    </details>
+
+    <details open id="secRuns">
+      <summary>Past runs</summary>
+      <ul id="runList" class="list"></ul>
+    </details>
+  </aside>
+
+  <main id="main">
+    <div id="stage">
+      <video id="video" playsinline webkit-playsinline preload="auto" muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="hud" class="mono" hidden></div>
+      <div id="stageMsg">Select a recording</div>
+    </div>
+
+    <div class="controls">
+      <button type="button" id="stepBack" title="Previous analysed frame (&larr;)">&#9664;&#9664;</button>
+      <button type="button" id="playBtn" class="primary" title="Play / pause (space)">&#9654;</button>
+      <button type="button" id="stepFwd" title="Next analysed frame (&rarr;)">&#9654;&#9654;</button>
+      <span id="timeLabel" class="mono">0:00.0 / 0:00</span>
+      <label class="inline">Speed
+        <select id="speedSel"></select>
+      </label>
+    </div>
+    <input id="seekBar" type="range" min="0" max="1" step="0.01" value="0" aria-label="Seek">
+
+    <div class="panels">
+      <fieldset>
+        <legend>Audio</legend>
+        <button type="button" id="audioBtn" class="on" aria-pressed="true">&#128266; Audio on</button>
+        <button type="button" id="testSpeechBtn" title="Speaks &quot;speech test&quot; and reports what the browser did (also sent to the Lab's client log)">Test speech</button>
+        <label class="inline"><input type="checkbox" id="speechChk" checked> Speech</label>
+        <label class="inline"><input type="checkbox" id="tonesChk" checked> Beeps</label>
+        <label class="inline" title="Playback speaks your added phrases and skips the ones you marked as should-not-be-said"><input type="checkbox" id="reviewPreviewChk" checked> Hear review edits</label>
+        <label class="inline"><input type="checkbox" id="muteChk"> Mute all (m)</label>
+        <label class="inline"><input type="checkbox" id="videoSoundChk"> Video sound</label>
+        <label class="inline">Volume <input id="volRange" type="range" min="0" max="1" step="0.01" value="0.8"></label>
+        <label class="inline">Audio delay <input id="offsetRange" type="range" min="-300" max="300" step="10" value="0"><output id="offsetOut">0 ms</output></label>
+        <div id="speechStuck" class="notice" role="alert" hidden><span class="msg"></span> <button type="button" id="speechStuckClose" aria-label="Dismiss">&times;</button></div>
+      </fieldset>
+      <fieldset>
+        <legend>Overlay</legend>
+        <label class="inline"><input type="checkbox" id="maskChk" checked> Mask</label>
+        <label class="inline">Opacity <input id="maskOpacity" type="range" min="0" max="1" step="0.05" value="0.45"></label>
+        <label class="inline" title="Depth map of the run (only for runs analysed with a depth model)"><input type="checkbox" id="depthChk" disabled> Depth</label>
+        <label class="inline"><input type="checkbox" id="regionChk" checked> Region</label>
+        <label class="inline"><input type="checkbox" id="laneChk" checked> Lane</label>
+        <label class="inline"><input type="checkbox" id="horizonChk" checked> Horizon</label>
+        <label class="inline"><input type="checkbox" id="hazardChk" checked> Items</label>
+        <label class="inline">Shapes
+          <select id="shapeSel" title="Item shapes: outlines follow the mask edges, boxes are the bounding rectangles">
+            <option value="outlines">Outlines</option>
+            <option value="boxes">Boxes</option>
+          </select></label>
+        <label class="inline"><input type="checkbox" id="showAllChk"> Show all (labels of ignored items)</label>
+      </fieldset>
+    </div>
+
+    <details open id="secSounds" class="sounds">
+      <summary>Sounds</summary>
+      <table class="snd-table" aria-label="Sound tuner">
+        <thead><tr><th>Sound</th><th>Pitch (low &harr; high)</th><th>Duration</th><th>Repeat</th><th></th></tr></thead>
+        <tbody id="sndRows"></tbody>
+      </table>
+      <div class="snd-speech">
+        <label class="inline" for="sndSpeech">Speech speed</label>
+        <input id="sndSpeech" type="range" min="0.5" max="2" step="0.05" value="1" aria-label="Speech speed">
+        <output id="sndSpeechOut" class="mono">1.00&times;</output>
+        <button type="button" id="sndSpeechTest" class="snd-test" aria-label="Test speech speed" title="Speaks &quot;speech test&quot; at this speed">&#9654;</button>
+      </div>
+      <div class="snd-foot">
+        <button type="button" id="sndApply" hidden title="Re-runs the collision pass of this run with the new repeat intervals">Apply timing to this run</button>
+        <span id="sndApplyNote" class="hint" hidden>Repeat intervals change the beep schedule: apply them to re-score the open run. Pitch, duration and speed already play live.</span>
+        <button type="button" id="sndReset" class="link">Reset sounds to defaults</button>
+        <span id="sndStatus" class="hint" aria-live="polite"></span>
+      </div>
+    </details>
+
+    <details id="secClasses">
+      <summary>Classes &amp; safety levels <span id="clsEdited" class="cls-edited" hidden>edited</span></summary>
+      <p id="clsMsg" class="hint"></p>
+      <div id="clsBody" hidden>
+        <p class="hint">View only: changes how the mask is painted. Edits preview instantly; Save keeps them on the Lab server for every device. Collision behaviour and shared config are untouched.</p>
+        <table class="cls-table" aria-label="Safety levels">
+          <thead><tr><th>Level</th><th>Colour</th><th>Opacity</th></tr></thead>
+          <tbody id="clsLevels"></tbody>
+        </table>
+        <div class="cls-save">
+          <button type="button" id="clsSaveL" disabled>Save level colours</button>
+          <span id="clsStatL" class="cls-stat" aria-live="polite"></span>
+          <button type="button" id="clsDiscL" class="link" hidden>Discard</button>
+        </div>
+        <div class="cls-bar">
+          <input id="clsFilter" type="search" placeholder="Filter classes" aria-label="Filter classes" autocomplete="off">
+          <button type="button" id="clsAll">Show all</button>
+          <button type="button" id="clsNone">Show none</button>
+          <button type="button" id="clsReset">Reset to defaults</button>
+        </div>
+        <div class="cls-scroll">
+          <table class="cls-table" aria-label="Classes">
+            <thead><tr><th></th><th></th><th>Class</th><th>Level</th></tr></thead>
+            <tbody id="clsClasses"></tbody>
+          </table>
+        </div>
+        <div class="cls-save">
+          <button type="button" id="clsSaveC" disabled>Save class levels</button>
+          <span id="clsStatC" class="cls-stat" aria-live="polite"></span>
+          <button type="button" id="clsDiscC" class="link" hidden>Discard</button>
+        </div>
+      </div>
+    </details>
+
+    <canvas id="timeline" aria-label="Run timeline"></canvas>
+    <div id="roleChips" class="chips" role="group" aria-label="Show roles"></div>
+    <div class="legend">
+      <span class="muted">ticks = speech by role, bars = beep episodes (collisions)</span>
+    </div>
+  </main>
+
+  <aside id="reviewPanel" aria-label="Notification review">
+    <div class="rv-head">
+      <h2>Notification review</h2>
+      <div id="rvTotal" class="hint rv-total"></div>
+      <div class="rv-counts" aria-live="polite">
+        <span class="rv-c ok" title="Correct">&#10003; <b id="rvCorrect">0</b></span>
+        <span class="rv-c bad" title="Incorrect">&#10007; <b id="rvIncorrect">0</b></span>
+        <span class="rv-c rm" title="Should not be said">&#8856; <b id="rvRemove">0</b></span>
+        <span class="rv-c add" title="Added by you">+ <b id="rvAdded">0</b></span>
+        <span class="rv-c un" title="Notified (spoken or beeped), not yet reviewed"><b id="rvUnrev">&ndash;</b> unreviewed</span>
+      </div>
+      <div class="rv-bar">
+        <button type="button" id="rvAddBtn" class="primary" disabled title="Add a notification the system missed (a)">+ Add notification at playhead</button>
+        <span class="rv-transport">
+          <button type="button" id="rvPrev" aria-label="Previous frame">&#9664;&#9664;</button>
+          <button type="button" id="rvPlay" aria-label="Play / pause">&#9199;</button>
+          <button type="button" id="rvNext" aria-label="Next frame">&#9654;&#9654;</button>
+        </span>
+        <a id="rvExport" href="#" download="notification-reviews.json" hidden>Export</a>
+      </div>
+      <div id="rvAddForm" class="rv-addform" hidden>
+        <div class="row">
+          <input id="rvAddT" class="mono" inputmode="decimal" aria-label="Time" autocomplete="off">
+          <button type="button" id="rvAddHead" title="Set to playhead">&#10226; playhead</button>
+          <span id="rvAddFollow" class="rv-follow" hidden title="While paused, the time follows every seek and frame step. Typing a time stops this.">&#8635; following playhead</span>
+          <select id="rvAddType" aria-label="Type"><option value="speech">speech</option><option value="beeps">beeps</option></select>
+          <select id="rvAddRole" aria-label="Role"></select>
+        </div>
+        <div id="rvAddEndRow" class="row" hidden>
+          <label class="inline" for="rvAddEnd">End</label>
+          <input id="rvAddEnd" class="mono" inputmode="decimal" aria-label="End time" autocomplete="off">
+          <button type="button" id="rvAddEndHead" title="Set the end of the beeps to the playhead">&#10226; end from playhead</button>
+        </div>
+        <div class="row rv-textline">
+          <input id="rvAddText" maxlength="300" placeholder="What should have been said, e.g. bench, 1 o'clock, 4 steps (beeps: beeps · pole at 12)" autocomplete="off">
+          <button type="button" id="rvAddAuto" title="Fill from what is detected at this time (click again for the next candidate)">Auto-fill</button>
+        </div>
+        <div id="rvAddAutoInfo" class="hint" hidden></div>
+        <textarea id="rvAddNote" rows="2" maxlength="2000" placeholder="Note (optional)"></textarea>
+        <div class="row"><button type="button" id="rvAddSubmit" class="primary">Add</button><button type="button" id="rvAddCancel">Cancel</button></div>
+      </div>
+    </div>
+    <p id="rvEmpty" class="hint"></p>
+    <ol id="rvList" class="rv-list"></ol>
+    <details id="rvOther" hidden>
+      <summary id="rvOtherSum">Other versions (0)</summary>
+      <ul id="rvOtherList" class="rv-list"></ul>
+    </details>
+  </aside>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
