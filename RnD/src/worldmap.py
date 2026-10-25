@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 
 import collision
+import groundfuse
 from collision import _WorldMemory, focal_px, ground_distance_m, lateral_m
 
 UNKNOWN = 255
@@ -83,7 +84,7 @@ def integrate_pose(times: np.ndarray, egos: list[dict], coll_cfg: dict) -> np.nd
 class Observer:
     """One frame's ego-centric observation: (classes uint8 [255 = unknown], weight float32)."""
 
-    def __init__(self, cfg: dict, settings: dict, kind: np.ndarray, gh: int, gw: int):
+    def __init__(self, cfg: dict, settings: dict, kind: np.ndarray, gh: int, gw: int, gd_cfg: dict | None = None):
         snap = cfg["snapshot"]
         self.size = int(snap["size"])
         self.oc, self.orow = int(snap["originCol"]), int(snap["originRow"])
@@ -95,6 +96,12 @@ class Observer:
         self.cam_h = float(settings["cameraHeightM"])
         self.lat_off = float(settings.get("lateralOffsetM", 0.0))
         self.depth_source = settings.get("distanceSource") == "depth"
+        # v26.2.3: the distance of an object base (the collision pass's own setting, stored in hazards.json) and the horizon switch
+        self.use_horizon = settings.get("useHorizon", True) is not False
+        self.object_mode = groundfuse.resolved_mode(settings.get("objectDistance", "depth"), self.use_horizon)
+        self.fisheye = settings.get("projection") == "fisheye"
+        self.gd = gd_cfg if gd_cfg is not None else groundfuse.settings({})
+        self.geo = groundfuse.Geometry(gh, gw, self.hfov, "fisheye" if self.fisheye else "rectilinear", self.cam_h)
         self.f_px = focal_px(gw, self.hfov)
         self.lens = cfg.get("lateralModel", "collision") == "lens"
         self.range_w = float(cfg["rangeWeightM"])
@@ -140,7 +147,10 @@ class Observer:
         y_b = (rr + 1.0) / gh
         contact = below_surface[rr, cc] & (y_b > horizon + 1e-6) & (rr < gh - 1)          # stands on the ground
         ground = cam_h * self.f_px / (np.maximum(y_b - horizon, 1e-6) * gh)
-        if dmap is not None and frame.get("depthScale"):
+        has_depth = dmap is not None and bool(frame.get("depthScale"))
+        if not self.use_horizon and not has_depth:
+            return empty                                # horizon off: depth is the only distance
+        if has_depth:
             dh, dw = dmap.shape
             up = int(self.cfg.get("objectDepthRowsAbove", 0))                 # read the depth inside the object, not at its edge
             r_d = np.maximum(rr - up, 0)
@@ -149,8 +159,12 @@ class Observer:
                      np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(np.float64)
             dist = float(frame["depthScale"]) * v
             good = np.isfinite(dist) & (dist > 0)
-            if self.cfg.get("objectDistance", "depth") == "ground-contact":    # a base on the ground: the ground ray beats the depth
-                dist = np.where(contact, ground, dist)
+            rep_ = frame.get("dcorr")
+            if self.use_horizon and self.object_mode != "depth" and rep_ is not None:
+                # v26.2.3: the same fusion the collision pass uses for an item (groundfuse.resolve), per base pixel
+                rows_below = (y_b - horizon) * gh
+                g_m, sg_m = groundfuse.ground_m(self.geo, y_b * gh, cc + 0.5, horizon, rep_, float(rep_["sigmaRows"]))
+                dist, _ = groundfuse.resolve(np.where(good, dist, 1.0), g_m, sg_m, rows_below, contact, rep_, self.gd, self.object_mode)
         else:                                           # ground distance of the base row; needs the ground below it
             good = contact
             dist = np.where(good, ground, 0.0)
@@ -167,23 +181,10 @@ class Observer:
         horizon = float(frame["horizon"])
         cam_h = self.cam_h * self.ground_scale(frame)
         kgrid = self.kind[grid]
-        # --- surfaces: inverse ground-plane sampling -------------------------------------------------------
-        fwd = self.fwd
-        ok = (fwd >= self.min_fwd) & (fwd <= self.max_range)
-        d = np.where(ok, fwd, 1.0)
-        y = horizon + cam_h * self.f_px / (d * gh)
-        lat = self.right - self.lat_off
-        if self.lens:
-            x = 0.5 + np.arctan2(lat, d) / math.radians(self.hfov)
+        if not self.use_horizon and dmap is not None and frame.get("depthScale"):
+            self._depth_surfaces(obs, grid, kgrid, frame, dmap)           # v26.2.3: surfaces through the depth map, no horizon
         else:
-            x = 0.5 + lat * self.f_px / (d * gw)
-        ri = np.floor(y * gh).astype(np.int64)
-        ci = np.floor(x * gw).astype(np.int64)
-        ok &= (ri >= 0) & (ri < gh) & (ci >= 0) & (ci < gw)
-        ri = np.clip(ri, 0, gh - 1)
-        ci = np.clip(ci, 0, gw - 1)
-        surf = ok & (kgrid[ri, ci] == KIND_SURFACE)
-        obs[surf] = grid[ri, ci][surf]
+            self._ground_surfaces(obs, grid, kgrid, horizon, cam_h)
         # --- object bases ----------------------------------------------------------------------------------
         rr, cc, dist, lat_b = self.object_bases(grid, frame, dmap, kgrid)
         if rr.size:
@@ -204,6 +205,74 @@ class Observer:
         if gain != 1.0:
             w[self.kind[obs] == KIND_OBJECT] *= np.float32(gain)
         return obs, w
+
+    def _ground_surfaces(self, obs: np.ndarray, grid: np.ndarray, kgrid: np.ndarray, horizon: float, cam_h: float) -> None:
+        """Surfaces: inverse ground-plane sampling (each map cell -> the image pixel that sees it, through the horizon)."""
+        gh, gw = self.gh, self.gw
+        fwd = self.fwd
+        ok = (fwd >= self.min_fwd) & (fwd <= self.max_range)
+        d = np.where(ok, fwd, 1.0)
+        y = horizon + cam_h * self.f_px / (d * gh)
+        lat = self.right - self.lat_off
+        if self.lens:
+            x = 0.5 + np.arctan2(lat, d) / math.radians(self.hfov)
+        else:
+            x = 0.5 + lat * self.f_px / (d * gw)
+        ri = np.floor(y * gh).astype(np.int64)
+        ci = np.floor(x * gw).astype(np.int64)
+        ok &= (ri >= 0) & (ri < gh) & (ci >= 0) & (ci < gw)
+        ri = np.clip(ri, 0, gh - 1)
+        ci = np.clip(ci, 0, gw - 1)
+        surf = ok & (kgrid[ri, ci] == KIND_SURFACE)
+        obs[surf] = grid[ri, ci][surf]
+
+    def _depth_surfaces(self, obs: np.ndarray, grid: np.ndarray, kgrid: np.ndarray, frame: dict, dmap: np.ndarray) -> None:
+        """Surfaces through the depth map (horizon off): every surface pixel is back-projected along its lens ray (equidistant fisheye or pinhole)
+        at its z-depth x the depth scale, forward distance = z cos(pitch) - y sin(pitch) with the plane-fit pitch when the run has one, and splatted
+        into the cells around it (the footprint of a pixel grows with range); nearer pixels are written last."""
+        gh, gw = self.gh, self.gw
+        rr, cc = np.nonzero(kgrid == KIND_SURFACE)
+        if not rr.size:
+            return
+        dh, dw = dmap.shape
+        z = dmap[np.minimum(dh - 1, ((rr + 0.5) / gh * dh).astype(int)),
+                 np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(np.float64) * float(frame["depthScale"])
+        px, py = cc + 0.5 - gw / 2.0, rr + 0.5 - gh / 2.0
+        if self.fisheye:
+            r = np.hypot(px, py)
+            theta = r / (gw / math.radians(self.hfov))
+            c_t = np.cos(theta)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                k = np.where(r > 0, np.sin(theta) / np.maximum(r, 1e-12), 0.0) / c_t
+            xn, yn = k * px, k * py
+            good = c_t > 1e-3
+        else:
+            xn, yn = px / self.f_px, py / self.f_px
+            good = np.ones(rr.size, dtype=bool)
+        pitch = math.radians(float((frame.get("ego") or {}).get("depthPitchDeg") or 0.0))
+        fwd = z * (math.cos(pitch) - yn * math.sin(pitch))
+        right = xn * z + self.lat_off
+        good &= np.isfinite(z) & (z > 0) & np.isfinite(fwd) & (fwd >= self.min_fwd) & (fwd <= self.max_range)
+        rr, cc, fwd, right = rr[good], cc[good], fwd[good], right[good]
+        if not rr.size:
+            return
+        col = self.oc + np.rint(right / self.cell).astype(np.int64)
+        row = self.orow - np.rint(fwd / self.cell).astype(np.int64)
+        half_x = np.minimum(2, np.rint(fwd / self.f_px / 2.0 / self.cell).astype(np.int64))
+        # one image row is F^2 / (H f) metres deep on the ground: the cells between two rows are filled up to 6 cells (0.6 m) either side
+        half_y = np.minimum(6, np.rint(fwd * fwd / (self.cam_h * self.f_px) / 2.0 / self.cell).astype(np.int64))
+        order = np.argsort(-fwd)
+        rr, cc, col, row, half_x, half_y = rr[order], cc[order], col[order], row[order], half_x[order], half_y[order]
+        vals = grid[rr, cc]
+        size = self.size
+        for dy in range(-6, 7):
+            for dx in range(-2, 3):
+                m = (half_y >= abs(dy)) & (half_x >= abs(dx))
+                if not m.any():
+                    continue
+                cx, ry = col[m] + dx, row[m] + dy
+                inside = (cx >= 0) & (cx < size) & (ry >= 0) & (ry < size)
+                obs[ry[inside], cx[inside]] = vals[m][inside]
 
 
 class Fusion:
@@ -323,14 +392,16 @@ def frames_from_hazards(hazards: dict) -> list[dict]:
     out = []
     for fr in hazards["frames"]:
         e = fr.get("ego") or {}
-        out.append({"horizon": fr["horizonY"], "scale": e.get("scale"), "depthScale": e.get("depthScale"), "ego": e})
+        out.append({"horizon": fr["horizonY"], "scale": e.get("scale"), "depthScale": e.get("depthScale"), "ego": e,
+                    "dcorr": fr.get("depthCorrection")})
     return out
 
 
 def settings_from_hazards(hazards: dict) -> dict:
     s = hazards["settings"]
     return {"hfovDeg": s["hfovDeg"], "cameraHeightM": s["cameraHeightM"], "lateralOffsetM": s.get("lateralOffsetM", 0.0),
-            "projection": hazards.get("projection"), "distanceSource": hazards.get("distanceSource", "ground")}
+            "projection": hazards.get("projection"), "distanceSource": hazards.get("distanceSource", "ground"),
+            "objectDistance": s.get("objectDistance", "depth"), "useHorizon": s.get("useHorizon", True)}
 
 
 class WorldMap:
@@ -345,7 +416,7 @@ class WorldMap:
         self.kind = class_kinds(self.cfg, list(class_names))
         n, gh, gw = grids.shape
         self.n, self.gh, self.gw = n, gh, gw
-        self.observer = Observer(self.cfg, settings, self.kind, gh, gw)
+        self.observer = Observer(self.cfg, settings, self.kind, gh, gw, groundfuse.settings((coll_cfg or {}).get("distance", {})))
         self.pose_tracker = PoseTracker(coll_cfg)
         self.pose = np.zeros((n, 3))
         present = np.flatnonzero(np.bincount(np.asarray(grids).ravel(), minlength=256))

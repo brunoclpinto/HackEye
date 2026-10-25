@@ -46,7 +46,7 @@ FPS = 10.0
 
 def test_config_keys():
     r = CONFIG["roles"]
-    assert CONFIG["version"] == "v26.2.2" and r["staticSource"] == "map"
+    assert CONFIG["version"] == "v26.2.3" and r["staticSource"] == "map"
     # v26.2.2: the building section gates (mapMinCells, mapCorridorMarginM, mapMinAgeSeconds, mapMinClosingMps) are gone: the map judges every wall-like
     # class with the face / edge test (tests/test_collision_v2622.py)
     assert "mapMinCells" not in r and "mapMinClosingMps" not in r and r["mapJudgedClasses"]
@@ -124,7 +124,9 @@ def test_image_source_is_the_v2620_behaviour():
 
 @pytest.fixture(scope="module")
 def review7():
-    return _run_windows("chest0004_review7", col.load_config())          # v26.2.2: the default (map) config; the regression helper's own CONFIG is the image rule
+    cfg = col.load_config()                                               # v26.2.2: the default (map) config; the regression helper's own CONFIG is the image rule
+    cfg["distance"]["objectDistance"] = "depth"                           # v26.2.3: the new default ground+depth is pinned in test_collision_v2623.py
+    return _run_windows("chest0004_review7", cfg)
 
 
 @pytest.fixture(scope="module")

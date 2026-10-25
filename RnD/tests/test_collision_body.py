@@ -14,6 +14,7 @@ from tests.test_collision import CONFIG, FPS, H, HFOV, NAMES, SETTINGS, W, base_
 from tests.test_collision_depth import DH, DW
 
 HC_REAL = 1.28
+HEIGHT = CONFIG["body"]["defaultUserHeightM"]      # user height 1.78 m, user correction 2026-10-25 (was 1.70)
 
 
 # --- body settings -> geometry ------------------------------------------------------------------------
@@ -26,9 +27,10 @@ def test_body_settings_resolution():
     h = col.resolve_settings(CONFIG, user_height_m=1.78, camera_location="head", camera_side="right")
     assert h.camera_height_m == pytest.approx(1.78 + 0.05) and h.horizon_default == 0.48
     assert h.lateral_offset_m == pytest.approx(0.07)
-    w = col.resolve_settings(CONFIG, camera_location="waist", camera_side="left")        # default height 1.70
-    assert w.camera_height_m == pytest.approx(0.58 * 1.70) and w.lateral_offset_m == pytest.approx(-0.15)
-    assert w.step_length_m == pytest.approx(0.415 * 1.70)
+    assert HEIGHT == 1.78
+    w = col.resolve_settings(CONFIG, camera_location="waist", camera_side="left")        # the default height (config: 1.78 m, user correction 2026-10-25)
+    assert w.camera_height_m == pytest.approx(0.58 * HEIGHT) and w.lateral_offset_m == pytest.approx(-0.15)
+    assert w.step_length_m == pytest.approx(0.415 * HEIGHT)
     e = col.resolve_settings(CONFIG, user_height_m=1.60, camera_side="right")            # location defaults to chest
     assert e.camera_location == "chest" and e.camera_height_m == pytest.approx(0.72 * 1.60)
     assert e.lateral_offset_m == pytest.approx(0.15)

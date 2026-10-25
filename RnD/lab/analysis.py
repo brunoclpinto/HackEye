@@ -852,7 +852,8 @@ def collision_pass(run_id: str) -> dict | None:
                                           distance_source=stored["distanceSource"],
                                           user_height_m=stored["userHeightM"],
                                           camera_location=stored["cameraLocation"],
-                                          camera_side=side)
+                                          camera_side=side, object_distance=stored["objectDistance"],
+                                          use_horizon=stored["useHorizon"])
     window = None
     gwin = doc.get("gridWindow")
     if gwin:

@@ -311,6 +311,17 @@ def _body_locations() -> list[str]:
         return []
 
 
+def _distance_defaults() -> tuple[str, bool]:
+    """The object distance and horizon switch of collision.json (distance.objectDistance / useHorizon)."""
+    try:
+        import collision
+
+        d = collision.load_config().get("distance", {})
+        return d.get("objectDistance", "depth"), bool(d.get("useHorizon", True))
+    except Exception:  # noqa: BLE001 - no config: the v26.2.2 behaviour
+        return "depth", True
+
+
 def get_settings(rec_id: str, default_mount: str) -> dict:
     """Stored settings, or the defaults when nothing was saved. Camera location and side default from the recording
     name (``Chest-center-0004``: chest, center) where the body calibration has that location."""
@@ -318,11 +329,12 @@ def get_settings(rec_id: str, default_mount: str) -> dict:
     location = hints.get("cameraLocation")
     if location not in _body_locations():
         location = None
+    obj_dist, use_h = _distance_defaults()
     defaults = {"mount": default_mount, "hfovDeg": None,
                 "cameraHeightM": None, "stepLengthM": None,
                 "projection": "auto", "distanceSource": "depth",
                 "userHeightM": None, "cameraLocation": location, "cameraSide": hints.get("cameraSide", "center"),
-                "orientation": "landscape"}
+                "orientation": "landscape", "objectDistance": obj_dist, "useHorizon": use_h}
     try:
         stored = json.loads(_settings_path(rec_id).read_text())
     except (OSError, ValueError):

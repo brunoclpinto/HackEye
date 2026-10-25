@@ -59,7 +59,7 @@ def _frames(face: bool, seconds=14.0, d0=22.0):
 
 def test_config_and_hazard_field():
     assert ROLES["laneBaseClasses"] == ["building"]
-    assert ROLES["laneBaseMinColumns"] >= 2 and CONFIG["version"] == "v26.2.2"
+    assert ROLES["laneBaseMinColumns"] >= 2 and CONFIG["version"] == "v26.2.3"
     it = col._Item(group="static", class_name="building", bbox=[0, 0, 1, 1], contact_y=0.6, distance_m=5.0, lateral_m=0.0, bearing=0.0, clock=12,
                    pan=0.0, area_frac=0.1, clipped=False, touches=True, lane_hit=True, along_path=False, lane_cover=0.5, lane_part=True)
     assert col._hazard_dict(it)["lanePart"] is True

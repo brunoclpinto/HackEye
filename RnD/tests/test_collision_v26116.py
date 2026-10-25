@@ -27,7 +27,7 @@ SOUNDS = TONES["sounds"]
 # ---- config -----------------------------------------------------------------------------------
 
 def test_version_and_the_default_sounds():
-    assert CONFIG["version"] == "v26.2.2"
+    assert CONFIG["version"] == "v26.2.3"
     s = SOUNDS
     assert set(s) == set(col.SOUND_KINDS) == {"collision-left", "collision-center", "collision-right", "crosswalk-in", "crosswalk-out", "proximity"}
     assert (s["collision-center"]["pitchHz"], s["collision-center"]["durationMs"], s["collision-center"]["intervalS"]) == (880, 80, 0.5)

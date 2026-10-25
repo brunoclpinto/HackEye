@@ -103,6 +103,12 @@
           <label>Distance <select id="distSel">
             <option value="ground">Ground</option><option value="depth">Depth</option></select></label>
         </div>
+        <div class="two">
+          <label>Object distance <select id="objDistSel" title="How far a base on the ground is: DA2 depth, the ground ray, or the range-corrected depth fused with the ground ray">
+            <option value="depth">Depth</option><option value="ground-contact">Ground contact</option><option value="ground+depth">Ground + depth</option></select></label>
+          <label>Horizon <select id="horizonSel" title="Off: no ground ray in any distance and the map is projected through the depth map">
+            <option value="true">On</option><option value="false">Off</option></select></label>
+        </div>
         <p class="hint">Empty = preset / estimated from the footage.</p>
         <button type="button" id="rerunBtn" disabled>Re-run collision</button>
         <p id="rerunInfo" class="hint"></p>

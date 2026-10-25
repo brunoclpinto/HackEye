@@ -189,6 +189,7 @@ def _opt_number(body: dict, key: str, lo: float, hi: float, hi_inclusive: bool =
 
 PROJECTIONS = ("auto", "rectilinear", "fisheye")
 DISTANCE_SOURCES = ("ground", "depth")
+OBJECT_DISTANCES = ("depth", "ground-contact", "ground+depth")
 CAMERA_SIDES = ("left", "center", "right")
 ORIENTATIONS = ("landscape", "portrait")
 
@@ -213,6 +214,15 @@ def _choice(body: dict, key: str, options: tuple, default: str) -> str:
     return v
 
 
+def _bool(body: dict, key: str, default: bool) -> bool:
+    v = body.get(key)
+    if v is None:
+        return default
+    if not isinstance(v, bool):
+        raise HTTPException(422, f"{key} must be true or false")
+    return v
+
+
 def _validated_settings(body: dict, config: dict) -> dict:
     """Validate a settings body (§4). A legacy `corridor` key is ignored."""
     mount = body.get("mount") or config["defaultMount"]
@@ -227,7 +237,9 @@ def _validated_settings(body: dict, config: dict) -> dict:
             "userHeightM": _opt_number(body, "userHeightM", 1.0, 2.3),
             "cameraLocation": _location(body, config),
             "cameraSide": _choice(body, "cameraSide", CAMERA_SIDES, "center"),
-            "orientation": _choice(body, "orientation", ORIENTATIONS, "landscape")}
+            "orientation": _choice(body, "orientation", ORIENTATIONS, "landscape"),
+            "objectDistance": _choice(body, "objectDistance", OBJECT_DISTANCES, config.get("distance", {}).get("objectDistance", "depth")),
+            "useHorizon": _bool(body, "useHorizon", bool(config.get("distance", {}).get("useHorizon", True)))}
 
 
 def _settings_response(rec_id: str) -> dict:
@@ -238,7 +250,7 @@ def _settings_response(rec_id: str) -> dict:
         config, stored["mount"], stored["hfovDeg"], stored["cameraHeightM"], stored["stepLengthM"],
         projection=stored["projection"], distance_source=stored["distanceSource"],
         user_height_m=stored["userHeightM"], camera_location=stored["cameraLocation"],
-        camera_side=stored["cameraSide"])
+        camera_side=stored["cameraSide"], object_distance=stored["objectDistance"], use_horizon=stored["useHorizon"])
     resolved = {
         "hfovDeg": rs.hfov_deg,
         "projection": rs.projection,
@@ -249,6 +261,8 @@ def _settings_response(rec_id: str) -> dict:
         "cameraLocation": rs.camera_location,
         "cameraSide": rs.camera_side,
         "lateralOffsetM": rs.lateral_offset_m,
+        "objectDistance": rs.object_distance,
+        "useHorizon": rs.use_horizon,
     }
     return {**stored, "resolved": resolved}
 
@@ -326,6 +340,11 @@ def rerun_collision(run_id: str) -> dict:
         raise HTTPException(409, f"Run is {run['status']}, not done")
     _collision()
     result = analysis.collision_pass(run_id)
+    if (analysis.run_dir(run_id) / "worldmap.npz").exists():     # v26.2.3: a built map would be stale (object distance / horizon switch): rebuild it
+        try:
+            analysis.worldmap_pass(run_id)
+        except Exception as exc:  # noqa: BLE001 - the collision result stands
+            analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
     return {"version": result["version"], "elapsedSeconds": result["elapsedSeconds"],
             "hazards": f"/api/runs/{run_id}/hazards.json", "events": f"/api/runs/{run_id}/events.json"}
 

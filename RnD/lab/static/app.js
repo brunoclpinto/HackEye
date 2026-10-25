@@ -231,6 +231,8 @@ function applySettingsToForm() {
   $("#stepLenInput").value = s.stepLengthM ?? "";
   $("#projSel").value = s.projection ?? "auto";
   $("#distSel").value = s.distanceSource ?? "depth";
+  $("#objDistSel").value = s.objectDistance ?? "depth";
+  $("#horizonSel").value = String(s.useHorizon ?? true);
   updateSettingPlaceholders();
 }
 function settingsFromForm() {
@@ -246,6 +248,8 @@ function settingsFromForm() {
     stepLengthM: num("#stepLenInput"),
     projection: $("#projSel").value,
     distanceSource: $("#distSel").value,
+    objectDistance: $("#objDistSel").value,
+    useHorizon: $("#horizonSel").value === "true",
   };
 }
 async function putSettings() {

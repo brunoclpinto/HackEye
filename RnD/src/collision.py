@@ -187,6 +187,7 @@ from scipy import ndimage
 from common_paths import find_common_dir
 from geometry import Box, iou
 import faceedge
+import groundfuse
 
 _4_CONNECTIVITY = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
 ITEM_GROUPS = ("static", "moving", "feature")
@@ -225,6 +226,8 @@ class CollisionSettings:
     camera_location: str | None = None             # "waist" | "chest" | "eye" | "head"
     camera_side: str | None = None                 # "left" | "center" | "right"
     lateral_offset_m: float = 0.0                  # camera centre relative to the body centre (+ = camera right of body)
+    object_distance: str = "depth"                 # v26.2.3: "depth" | "ground-contact" | "ground+depth" (distance.objectDistance), see groundfuse
+    use_horizon: bool = True                       # v26.2.3: False = no ground ray in any distance / map projection (distance.useHorizon)
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -235,6 +238,7 @@ def load_config(path: Path | None = None) -> dict:
 
 AUTO_FISHEYE_HFOV_DEG = 100.0
 DISTANCE_SOURCES = ("ground", "depth")
+OBJECT_DISTANCES = ("depth", "ground-contact", "ground+depth")
 
 
 def resolve_projection(projection: str | None, hfov_deg: float) -> str:
@@ -251,7 +255,8 @@ def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | N
                      camera_height_m: float | None = None,
                      step_length_m: float | None = None, projection: str | None = None,
                      distance_source: str = "ground", user_height_m: float | None = None,
-                     camera_location: str | None = None, camera_side: str | None = None) -> CollisionSettings:
+                     camera_location: str | None = None, camera_side: str | None = None,
+                     object_distance: str | None = None, use_horizon: bool | None = None) -> CollisionSettings:
     """Explicit values win over the mount preset / body geometry; None falls back to defaults.
 
     Body mode (``camera_location`` or ``user_height_m`` given, ``config["body"]``): camera height =
@@ -288,6 +293,13 @@ def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | N
         step = float(body["stepLengthRatio"]) * body_h
         horizon = float(spec["horizon"])
         lat_off = SIDE_SIGN[side] * float(spec.get("sideOffsetM", 0.0))
+    dcfg = config.get("distance", {})
+    if object_distance is None:
+        object_distance = dcfg.get("objectDistance", "depth")
+    if object_distance not in OBJECT_DISTANCES:
+        _warn_once(f"unknown object distance '{object_distance}', using 'depth'")
+        object_distance = "depth"
+    use_h = bool(dcfg.get("useHorizon", True) if use_horizon is None else use_horizon)
     if camera_height_m is not None:
         cam_h = float(camera_height_m)
     if step_length_m is not None:
@@ -300,7 +312,8 @@ def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | N
         horizon_default=horizon,
         projection=resolve_projection(projection, hfov), distance_source=distance_source,
         depth_level_prior=preset.get("depthLevelPrior"),
-        user_height_m=body_h, camera_location=loc, camera_side=side, lateral_offset_m=lat_off)
+        user_height_m=body_h, camera_location=loc, camera_side=side, lateral_offset_m=lat_off,
+        object_distance=object_distance, use_horizon=use_h)
 
 
 # --------------------------------------------------------------------------
@@ -850,6 +863,11 @@ class _Item:
     ghost: bool = False                       # (map) no longer in the image (under the frame): kept alive by its map cells
     map_judged: bool = False                  # (v26.2.2) a wall-like static item judged on the map alone (no image lane rule)
     face_edge: dict | None = None             # (v26.2.2, roles.faceEdge.enabled) the face / edge test of its corridor cells: diagnostics only
+    base_row: int = -1                        # (v26.2.3) the grid pixel of its contact point (lowest pixel); -1 = unknown
+    base_col: int = -1
+    dist_source: str = ""                     # (v26.2.3, objectDistance != "depth") "depth" | "ground" | "fused": where distance_m came from
+    raw_depth_m: float | None = None          # ... the scaled depth before the range correction
+    ground_m: float | None = None             # ... its ground ray in depth metres (None: not in contact / outside the band)
 
     def __post_init__(self) -> None:
         if self.clock_q is None:
@@ -946,7 +964,7 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                     along_path=along, lane_cover=cover, contact_y_raw=contact_y,
                     area_m2=rr.size * (dist / geo.f) ** 2,
                     people=ids.names[cid] in ids.people, fast=ids.names[cid] in ids.fast, thin=ids.names[cid] in ids.thin,
-                    landmark=ids.names[cid] in ids.landmark,
+                    landmark=ids.names[cid] in ids.landmark, base_row=int(row), base_col=int(col),
                     shape=(labels[sl] == k, sl[1].start, sl[0].start))
                 items.append(main)
                 if group == "static" and ids.names[cid] in lane_base_classes and (not lane_hit or along):
@@ -993,7 +1011,7 @@ def _lane_part_item(main: _Item, rr: np.ndarray, cc: np.ndarray, geo: _FrameGeo,
         bearing=bearing, clock=clock_from_bearing(bearing), clock_q=(cq := clock_quarter(bearing)), clock_text=clock_text(cq),
         pan=_pan_from_bearing(bearing), clipped=bool(row == gh - 1), touches=True, lane_hit=True, along_path=False,
         lane_cover=float(np.count_nonzero(sel & (rr == row))) / float(max(1, lane_cols.size)), lane_part=True, lane_part_weak=not flat,
-        depth_cells=(rr[sel], cc[sel]))
+        depth_cells=(rr[sel], cc[sel]), base_row=int(row), base_col=int(col))
 
 
 # --------------------------------------------------------------------------
@@ -1144,6 +1162,23 @@ def _item_depth_m(it: _Item, dmap: np.ndarray, gh: int, gw: int, lowest_frac: fl
     v = dmap[dr, dc].astype(float)
     v = v[np.isfinite(v) & (v > 0.0)]
     return None if v.size == 0 else float(np.median(v))
+
+
+def _ground_depth_distance(it: _Item, tr: _Track, grid: np.ndarray, surf_lut: np.ndarray, horizon: float, geo: "groundfuse.Geometry",
+                           gh: int, rep: dict, cfg: dict, mode: str) -> float:
+    """v26.2.3: the distance of an item from its scaled depth and the ground ray of its base (``groundfuse.resolve``); sets
+    ``raw_depth_m`` / ``ground_m`` / ``dist_source``. A base is in contact when it is not clipped and the pixel below it is a surface class."""
+    contact = (not it.clipped) and 0 <= it.base_row < gh - 1 and it.base_col >= 0 and bool(surf_lut[grid[it.base_row + 1, it.base_col]])
+    y = tr.contact_s if tr.contact_s is not None else it.contact_y
+    rows_below = (y - horizon) * gh
+    col_c = (it.base_col if it.base_col >= 0 else geo.gw // 2) + 0.5
+    g_arr, sg_arr = groundfuse.ground_m(geo, np.array([y * gh]), np.array([col_c]), horizon, rep, float(rep["sigmaRows"]))
+    g = float(g_arr[0]) if rows_below > 0 else float("nan")
+    d, src = groundfuse.resolve([it.depth_m], [g], sg_arr, [rows_below], [contact], rep, cfg, mode)
+    it.raw_depth_m = it.depth_m
+    it.ground_m = g if (contact and math.isfinite(g) and rows_below >= cfg["minRowsBelowHorizon"]) else None
+    it.dist_source = groundfuse.SRC_NAMES[int(src[0])]
+    return float(d[0])
 
 
 def _match(tracks: dict[int, _Track], items: list[_Item], t: float, trk: dict, pan_shift: float = 0.0,
@@ -2957,7 +2992,8 @@ def _hazard_dict(it: _Item) -> dict:
             **({"coasting": True} if it.coasting else {}),
             **({"insideSolid": True} if it.inside_solid else {}),
             **({"solidCorrected": True, "rawDistanceM": round(it.raw_distance_m, 2)} if it.solid_corrected else {}),
-            **({"faceEdge": it.face_edge} if it.face_edge else {})}
+            **({"faceEdge": it.face_edge} if it.face_edge else {}),
+            **({"distanceSource": it.dist_source, "rawDepthM": _r(it.raw_depth_m, 2), "groundM": _r(it.ground_m, 2)} if it.dist_source else {})}
 
 
 # --------------------------------------------------------------------------
@@ -2980,11 +3016,12 @@ class _StaticMap:
     (``ghost``): its cells are looked up again at the dead-reckoned position until they are passed or decayed."""
 
     def __init__(self, wmod, grids, times, class_names, config: dict, settings, lat_off: float, projection: str, source: str,
-                 lane_half: float, step_len: float):
+                 lane_half: float, step_len: float, obj_mode: str = "depth"):
         roles = config["roles"]
         wcfg = wmod.load_config()
         wsettings = {"hfovDeg": settings.hfov_deg, "cameraHeightM": settings.camera_height_m, "lateralOffsetM": lat_off,
-                     "projection": projection, "distanceSource": source}
+                     "projection": projection, "distanceSource": source, "objectDistance": obj_mode,
+                     "useHorizon": bool(getattr(settings, "use_horizon", True))}
         self.wm = wmod.WorldMap(grids, times, class_names, None, wsettings, config, wcfg, None)
         self.ob = self.wm.observer
         self.object_kind = wmod.KIND_OBJECT
@@ -3358,6 +3395,17 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         dscale.freeze = level_mode == "freeze"
     recalibrate = anchor_mode in ("initial", "plane") and bool(dist_cfg.get("recalibrateOnPathChange", False))
     anchor_rows = float(trk["motionMinRowsBelowHorizon"])
+    # v26.2.3: ground ray + depth (distance.objectDistance / useHorizon); active for depth distances with the horizon on
+    gd_cfg = groundfuse.settings(dist_cfg)
+    obj_mode = groundfuse.resolved_mode(getattr(settings, "object_distance", "depth"), getattr(settings, "use_horizon", True))
+    gd_on = source == "depth" and depth is not None and obj_mode != "depth"
+    corrector = hsig = surf_lut = None
+    if gd_on:
+        import worldmap
+        gd_geo = groundfuse.Geometry(gh, gw, settings.hfov_deg, projection, settings.camera_height_m)
+        corrector = groundfuse.Corrector(gd_cfg, gd_geo)
+        hsig = groundfuse.HorizonSigma(gd_cfg, gh)
+        surf_lut = worldmap.class_kinds(worldmap.load_config(), list(class_names)) == worldmap.KIND_SURFACE
     if depth is not None and len(depth["t"]):
         depth_t = np.asarray(depth["t"], dtype=float)
         depth_maps = depth["depth"]
@@ -3380,7 +3428,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     smap = None                                # v26.2.1: the online world map the static rules read (roles.staticSource "map")
     if roles.get("staticSource", "image") == "map" and n:
         import worldmap
-        smap = _StaticMap(worldmap, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len)
+        smap = _StaticMap(worldmap, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode)
     map_ms: list[float] = []
     under_rows = int(config["surfaces"].get("passUnderRows", 6))
     under_gone_s = float(config["surfaces"].get("passUnderGoneSeconds", 1.5))
@@ -3565,16 +3613,24 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             ds = None if a_now is None else level
         else:
             ds, a_now, c_source, depth_scale_source, level = 1.0, None, "metric", "metric", None
+        dc_rep = None
+        if gd_on:
+            sig_rows = hsig.update(t, horizon)
+            sc_total = None if (dmap is None or ds is None) else (ds * a_now if relative else ds)
+            dc_rep = corrector.update(t, None if region is None else region.mask, dmap, sc_total or 0.0, horizon, sig_rows)
         for it in items:
             if it.depth_raw is None or ds is None:
                 continue
             tr = tracks[it.track_id]
             it.depth_m = ds * it.depth_raw             # metric: ds = 1; relative: depth_raw is anchored, ds the level c
             if source == "depth":
+                d_use = it.depth_m
+                if dc_rep is not None:                 # v26.2.3: range-corrected depth fused with the ground ray of a base on a surface
+                    d_use = _ground_depth_distance(it, tr, grid, surf_lut, horizon, gd_geo, gh, dc_rep, gd_cfg, obj_mode)
                 # metric now: no ground scale. Lateral keeps its bearing at the new distance.
                 if it.distance_m > 0:
-                    it.lateral_m = (it.lateral_m - lat_off) * (it.depth_m / it.distance_m) + lat_off
-                it.distance_m, it.from_depth = it.depth_m, True
+                    it.lateral_m = (it.lateral_m - lat_off) * (d_use / it.distance_m) + lat_off
+                it.distance_m, it.from_depth = d_use, True
                 raw_c = _depth_closing(tr.dhist, t, trk.get("peopleMotionMinSeconds", trk["motionMinSeconds"])
                                        if it.people else trk["motionMinSeconds"])
                 tr.closing = None if raw_c is None else ds * raw_c
@@ -3629,8 +3685,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         if smap is not None:
             # v26.2.1: the map of this frame (causal), fed with the same ego values the hazards.json stores, so that the offline
             # ``worldmap.build`` reproduces it; static items are then judged on it; a static danger that left the image is a ghost
-            frame_in = {"horizon": round(horizon, 4), "scale": round(scale.value, 3), "depthScale": depth_scale_out,
-                        "ego": {"speedMps": _r(ego_speed, 2), "headingDeg": _r(heading, 1), "stationary": stationary}}
+            frame_in = {"horizon": round(horizon, 4), "scale": round(scale.value, 3), "depthScale": depth_scale_out, "dcorr": dc_rep,
+                        "ego": {"speedMps": _r(ego_speed, 2), "headingDeg": _r(heading, 1), "stationary": stationary,
+                                "depthPitchDeg": _r(anchor.pitch_deg, 1) if plane else None}}
             smap.update(i, frame_in, dmap, grid)
             map_ms.append(smap.ms)
             for it in items:
@@ -3851,6 +3908,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                     "estimated": {"speed": speed_known, "cadence": cadence is not None,
                                   "stepLength": False}},
             "pathChange": bool(path_change),
+            **({"depthCorrection": dc_rep} if dc_rep is not None else {}),
             **({"corridor": corridor_out} if smap is not None else {}),
             **({"faceEdgeLines": smap.fe_lines} if smap is not None and smap.fe_lines else {}),
             "hazards": [_hazard_json(it, gh, gw) for it in sorted(items, key=lambda it: it.steps)],
@@ -3869,7 +3927,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                      "cameraHeightM": settings.camera_height_m, "stepLengthM": settings.step_length_m,
                      "laneHalfWidthM": lane_half, "priorStepLengthM": step_len,
                      "userHeightM": settings.user_height_m, "cameraLocation": settings.camera_location,
-                     "cameraSide": settings.camera_side, "lateralOffsetM": lat_off},
+                     "cameraSide": settings.camera_side, "lateralOffsetM": lat_off,
+                     "objectDistance": getattr(settings, "object_distance", "depth"), "useHorizon": bool(getattr(settings, "use_horizon", True))},
         "gridW": gw, "gridH": gh, "egoAvailable": mser is not None, "frames": frames_out,
     }
     if coast.on:

@@ -31,6 +31,9 @@ NAMES = [c["name"] for c in sorted(_MAPPING["classes"], key=lambda c: c["id"])]
 ID = {n: i for i, n in enumerate(NAMES)}
 
 CONFIG = col.load_config()
+# v26.2.3: the default object distance is "ground+depth"; the tests that pin v26.1.x / v26.2.0-2 numbers run on the plain depth distance
+# (= v26.2.2), tests/test_collision_v2623.py pins the new default.
+CONFIG["distance"]["objectDistance"] = "depth"
 SETTINGS = col.resolve_settings(CONFIG, "chest", HFOV, None, None)
 
 
@@ -1011,9 +1014,9 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames", "coast"}
-    assert doc["version"] == "v26.2.2" == ev["version"]
+    assert doc["version"] == "v26.2.3" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM",
-                                  "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM"}
+                                  "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM", "objectDistance", "useHorizon"}      # v26.2.3: the object distance / horizon switch
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150
     frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards", "corridor"}    # v26.2.1: corridor = the nearest object on the world map in the walking corridor
