@@ -185,7 +185,7 @@ def test_horizon_unchanged_for_the_full_frame():
 # matched path: byte-identical
 # --------------------------------------------------------------------------
 
-GOLDEN_CHEST0004_REVIEW7 = "0138457220cbcac81f7f185302b31cdeefac2ea519c558e55799575fe10125d2"   # collision output of v26.2.1 (re-pinned: the version string, the new hazards keys source / mapCells / corridor, and the building at 12 now judged on the map: 11.83 "in 10" -> 13.50 "in 8"; was 48833826... on v26.2.0)
+GOLDEN_CHEST0004_REVIEW7 = "e356b6ec0f564d70d78a559e39028bb5fe36224b7886a40fede47a7094f7202b"   # collision output of v26.2.2 (re-pinned from 0138457220cb... of v26.2.1: the version string, the new hazards keys faceEdge / faceEdgeLines / insideSolid / solidCorrected / rawDistanceM / coasting and the top-level coast, walls judged by the face / edge test (building 13.50 "at 11:45 in 8"), items inside solid snapped, movers that vanish coasting)
 # older: collision output of v26.1.16 (re-pinned there: new sound kinds, rules 6-9; was dbf69f1a... on v26.1.15; re-pinned again by the lane-part follow-up: the 10.9 s building, was 83568a1d...)
 
 

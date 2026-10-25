@@ -45,6 +45,7 @@ def strip(doc: dict) -> dict:
     d.pop("distanceSource", None)
     for f in d["frames"]:
         f.pop("corridor", None)               # v26.2.1: the map's nearest object in the corridor is placed with the depth when there is one
+        f.pop("faceEdgeLines", None)          # v26.2.2: the face / edge test reads the map, which is placed with the depth
         f["ego"].pop("depthAnchor", None)
         f["ego"].pop("depthAnchorMode", None)
         for k in ("depthPitchDeg", "depthCameraHeightUnits", "depthGaitCheck"):
@@ -55,6 +56,8 @@ def strip(doc: dict) -> dict:
         f["ego"].pop("depthScaleSource", None)
         for h in f["hazards"]:
             h.pop("depthM", None)
+            for k in ("faceEdge", "insideSolid", "solidCorrected", "rawDistanceM"):      # v26.2.2: map diagnostics, depth-dependent numbers
+                h.pop(k, None)
     return d
 
 

@@ -235,5 +235,6 @@ button.link[hidden] { display: none; }
 .worldmap { margin: 0; }
 .wm-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 0; min-height: 28px; }
 .wm-bar button { min-height: 28px; padding: 2px 8px; }
+.wm-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85em; }
 .wm-canvas { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 4px; background: #0b0d10; touch-action: manipulation; }
 .snd-scroll { overflow-x: auto; max-width: 100%; }

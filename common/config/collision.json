@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.1",
+  "version": "v26.2.2",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -91,9 +91,12 @@
     "featureMinLaneCover": 0.2,
     "alongPathRatio": 0.5,
     "staticSource": "map",
-    "mapMinConf": 0.7, "mapFootprintRadiusM": 0.3, "mapCorridorMarginM": -0.3, "mapMinCells": 10,
-    "mapMinAgeSeconds": 0.5, "mapGapSeconds": 0.7, "mapMinClosingMps": 0.6,
+    "mapMinConf": 0.7, "mapFootprintRadiusM": 0.3,
+    "mapImageFallback": true, "insideSolid": {"mode": "snap", "solidDepthM": 0.8, "minRayCells": 3}, "mapJudgedClasses": ["building", "barrier", "barrier wall", "barrier fence", "barrier guard-rail", "nature vegetation"],
     "mapGhostMinConf": 0.3, "mapGhostSeconds": 2.0, "mapGhostNearM": 2.0,
+    "faceEdge": {"enabled": true, "maxAheadM": 12.0, "lineAheadM": 8.0, "lineMaxSideM": 4.0, "lineMinCells": 15, "lineMinSpanM": 2.0,
+      "lineTrials": 80, "maxLineAngleDeg": 25.0, "edgeBandM": 0.25, "edgeBlurPerM": 0.02, "faceProtrusionM": 0.3,
+      "crossRadiusM": 0.5, "crossAngleDeg": 45.0, "crossElongation": 2.0, "crossMinCells": 6, "minFaceCells": 3, "crossSideEdge": true, "seed": 7},
     "laneBaseClasses": ["building"],
     "laneBaseMinColumns": 2, "laneBaseMinRowColumns": 4, "laneBaseMinConcentration": 0.42, "laneBaseMinClosingMps": 0.3, "laneBaseMinAgeSeconds": 1.0, "laneBaseHoldSeconds": 3.0,
     "minObstacleAreaM2": 0.08,
@@ -143,6 +146,8 @@
     "seenHoldSeconds": 1.0, "moverTakeoverSeconds": 1.0, "ownerAdoptSeconds": 3.0,
     "radiusOverrides": {}
   },
+  "coast": {"enabled": true, "seconds": 2.0, "vehicleSeconds": 3.0, "histSeconds": 1.0, "minPoints": 3, "minSpanSeconds": 0.5,
+    "maxSpeedMps": 15.0, "maxRangeM": 30.0, "rematchRadiusM": 2.0},
   "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
   "speech": {
     "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0, "contextMaxItems": 3, "summaryHoldSeconds": 0.5,

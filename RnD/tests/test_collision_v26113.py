@@ -25,7 +25,7 @@ ROLES = CONFIG["roles"]
 # --------------------------------------------------------------------------
 
 def test_the_v26113_numbers():
-    assert CONFIG["version"] == "v26.2.1"
+    assert CONFIG["version"] == "v26.2.2"
     assert ROLES["peopleSpeakMinSteps"] == 4.5 and ROLES["movingDangerSteps"] == 10 and ROLES["peopleSpeakLateralM"] == 2.75
     assert ROLES["beepLateralM"] == 0.9 and CONFIG["tones"]["maxSteps"] == 5
     assert ROLES["fastWarnSeconds"] == 6.0 and ROLES["fastWarnMaxM"] == 30.0

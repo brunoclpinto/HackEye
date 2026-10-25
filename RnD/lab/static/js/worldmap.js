@@ -33,6 +33,13 @@ export class WorldMapPanel {
     // The canvas follows the layout (CSS size x devicePixelRatio): repaint when its box changes.
     new ResizeObserver(() => { this.sig = ""; this.paintIfNeeded(); }).observe(this.canvas);
     $("#wmBuild").addEventListener("click", () => this.build());
+    try { this.showRules = localStorage.getItem("wmRules") === "1"; } catch { this.showRules = false; }
+    $("#wmRules").checked = this.showRules;
+    $("#wmRules").addEventListener("change", (e) => {
+      this.showRules = e.target.checked;
+      try { localStorage.setItem("wmRules", this.showRules ? "1" : "0"); } catch { /* per-viewer convenience only */ }
+      this.sig = ""; this.paintIfNeeded();
+    });
     for (const ev of ["pointermove", "pointerdown"]) this.canvas.addEventListener(ev, (e) => this.readout(e));
     this.canvas.addEventListener("pointerleave", () => { $("#wmReadout").textContent = ""; });
     this.paint();
@@ -186,7 +193,7 @@ export class WorldMapPanel {
   paintIfNeeded() {
     const f = this.currentHazardFrame();
     const grid = this.k >= 0 ? this.cache.get(this.k) : null;
-    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}`;
+    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}|${this.showRules ? 1 : 0}`;
     if (sig === this.sig) return;
     this.sig = sig;
     this.paint(grid, f);
@@ -270,6 +277,23 @@ export class WorldMapPanel {
     const hw = CORRIDOR_HALF_M / CELL_M * s, len = CORRIDOR_STEPS * stepPx;
     ctx.fillStyle = "rgba(255,45,45,0.12)"; ctx.fillRect(ux - hw, uy - len, 2 * hw, len);
     ctx.strokeStyle = "rgba(255,120,120,0.9)"; ctx.lineWidth = 1.5; ctx.strokeRect(ux - hw, uy - len, 2 * hw, len);
+    // v26.2.2: the face / edge test of the walls the map judges (toggle): fitted wall lines, face and edge cells
+    if (frame && this.showRules) {
+      const cellPx = Math.max(2, s);
+      for (const [side, ln] of Object.entries(frame.faceEdgeLines ?? {})) {
+        if (!ln) continue;
+        ctx.strokeStyle = "rgba(255,230,0,0.95)"; ctx.lineWidth = 2; ctx.beginPath();
+        ctx.moveTo(ux + (ln.a / CELL_M) * s, uy); ctx.lineTo(ux + ((ln.a + ln.b * 8) / CELL_M) * s, uy - (8 / CELL_M) * s); ctx.stroke();
+      }
+      for (const h of frame.hazards ?? []) {
+        const fe = h.faceEdge;
+        if (!fe) continue;
+        for (const [key, col] of [["edgeCells", "rgba(0,230,255,0.9)"], ["faceCells", "rgba(255,40,200,0.95)"]]) {
+          ctx.fillStyle = col;
+          for (const [f, r] of fe[key] ?? []) ctx.fillRect(ux + (r / CELL_M) * s - cellPx / 2, uy - (f / CELL_M) * s - cellPx / 2, cellPx, cellPx);
+        }
+      }
+    }
     // hazards: ahead = distanceM, right = lateralM
     if (frame) {
       const hs = (frame.hazards ?? []).filter((h) => Number.isFinite(h.distanceM) && Number.isFinite(h.lateralM));
@@ -281,8 +305,21 @@ export class WorldMapPanel {
         ctx.beginPath();
         if (mover) { ctx.moveTo(x, y - r * 1.2); ctx.lineTo(x + r * 1.2, y); ctx.lineTo(x, y + r * 1.2); ctx.lineTo(x - r * 1.2, y); ctx.closePath(); }
         else ctx.arc(x, y, r, 0, 2 * Math.PI);
-        ctx.fillStyle = col; ctx.globalAlpha = h.role === "none" ? 0.6 : 1; ctx.fill(); ctx.globalAlpha = 1;
-        ctx.lineWidth = mover ? 2 : 1; ctx.strokeStyle = mover ? "#ffffff" : "rgba(0,0,0,0.6)"; ctx.stroke();
+        if (h.coasting) {   // predicted position of a mover that left the image: hollow, dashed
+          ctx.setLineDash([4, 3]); ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke(); ctx.setLineDash([]);
+        } else {
+          ctx.fillStyle = col; ctx.globalAlpha = h.role === "none" ? 0.6 : 1; ctx.fill(); ctx.globalAlpha = 1;
+          ctx.lineWidth = mover ? 2 : 1; ctx.strokeStyle = mover ? "#ffffff" : "rgba(0,0,0,0.6)"; ctx.stroke();
+        }
+        if (h.solidCorrected && h.distanceM > 0) {   // depth correction: a line from the raw position to the snapped one (the wall's near border)
+          const k = h.rawDistanceM / h.distanceM, rx = ux + (h.lateralM * k / CELL_M) * s, ry = uy - (h.rawDistanceM / CELL_M) * s;
+          ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5; ctx.strokeStyle = "#ffffff";
+          ctx.beginPath(); ctx.moveTo(rx, ry); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
+          ctx.beginPath(); ctx.arc(rx, ry, Math.max(2, r * 0.5), 0, 2 * Math.PI); ctx.stroke();
+        } else if (h.insideSolid) {   // suppressed mode: crossed
+          const q = r * 1.6; ctx.lineWidth = 2; ctx.strokeStyle = "#ffffff";
+          ctx.beginPath(); ctx.moveTo(x - q, y - q); ctx.lineTo(x + q, y + q); ctx.moveTo(x + q, y - q); ctx.lineTo(x - q, y + q); ctx.stroke();
+        }
         if (h.role === "danger") {   // danger: extra outline ring
           ctx.beginPath(); ctx.arc(x, y, r * 2, 0, 2 * Math.PI); ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke();
         }

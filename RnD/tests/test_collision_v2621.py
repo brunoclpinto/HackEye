@@ -46,8 +46,10 @@ FPS = 10.0
 
 def test_config_keys():
     r = CONFIG["roles"]
-    assert CONFIG["version"] == "v26.2.1" and r["staticSource"] == "map"
-    assert r["mapMinCells"] == 10 and r["mapCorridorMarginM"] == -0.3 and r["mapMinClosingMps"] == 0.6
+    assert CONFIG["version"] == "v26.2.2" and r["staticSource"] == "map"
+    # v26.2.2: the building section gates (mapMinCells, mapCorridorMarginM, mapMinAgeSeconds, mapMinClosingMps) are gone: the map judges every wall-like
+    # class with the face / edge test (tests/test_collision_v2622.py)
+    assert "mapMinCells" not in r and "mapMinClosingMps" not in r and r["mapJudgedClasses"]
     assert "mapUnion" not in r
 
 
@@ -122,7 +124,7 @@ def test_image_source_is_the_v2620_behaviour():
 
 @pytest.fixture(scope="module")
 def review7():
-    return _run_windows("chest0004_review7")
+    return _run_windows("chest0004_review7", col.load_config())          # v26.2.2: the default (map) config; the regression helper's own CONFIG is the image rule
 
 
 @pytest.fixture(scope="module")
@@ -134,15 +136,17 @@ def test_review7_the_building_section_is_still_spoken_and_beeps(review7, review7
     old = [e for e in review7_image[2][0]["events"] if e["type"] == "speech" and e["text"].startswith("building at 12 in")]
     assert [round(e["t"], 2) for e in old] == [11.83]                             # v26.2.0 (lane part)
     ev = review7[2][0]["events"]
-    sp = [e for e in ev if e["type"] == "speech" and e["text"].startswith("building at 12 in")]
-    assert [(round(e["t"], 2), e["text"]) for e in sp] == [(13.5, "building at 12 in 8")]       # on the map: 1.7 s later, 8 steps
+    sp = [e for e in ev if e["type"] == "speech" and e["text"].startswith("building at 11:45 in")]
+    # v26.2.2 (re-pinned): the face / edge test judges it; still 13.50 "in 8" (the first face frame is 12.33 at 10 steps, the speech policy needs the
+    # confirmed face), the clock reads 11:45 instead of 12 because the nearest FACE cell, not the nearest corridor cell, is the measurement
+    assert [(round(e["t"], 2), e["text"]) for e in sp] == [(13.5, "building at 11:45 in 8")]
     beeps = [e for e in ev if e["type"] == "beeps" and e["kind"] == "collision-center" and "building" in e["text"] and 14.0 <= e["t"] <= 17.0]
-    assert beeps and beeps[0]["minSteps"] <= 5
-    # the section is judged on the map: cells in the corridor core, its own image contact point kept for the Lab, no lane part item
+    assert beeps and beeps[0]["minSteps"] <= 5               # 15.33 "center · building at 12:15 · 5→4 steps" (the clock moved with the measurement)
+    # the wall is judged on the map: face cells in the corridor, its own image contact point kept for the Lab, no lane part item
     frames = review7[2][0]["doc"]["frames"]
-    mp = [(f["t"], h) for f in frames for h in f["hazards"] if h["className"] == "building" and h.get("mapCells")]
-    assert mp and all(h["source"] == "map" and h["mapCells"] >= CONFIG["roles"]["mapMinCells"] and "imageDistanceM" in h for _, h in mp)
-    assert min(t for t, h in mp if h["role"] == "danger") == pytest.approx(13.33, abs=0.2)
+    mp = [(f["t"], h) for f in frames for h in f["hazards"] if h["className"] == "building" and h.get("mapCells") and h["role"] == "danger"]
+    assert mp and all(h["source"] == "map" and h["faceEdge"]["verdict"] == "face" and h["faceEdge"]["face"] >= CONFIG["roles"]["faceEdge"]["minFaceCells"] for _, h in mp)
+    assert min(t for t, h in mp) == pytest.approx(12.33, abs=0.2)
     assert abs(mp[0][1]["lateralM"]) <= 0.6 and mp[0][1]["stepsTo"] <= CONFIG["roles"]["dangerSteps"]
     assert not any(h.get("lanePart") for f in frames for h in f["hazards"])
     assert all("corridor" in f for f in frames)

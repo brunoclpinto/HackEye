@@ -186,6 +186,7 @@ from scipy import ndimage
 
 from common_paths import find_common_dir
 from geometry import Box, iou
+import faceedge
 
 _4_CONNECTIVITY = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
 ITEM_GROUPS = ("static", "moving", "feature")
@@ -842,7 +843,13 @@ class _Item:
     map_cells: int = 0                        # (map) cells of the item's family inside the walking corridor
     map_world: tuple | None = None            # (map) world position of its nearest corridor cell (a ghost is followed from it)
     image_dl: tuple | None = None             # (map, in the corridor) the image contact point's (distance, lateral, bearing, clock, clock_q, clock_text, pan) the map measurement replaced
+    solid_corrected: bool = False             # (v26.2.2, insideSolid.mode "snap") its distance was moved to the near border of the solid area
+    raw_distance_m: float | None = None       # ...the measured distance before the correction
+    inside_solid: bool = False                # (v26.2.2) its map position is inside / behind a solid wall face: impossible, so it is muted (no speech, beeps, proximity)
+    coasting: bool = False                    # (v26.2.2) a mover that left the image: predicted on its last world velocity, beeps / course only
     ghost: bool = False                       # (map) no longer in the image (under the frame): kept alive by its map cells
+    map_judged: bool = False                  # (v26.2.2) a wall-like static item judged on the map alone (no image lane rule)
+    face_edge: dict | None = None             # (v26.2.2, roles.faceEdge.enabled) the face / edge test of its corridor cells: diagnostics only
 
     def __post_init__(self) -> None:
         if self.clock_q is None:
@@ -1033,8 +1040,6 @@ class _Track:
     context_seen: bool = False                # the track has been a context item (v26.1.16)
     ghost_src: "_Item | None" = None          # a static danger that may be followed on in the map once the image loses it (v26.2.1)
     ghost_t0: float | None = None             # since when it has been a ghost
-    map_hist: list = field(default_factory=list)   # (t, nearest corridor cell's distance m) of a building / wall section on the map
-    map_first: float | None = None            # since when the section has been on the map without a break
     still_t0: float | None = None             # since when |own along speed| < standingMps without a break (v26.1.12)
 
 
@@ -1977,7 +1982,7 @@ def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_
         # v26.1.11 (review 4, 39.0 s): a vehicle whose motion is not measured yet (a new track: a moving car re-detected in
         # fragments has no closing speed for ~0.75 s) is no static danger while we CAN measure motion; it waits
         unmeasured_mover = it.group == "moving" and it.moving is None and it.ego_known
-        in_lane = (it.lane_hit and not it.along_path) or it.map_cells > 0
+        in_lane = it.map_cells > 0 if it.map_judged else (it.lane_hit and not it.along_path) or it.map_cells > 0
         if big_enough and in_lane and it.steps <= danger_steps and not unmeasured_mover:
             it.role, it.collision = "danger", True
         elif (it.touches and it.distance_m <= roles["contextMaxDistanceM"]
@@ -1994,7 +1999,7 @@ def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_
             else:
                 it.summary_ok = True
     elif it.group == "moving":
-        in_span = span is not None and span[0] <= it.contact_y <= span[1] + 1e-9
+        in_span = (span is not None and span[0] <= it.contact_y <= span[1] + 1e-9) or it.coasting      # a predicted mover has no image row
         lat = abs(it.lateral_m)
         if it.people:
             in_span = in_span or span is None                  # on a crosswalk there is no surface seed, hence no region
@@ -2038,6 +2043,124 @@ def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_
     if it.role == "danger":
         # the final call is for a collision course; a person merely beside the path is a plain danger
         it.urgency = "final" if (it.collision and it.steps <= final_steps) else "danger"
+
+
+# --------------------------------------------------------------------------
+# Movers that left the image (v26.2.2)
+# --------------------------------------------------------------------------
+
+class _Coast:
+    """A mover (person, rider, animal, vehicle) that disappears (out of frame, occluded, a segmentation dropout) keeps its last world
+    velocity for a bounded time: its position is predicted linearly in world coordinates (dead-reckoned pose) and it stays an item
+    of the collision logic (collision course, beeps, proximity) but is never spoken (``speak`` False). It stops when the object is matched
+    again (the same track, or a new item of its class near the prediction), when it is passed, out of range or the time is up.
+
+    The velocity is the least-squares line through the last ``histSeconds`` of its measured world positions (at least ``minPoints`` over
+    ``minSpanSeconds``); a mover without such a measurement is not coasted."""
+
+    def __init__(self, cfg: dict):
+        self.on = bool(cfg.get("enabled", False))
+        self.seconds = float(cfg.get("seconds", 2.0))
+        self.vehicle_seconds = float(cfg.get("vehicleSeconds", self.seconds))
+        self.hist_s = float(cfg.get("histSeconds", 1.0))
+        self.min_points = int(cfg.get("minPoints", 3))
+        self.min_span = float(cfg.get("minSpanSeconds", 0.5))
+        self.max_speed = float(cfg.get("maxSpeedMps", 15.0))
+        self.max_range = float(cfg.get("maxRangeM", 30.0))
+        self.rematch = float(cfg.get("rematchRadiusM", 2.0))
+        self.hist: dict[int, list[tuple[float, float, float]]] = {}
+        self.last: dict[int, tuple[_Item, float]] = {}          # track -> (last measured item, its time)
+        self.active: dict[int, dict] = {}                        # track -> the running coasting episode
+        self.episodes: list[dict] = []
+
+    def observe(self, it: _Item, t: float, world: "_WorldMemory") -> None:
+        if not self.on or it.group != "moving" or it.coasting or it.clipped or world.theta is None:
+            return
+        th = math.radians(world.theta)
+        s_, c_ = math.sin(th), math.cos(th)
+        h = self.hist.setdefault(it.track_id, [])
+        h.append((t, world.x + s_ * it.distance_m + c_ * it.lateral_m, world.y + c_ * it.distance_m - s_ * it.lateral_m))
+        self.hist[it.track_id] = [p for p in h if p[0] >= t - self.hist_s - 1e-9]
+        self.last[it.track_id] = (it, t)
+
+    def _velocity(self, tid: int):
+        h = self.hist.get(tid, [])
+        if len(h) < self.min_points or h[-1][0] - h[0][0] < self.min_span - 1e-9:
+            return None
+        a = np.asarray(h)
+        tt = a[:, 0] - a[:, 0].mean()
+        den = float((tt * tt).sum())
+        if den <= 1e-9:
+            return None
+        vx, vy = float((tt * (a[:, 1] - a[:, 1].mean())).sum() / den), float((tt * (a[:, 2] - a[:, 2].mean())).sum() / den)
+        if math.hypot(vx, vy) > self.max_speed:
+            return None
+        return vx, vy
+
+    def _end(self, tid: int, t: float, why: str) -> None:
+        ep = self.active.pop(tid, None)
+        if ep is not None:
+            ep["t1"], ep["end"] = round(t, 2), why
+            self.episodes.append(ep)
+
+    def items(self, t: float, seen: dict[int, _Item], world: "_WorldMemory", tracks: dict, step_len: float, blocked=None) -> list[_Item]:
+        """The coasting items of this frame (``seen``: the real items by track id)."""
+        out: list[_Item] = []
+        if not self.on or world.theta is None:
+            return out
+        th = math.radians(world.theta)
+        s_, c_ = math.sin(th), math.cos(th)
+        for tid in list(self.last):
+            it0, t_last = self.last[tid]
+            if tid in seen:
+                self._end(tid, t, "rematch")
+                continue
+            if tid not in tracks:
+                self._end(tid, t, "lost")
+                self.last.pop(tid, None); self.hist.pop(tid, None)
+                continue
+            v = self._velocity(tid)
+            horizon_s = self.vehicle_seconds if it0.class_name == "vehicle" else self.seconds
+            if v is None or t - t_last > horizon_s + 1e-9 or t - t_last <= 0:
+                if t - t_last > horizon_s + 1e-9:
+                    self._end(tid, t, "expired")
+                    self.last.pop(tid, None); self.hist.pop(tid, None)
+                continue
+            _, wx0, wy0 = self.hist[tid][-1]
+            wx, wy = wx0 + v[0] * (t - self.hist[tid][-1][0]), wy0 + v[1] * (t - self.hist[tid][-1][0])
+            dx, dy = wx - world.x, wy - world.y
+            fwd, right = dx * s_ + dy * c_, dx * c_ - dy * s_
+            if fwd <= 0.0:
+                self._end(tid, t, "passed"); self.last.pop(tid, None); self.hist.pop(tid, None)
+                continue
+            rng = math.hypot(fwd, right)
+            if blocked is not None and blocked(fwd, right):
+                self._end(tid, t, "solid"); self.last.pop(tid, None); self.hist.pop(tid, None)
+                continue
+            if rng > self.max_range:
+                self._end(tid, t, "range"); self.last.pop(tid, None); self.hist.pop(tid, None)
+                continue
+            if any(o.class_name == it0.class_name and not o.coasting
+                   and math.hypot(o.distance_m - fwd, o.lateral_m - right) <= self.rematch + 0.1 * rng for o in seen.values()):
+                self._end(tid, t, "rematch")                 # the same object came back under another track
+                self.last.pop(tid, None); self.hist.pop(tid, None)
+                continue
+            ev = (world.speed or 0.0) if world.speed is not None and t - world.speed_t <= world.hold_s + 1e-9 else 0.0
+            vrel = (v[0] - ev * s_, v[1] - ev * c_)               # relative to us, world axes
+            closing = -((dx * vrel[0] + dy * vrel[1]) / max(rng, 1e-6))
+            bearing = math.degrees(math.atan2(right, fwd))
+            g = replace(it0, coasting=True, shape=None, clipped=True, speak=False, distance_m=fwd, lateral_m=right, bearing=bearing,
+                        clock=clock_from_bearing(bearing), clock_q=clock_quarter(bearing), clock_text=clock_text(clock_quarter(bearing)),
+                        pan=_pan_from_bearing(bearing), closing=closing, closing_raw=closing, map_cells=0, map_world=None, image_dl=None)
+            if tid not in self.active:
+                self.active[tid] = {"track": tid, "class": it0.class_name, "t0": round(t, 2), "steps0": round(steps_to(fwd, step_len), 1),
+                                    "speedMps": round(math.hypot(*v), 2), "moving": it0.moving}
+            tr = tracks[tid]
+            tr.last_t, tr.last_distance, tr.last_lateral = t, fwd, right
+            tr.present_run += 1
+            g.present_run = tr.present_run
+            out.append(g)
+        return out
 
 
 # --------------------------------------------------------------------------
@@ -2800,6 +2923,14 @@ def item_outline(it: _Item, gh: int, gw: int) -> list[list[float]] | None:
     return [[round(x / gw, 4), round(y / gh, 4)] for x, y in poly]
 
 
+def _mute_solid(it: _Item, smap: "_StaticMap | None") -> None:
+    """``insideSolid.mode`` "suppress" (the v26.2.2 first design, kept for A/B): an item inside / behind a wall face gets no role, speech, beeps or
+    proximity sound. The shipped mode "snap" corrects its position instead (``_StaticMap.snap_solid``)."""
+    if smap is None or smap.solid_mode != "suppress" or not it.inside_solid:
+        return
+    it.role, it.urgency, it.collision, it.summary_ok, it.proximity, it.speak = "none", "none", False, False, False, False
+
+
 def _hazard_json(it: _Item, gh: int = 0, gw: int = 0) -> dict:
     out = _hazard_dict(it)
     if it.role != "none" and gh and gw:
@@ -2822,7 +2953,11 @@ def _hazard_dict(it: _Item) -> dict:
             **({"lanePart": True} if it.lane_part else {}),
             **({"source": it.map_source, "mapCells": it.map_cells} if it.group == "static" and it.map_source else {}),
             **({"imageDistanceM": round(it.image_dl[0], 2), "imageLateralM": round(it.image_dl[1], 2)} if it.image_dl else {}),
-            **({"ghost": True} if it.ghost else {})}
+            **({"ghost": True} if it.ghost else {}),
+            **({"coasting": True} if it.coasting else {}),
+            **({"insideSolid": True} if it.inside_solid else {}),
+            **({"solidCorrected": True, "rawDistanceM": round(it.raw_distance_m, 2)} if it.solid_corrected else {}),
+            **({"faceEdge": it.face_edge} if it.face_edge else {})}
 
 
 # --------------------------------------------------------------------------
@@ -2856,15 +2991,24 @@ class _StaticMap:
         ob = self.ob
         self.cell = ob.cell
         self.step_len = step_len
-        self.corr = (ob.fwd > 0.0) & (np.abs(ob.right) <= lane_half + float(roles.get("mapCorridorMarginM", 0.0)))   # the core a section must reach
-        self.corr_full = (ob.fwd > 0.0) & (np.abs(ob.right) <= lane_half)
+        self.corr_full = (ob.fwd > 0.0) & (np.abs(ob.right) <= lane_half + float(roles.get("mapCorridorMarginM", 0.0)))   # the corridor the map judges
         self.min_conf = int(math.ceil(float(roles.get("mapMinConf", 0.7)) * 255.0 - 1e-9))
         self.ghost_conf = int(math.ceil(float(roles.get("mapGhostMinConf", 0.3)) * 255.0 - 1e-9))     # the image already confirmed the item
         self.rad = max(0, int(round(float(roles.get("mapFootprintRadiusM", 0.3)) / ob.cell)))
         yy, xx = np.mgrid[-self.rad:self.rad + 1, -self.rad:self.rad + 1]
         self.disk = (yy * yy + xx * xx) <= self.rad * self.rad + 0.5
-        self.min_cells = int(roles.get("mapMinCells", 1))
-        self.part_classes = frozenset(roles.get("laneBaseClasses", ()))
+        self.image_fallback = bool(roles.get("mapImageFallback", True))
+        self.judged = frozenset(roles.get("mapJudgedClasses", ()))          # wall-like classes the map judges (face / edge test)
+        isd = roles.get("insideSolid") or {}
+        self.solid_mode = str(isd.get("mode", "off"))                      # "snap" | "suppress" | "off"
+        self.solid_on = self.solid_mode in ("snap", "suppress")
+        self.solid_depth = float(isd.get("solidDepthM", 0.5))
+        self.solid_rays = max(1, int(isd.get("minRayCells", 2)))
+        self.wall_lut = np.zeros(256, dtype=bool)
+        for cid, name in enumerate(class_names):
+            if name in self.judged:
+                self.wall_lut[cid] = True
+        self.wall_solid = None
         self.ghost_s = float(roles.get("mapGhostSeconds", 2.0))
         self.ghost_near_m = float(roles.get("mapGhostNearM", 2.0))
         labels = config.get("spokenLabels", {})
@@ -2874,6 +3018,12 @@ class _StaticMap:
             if self.wm.kind[cid] == self.object_kind:
                 self.fam.setdefault(labels.get(name, name.replace("-", " ")), np.zeros(256, dtype=bool))[cid] = True
         self._names = list(class_names)
+        fe = roles.get("faceEdge") or {}
+        self.fe_cfg = faceedge.settings(fe) if fe.get("enabled") else None      # v26.2.2 phase A: diagnostics only, default off
+        self.fe_lines: dict | None = None
+        self.stationary = False
+        self.fe_res: dict = {}
+        self._fe_cache: dict = {}
         self.ms = 0.0
         self.classes = self.conf = self.solid = None
         self.pose = (0.0, 0.0, 0.0)
@@ -2882,16 +3032,73 @@ class _StaticMap:
     def update(self, i: int, frame: dict, dmap, grid: np.ndarray) -> None:
         """Fuse frame i (pose, observation, votes, snapshot) and index the object-base points of its image."""
         _, self.classes, self.conf, self.ms = self.wm.step(i, frame, dmap)
+        self.frame_i = i
+        self.stationary = bool((frame.get("ego") or {}).get("stationary"))
+        self.fe_lines, self.fe_res, self._fe_cache = None, {}, {}
         self.pose = self.wm.last_pose
         is_obj = self.wm.kind[self.classes] == self.object_kind
         self.solid = is_obj & (self.conf >= self.min_conf)
         self.solid_ghost = is_obj & (self.conf >= self.ghost_conf)
+        self.wall_solid = self.wall_lut[self.classes] & (self.conf >= self.min_conf) if self.solid_on else None     # solid = fused wall-like cells
         ob = self.ob
         rr, cc, dist, lat = ob.object_bases(grid, frame, dmap)
         row = ob.orow - np.rint(dist / ob.cell).astype(np.int64)
         col = ob.oc + np.rint(lat / ob.cell).astype(np.int64)
         ok = (row >= 0) & (row < ob.size) & (col >= 0) & (col < ob.size)
         self.b_rr, self.b_cc, self.b_row, self.b_col = rr[ok], cc[ok], row[ok], col[ok]
+
+    # -- solid areas (v26.2.2) -----------------------------------------------------------------------------
+    def solid_border(self, fwd: float, right: float) -> tuple[float, float] | None:
+        """If the map point lies inside solid cells of the wall-like classes (or behind a confirmed face: >= ``minRayCells`` consecutive solid
+        cells on the ray from us) by more than ``solidDepthM`` along its own bearing, the point where that ray first enters the solid: the
+        near border (forward m, right m). None when the point is not inside / behind a solid area."""
+        if self.wall_solid is None or fwd <= 0.0:
+            return None
+        ob = self.ob
+        dist = math.hypot(fwd, right)
+        n = int(dist / ob.cell)
+        if n < 4 + self.solid_rays:
+            return None
+        k = np.arange(4, n + 1)
+        rr = np.rint(ob.orow - fwd / dist * k).astype(np.int64)
+        cc = np.rint(ob.oc + right / dist * k).astype(np.int64)
+        ok = (rr >= 0) & (rr < ob.size) & (cc >= 0) & (cc < ob.size)
+        hit = np.zeros(k.size, dtype=bool)
+        hit[ok] = self.wall_solid[rr[ok], cc[ok]]
+        if self.solid_rays > 1:
+            run = np.convolve(hit.astype(np.int8), np.ones(self.solid_rays, dtype=np.int8), mode="valid") >= self.solid_rays
+            idx = np.flatnonzero(run)
+        else:
+            idx = np.flatnonzero(hit)
+        if not idx.size:
+            return None
+        k0 = int(k[idx[0]])
+        if dist - k0 * ob.cell <= self.solid_depth:
+            return None
+        return fwd / dist * k0 * ob.cell, right / dist * k0 * ob.cell
+
+    def point_in_solid(self, fwd: float, right: float) -> bool:
+        return self.solid_border(fwd, right) is not None
+
+    def snap_solid(self, it: _Item) -> None:
+        """v26.2.2 (user decision): an item whose map position is inside / behind a wall face is a depth error, not an impossible warning: it is moved
+        along its own bearing to the near border of the solid area and every later rule (steps, clock, role, speech, beeps) sees the corrected point.
+        Wall-like items are measured at their own face and never count against it."""
+        if not self.solid_on or it.ghost or it.class_name in self.judged:
+            return
+        b = self.solid_border(it.distance_m, it.lateral_m)
+        if b is None:
+            return
+        it.inside_solid = True
+        if self.solid_mode == "snap":
+            it.raw_distance_m = it.distance_m
+            fwd, right = b
+            bearing = math.degrees(math.atan2(right, fwd))
+            it.distance_m, it.lateral_m, it.bearing = fwd, right, bearing
+            it.clock, it.clock_q = clock_from_bearing(bearing), clock_quarter(bearing)
+            it.clock_text = clock_text(it.clock_q)
+            it.pan = _pan_from_bearing(bearing)
+            it.solid_corrected = True
 
     # -- measurement ---------------------------------------------------------------------------------------
     def _lut(self, it: _Item) -> np.ndarray | None:
@@ -2903,7 +3110,7 @@ class _StaticMap:
         sl = (slice(r0, r0 + patch.shape[0]), slice(c0, c0 + patch.shape[1]))
         fam = patch & (self.solid_ghost if full else self.solid)[sl] & lut[self.classes[sl]]
         nf = int(np.count_nonzero(fam))
-        inc = fam & (self.corr_full if full else self.corr)[sl]
+        inc = fam & self.corr_full[sl]
         n = int(np.count_nonzero(inc))
         if not n:
             return None, None, 0, nf
@@ -2925,24 +3132,16 @@ class _StaticMap:
         s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
         it.map_world = (x + s_ * fwd + c_ * right, y + c_ * fwd - s_ * right)
 
-    def measure(self, it: _Item) -> None:
-        """A building / wall (``roles.laneBaseClasses``) whose image contact point is not in the lane: does a section of it stand in the
-        walking corridor on the map? (replaces the v26.1.16 lane part; the core is ``laneHalfWidthM`` + ``mapCorridorMarginM``, at least
-        ``mapMinCells`` cells). Sets ``map_source`` / ``map_cells`` and, on a hit, the measurement of the nearest corridor cell."""
-        if it.group != "static":
-            return
-        it.map_source = "image"
-        if it.class_name not in self.part_classes:
-            return
-        if (it.lane_hit and not it.along_path) or it.shape is None or not self.b_rr.size:
-            return
-        lut = self._lut(it)
+    def _footprint(self, it: _Item, lut):
+        """(footprint mask, row0, col0) of a static item's ground-base pixels on the map, grown by the footprint radius; None if it has none."""
+        if lut is None or it.shape is None or not self.b_rr.size:
+            return None
         mask, c0, r0 = it.shape
         rb, cb = self.b_rr - r0, self.b_cc - c0
         ok = (rb >= 0) & (rb < mask.shape[0]) & (cb >= 0) & (cb < mask.shape[1])
         ok[ok] = mask[rb[ok], cb[ok]]
-        if lut is None or not ok.any():
-            return
+        if not ok.any():
+            return None
         row, col = self.b_row[ok], self.b_col[ok]
         R, size = self.rad, self.ob.size
         pr0, pr1 = max(0, int(row.min()) - R), min(size, int(row.max()) + R + 1)
@@ -2951,32 +3150,69 @@ class _StaticMap:
         fp[row - pr0, col - pc0] = True
         if R:
             fp = ndimage.binary_dilation(fp, structure=self.disk)
-        fwd, right, n, _ = self._corridor_cells(fp, lut, pr0, pc0)
+        return fp, pr0, pc0
+
+    def faceedge(self, it: _Item) -> None:
+        """The face / edge test (``roles.faceEdge``) on the corridor cells (the full +-laneHalfWidthM corridor, fused confidence >= ``mapMinConf``)
+        of a static item's family on its footprint. Sets ``it.face_edge`` (the verdict and its numbers, the wall lines, the free-space
+        contradictions, the image rule's inputs; it goes into hazards.json) and ``self.fe_res[track_id]`` (per-cell results). ``measure`` judges on it."""
+        it.face_edge = None
+        if self.fe_cfg is None or it.group != "static":
+            return
+        lut = self._lut(it)
+        fpr = self._footprint(it, lut)
+        if fpr is None:
+            return
+        fp, pr0, pc0 = fpr
+        sl = (slice(pr0, pr0 + fp.shape[0]), slice(pc0, pc0 + fp.shape[1]))
+        fam_full = self.solid & lut[self.classes]
+        cand = np.zeros_like(fam_full)
+        cand[sl] = fp & fam_full[sl] & self.corr_full[sl]
+        if not cand.any():
+            return
+        cfg = self.fe_cfg
+        key = id(lut)
+        if key not in self._fe_cache:
+            fam = fam_full & (self.ob.fwd <= cfg["maxAheadM"])
+            orient, _ = faceedge.local_orientation(fam, self.cell, cfg)
+            self._fe_cache[key] = (fam, faceedge.fit_wall_lines(fam, self.ob.fwd, self.ob.right, cfg), orient)
+        fam, lines, orient = self._fe_cache[key]
+        res = faceedge.classify(cand, fam, self.ob.fwd, self.ob.right, self.cell, cfg, lines, orient)
+        out = faceedge.summarize(res, cfg)
+        out["lines"] = faceedge.lines_json(lines)
+        for name, code in (("faceCells", faceedge.FACE), ("edgeCells", faceedge.EDGE)):      # for the Lab's wall-line view (capped)
+            k = np.flatnonzero(res["verdict"] == code)[:60]
+            if k.size:
+                out[name] = [[round(float(res["fwd"][j]), 2), round(float(res["right"][j]), 2)] for j in k]
+        out["stationary"] = self.stationary
+        out["imageLaneHit"] = bool(it.lane_hit)
+        out["imageAlongPath"] = bool(it.along_path)
+        it.face_edge = out
+        self.fe_res[it.track_id] = res
+        self.fe_lines = out["lines"]
+
+    def measure(self, it: _Item) -> None:
+        """A static item of a wall-like class (``roles.mapJudgedClasses``: building, wall, fence, barrier, guard-rail, hedge vegetation) is judged
+        on the map alone (v26.2.2): the face / edge test (``faceedge``) on the corridor cells of its family on its footprint; at least
+        ``faceEdge.minFaceCells`` face cells make it a lane danger, measured at the nearest face cell (distance, lateral, clock, steps). A wall
+        beside the path (edge cells), a user standing still, or an item with no footprint on the map is no lane danger. Other static items keep
+        the image rule (their ``map_source`` stays "image")."""
+        if it.group != "static":
+            return
+        it.map_source = "image"
+        self.faceedge(it)
+        if it.class_name not in self.judged or self.fe_cfg is None:
+            return
+        fe = it.face_edge
+        if fe is None and self.image_fallback:
+            return                                       # the map has no cells of this item in the corridor to judge: the image rule decides
+        it.map_judged = True
+        if fe is None:
+            return
         it.map_source = "map"
-        if n >= self.min_cells:
-            it.map_cells = n
-            self._apply(it, fwd, right, n)
-
-    def gate(self, it: _Item, tr: "_Track", t: float, roles: dict) -> bool:
-        """The v26.1.16 lane-part gates, on the map: the section is believed once it has been on the map for ``mapMinAgeSeconds`` (gaps up to ``mapGapSeconds`` bridged) and
-        its nearest corridor cell closes on us at >= ``mapMinClosingMps`` (a wall that bends across the camera axis, or one beside the path
-        that the blur leaks into the corridor, keeps its distance)."""
-        if tr.map_hist and t - tr.map_hist[-1][0] > roles.get("mapGapSeconds", 0.5):
-            tr.map_hist, tr.map_first = [], None
-        tr.map_hist.append((t, it.distance_m))
-        tr.map_hist = [h for h in tr.map_hist if h[0] >= t - 1.5 - 1e-9]
-        tr.map_first = t if tr.map_first is None else tr.map_first
-        ok = t - tr.map_first >= roles.get("mapMinAgeSeconds", 0.0) - 1e-9
-        span = t - tr.map_hist[0][0]
-        if ok:
-            ok = span >= roles.get("mapClosingSpanSeconds", 0.5) - 1e-9 and (tr.map_hist[0][1] - it.distance_m) / span >= roles.get("mapMinClosingMps", 0.0)
-        return ok
-
-    def revert(self, it: _Item) -> None:
-        if it.image_dl is not None:
-            it.distance_m, it.lateral_m, it.bearing, it.clock, it.clock_q, it.clock_text, it.pan = it.image_dl
-        it.image_dl = None
-        it.map_cells, it.map_world = 0, None
+        if self.stationary or fe["verdict"] != "face":
+            return
+        self._apply(it, fe["nearestFaceM"], fe["nearestFaceRightM"], fe["face"])
 
     def locate(self, it: _Item) -> None:
         """World position of the item's image measurement (a ghost is followed from it when the map did not place it)."""
@@ -3021,7 +3257,7 @@ class _StaticMap:
 
     def corridor(self) -> dict | None:
         """The nearest object cell of any class in the walking corridor (Lab readout)."""
-        m = self.solid & self.corr
+        m = self.solid & self.corr_full
         if not m.any():
             return None
         fwd = np.where(m, self.ob.fwd, np.inf)
@@ -3140,6 +3376,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     policy = SpeechPolicy(config)
     world = _WorldMemory(config.get("memory", {}), enabled=mser is not None)
     policy.world = world
+    coast = _Coast(config.get("coast", {}))
     smap = None                                # v26.2.1: the online world map the static rules read (roles.staticSource "map")
     if roles.get("staticSource", "image") == "map" and n:
         import worldmap
@@ -3398,8 +3635,6 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             map_ms.append(smap.ms)
             for it in items:
                 smap.measure(it)
-                if it.map_cells > 0 and not smap.gate(it, tracks[it.track_id], t, roles):
-                    smap.revert(it)
             seen_now = {it.track_id for it in items}
             for tid, tr in tracks.items():
                 if tid in seen_now or tr.ghost_src is None:
@@ -3415,6 +3650,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 items.append(g)
             corridor_out = smap.corridor()
 
+        if coast.on:
+            real = {it.track_id: it for it in items}
+            items.extend(coast.items(t, real, world, tracks, step_len, smap.point_in_solid if smap is not None and smap.solid_on else None))
+
         # 6-8. steps, parked vs moving, roles
         span = None
         if region is not None:
@@ -3423,6 +3662,15 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 span = (valid.min() / gh, (valid.max() + 1) / gh)
         for it in items:
             tr = tracks[it.track_id]
+            if it.coasting:
+                # v26.2.2: a predicted mover keeps the motion state of its last measurement; only the geometry is new
+                it.ego_known, it.ego_settled = ego_speed is not None, ego_settled
+                it.steps = steps_to(it.distance_m, step_len)
+                _assign_role(it, span, roles, lane_half, step_len, stationary)
+                if stationary and not (it.moving is True and it.collision):
+                    it.role, it.urgency, it.collision, it.summary_ok, it.proximity = "none", "none", False, False, False
+                _mute_solid(it, smap)
+                continue
             it.moving, it.approaching = (None, False)
             it.ego_known = ego_speed is not None
             it.ego_settled = ego_settled
@@ -3466,6 +3714,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 it.approaching = tr.mstate == "approach"
                 it.receding = tr.mstate == "recede"
             tr.moving = it.moving
+            if smap is not None:
+                smap.snap_solid(it)
             it.steps = steps_to(it.distance_m, step_len)
             base = labels.get(it.class_name, it.class_name.replace("-", " "))
             it.family = base
@@ -3483,6 +3733,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 # burst of a few frames beside a path is segmentation noise: 4929 review 5, 51.0-51.3 s); until then it is no danger
                 it.along_path = True
             _assign_role(it, span, roles, lane_half, step_len, stationary)
+            _mute_solid(it, smap)
             if it.lane_part and it.role != "danger":
                 it.role, it.urgency, it.collision, it.summary_ok = "none", "none", False, False   # context is the side wall's job
             if stationary and not (it.group == "moving" and it.moving is True and it.collision):
@@ -3513,6 +3764,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             tr.prox_run = tr.prox_run + 1 if it.proximity else 0
             it.prox_run = tr.prox_run
             seen_tracks.add(it.track_id)
+            coast.observe(it, t, world)
         if smap is not None:
             for it in items:
                 if it.group != "static":
@@ -3600,6 +3852,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                                   "stepLength": False}},
             "pathChange": bool(path_change),
             **({"corridor": corridor_out} if smap is not None else {}),
+            **({"faceEdgeLines": smap.fe_lines} if smap is not None and smap.fe_lines else {}),
             "hazards": [_hazard_json(it, gh, gw) for it in sorted(items, key=lambda it: it.steps)],
         })
 
@@ -3619,6 +3872,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                      "cameraSide": settings.camera_side, "lateralOffsetM": lat_off},
         "gridW": gw, "gridH": gh, "egoAvailable": mser is not None, "frames": frames_out,
     }
+    if coast.on:
+        for tid in list(coast.active):
+            coast._end(tid, float(times[-1]) if n else 0.0, "end")
+        hazards_doc["coast"] = {"episodes": coast.episodes}
     if window is not None:                    # absent for full-frame runs (their output is unchanged)
         hazards_doc["window"] = dict(window)
     return hazards_doc, {"version": version, "events": events}
