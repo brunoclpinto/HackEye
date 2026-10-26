@@ -12,7 +12,7 @@ import pytest
 
 import models
 
-MODEL = Path("/hackeye-models/Yolo26m-sem-HackEye20261011-1280.pt")
+MODEL = Path("/hackeye-models/Yolo26m-sem-HackEye26.1-48-1280.pt")
 
 
 def test_to_ultralytics_reverses_channels_contiguously():

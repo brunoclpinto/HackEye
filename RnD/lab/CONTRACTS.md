@@ -121,7 +121,7 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
 
 ## 5. Analysis runs  (`lab/analysis.py`)
 
-**Request:** `{"recording": "4927", "start": 60.0, "end": 120.0, "model": "/hackeye-models/Yolo26m-sem-HackEye20261011-1280.pt", "profile": "default", "fps": 6.0}`, plus the optional execution option `"device": "gpu" | "cpu"`, and `"orientation": "landscape" | "portrait"` with `"side": "left" | "center" | "right"`
+**Request:** `{"recording": "4927", "start": 60.0, "end": 120.0, "model": "/hackeye-models/Yolo26m-sem-HackEye26.1-48-1280.pt", "profile": "default", "fps": 6.0}`, plus the optional execution option `"device": "gpu" | "cpu"`, and `"orientation": "landscape" | "portrait"` with `"side": "left" | "center" | "right"`
 
 - **Orientation and window** (v26.1.15 follow-up; `profiles.camera_window`): `landscape` (default) analyses the **full frame** exactly as before, whatever the side (the largest 16:9 window of a 16:9 source is the frame; the side then only moves the lane through the collision settings; alternative the user may revisit: a shifted full-size window with black padding). `portrait` analyses the **largest 9:16 window, full height**, `w = h·9/16` (4K 1215×2160, 2.7K 855×1520), placed by `side`: `left` x0 = 0, `center` x0 = (W−w)/2, `right` x0 = W−w. The window is scaled **evenly** (never stretched, never upscaled) with `short_side_spec` on the window (736p: 4K / 2.7K landscape 1280×736, portrait 736×1280); the only padding is the stride alignment, which the existing letterbox crop removes, so no vertical or extra padding exists. `side` is missing = the recording's saved Camera side. **Identity:** `orientation` and `side` enter the normalised request (hence the run id) **only for `portrait`**, so every landscape request and id is unchanged. Resolution that would need upscaling the window → 422. A portrait run's collision pass uses the run's own `side` (lane offset, window) instead of the recording's current one.
 
@@ -141,7 +141,7 @@ Chapters play back-to-back as one continuous timeline. Unreadable files are skip
   A 1080×1920 portrait source gives the transposed sizes (544p → 544×960).
 - `depth` ∈ `none | da3-small | da3-base | da2-metric-outdoor-small | unidepth-v2-s` (missing = `none`, 422 otherwise, including the removed `da3-metric-large`). The UI default is `da2-metric-outdoor-small`. Stored in the normalised request (and so in the run id) **only when not `none`**, so ids of depth-less requests are unchanged.
 - `device` (missing/null = `gpu`; anything else → 422 `device must be one of ['gpu', 'cpu']`) says where the run executes. It is **not** part of the normalised request or the run id, so an identical finished run is reused whatever device is asked and existing ids are unchanged. A new run records it as the top-level run-doc field `"device"`; a reused run keeps the device it was recorded with; run docs without the field mean `gpu`.
-- **Default model** offered by `GET /api/models`: `Yolo26m-sem-HackEye20261011-1280.pt` (`analysis.DEFAULT_MODEL`, env `HACKEYE_LAB_DEFAULT_MODEL`); if missing, the newest release. The UI's default resolution is `736p`.
+- **Default model** offered by `GET /api/models`: `Yolo26m-sem-HackEye26.1-48-1280.pt` (`analysis.DEFAULT_MODEL`, env `HACKEYE_LAB_DEFAULT_MODEL`); if missing, the newest app release: versioned names (`…HackEye<ver>-…`) by version, then legacy dated names (`…HackEye<YYYYMMDD>…`). Dataset-creation models (`…-Vistas124-HackEye-…`) are listed but are never the fallback while an app release exists. The UI's default resolution is `736p`.
 - `end` is clamped to the recording duration (the clamped value is stored and hashed). Must satisfy `0 ≤ start < end` and `0 < fps ≤ 60`. `model` must be one of `GET /api/models`. Violations → 422.
 - **`runId`** = first 12 hex chars of sha1 over the canonical JSON (sorted keys, compact) of the normalised request **plus `"analysisVersion": 3`**, followed by `|<model file mtime>`. A finished run with the same id is reused.
 - **`analysisVersion`** is 3: the run has an ego-motion track (`motion.npz`) that also carries `resid`, the residual image flow (§5, ego-motion track). 2 had no `resid`. `run.json` and the review annotations record it.
@@ -194,7 +194,7 @@ crossing chapter boundaries; the stored `t` is the exact time of the source fram
   "window": {"x0": 0, "y0": 0, "w": 1920, "h": 1080},   // analysed window, source pixels (the full frame for landscape)
   "gridWindow": null,                               // portrait: {"c0": 82, "cols": 76} on the 240-column grid
   "inputSpec": {"w": 960, "h": 544, "description": "..."},
-  "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+  "modelName": "Yolo26m-sem-HackEye26.1-48-1280.pt",
   "classNames": ["animal", "barrier", ...],     // from the model, in id order
   "msPerFrame": 123.4, "seekSeconds": 0.3,
   "collisionVersion": "v26.1.13"                  // version of the last collision pass
@@ -826,7 +826,7 @@ Collapsible panel under the Overlay panel. It changes **only how the mask is pai
    "event": {"t": 1089.84, "text": "vehicle at 12 in 9", "role": "danger", "trackId": 1416, "urgency": "danger",
              "clock": 12, "type": "speech"},        // snapshot; a beeps event also has tEnd, label, minSteps; type "speech"|"beeps" (missing = speech)
    "runId": "8ab9a0e06ae3", "collisionVersion": "v26.1.13", "analysisVersion": 3,
-   "modelName": "Yolo26m-sem-HackEye20261011-1280.pt",
+   "modelName": "Yolo26m-sem-HackEye26.1-48-1280.pt",
    "createdAt": "2026-10-16T13:00:00Z", "updatedAt": "2026-10-16T13:00:00Z"},
   {"id": "e5f6a7b8", "kind": "added",               // a notification the system should have made
    "type": "speech|beeps", "t": 1052.3, "tEnd": 1055.3,   // tEnd only for beeps, tEnd > t

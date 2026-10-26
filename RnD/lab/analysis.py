@@ -59,7 +59,7 @@ SUPERSEDED_ANCHORS = {"da2-metric-outdoor-small": {"initial"}}
 DEPTH_W, DEPTH_H = 120, 68          # stored depth map size (CONTRACTS depth.npz)
 DEPTH_MIN_REL = 1e-3             # floor for relative depth (non-finite / <= 0 become nan)
 DEPTH_MIN_M, DEPTH_MAX_M = 0.1, 200.0   # clip range for metric depth (metres)
-DEFAULT_MODEL = os.environ.get("HACKEYE_LAB_DEFAULT_MODEL", "Yolo26m-sem-HackEye20261011-1280.pt")
+DEFAULT_MODEL = os.environ.get("HACKEYE_LAB_DEFAULT_MODEL", "Yolo26m-sem-HackEye26.1-48-1280.pt")
 MODEL_DIRS = [(Path(os.environ.get("HACKEYE_MODELS_DIR", "/models")), "*.pt"),
               (Path(os.environ.get("HACKEYE_RELEASES_DIR", "/hackeye-models")), "*HackEye*.pt")]
 
@@ -94,11 +94,18 @@ def list_models() -> list[dict]:
         if directory.is_dir():
             paths += sorted(directory.glob(pattern))
     releases = [p for p in paths if "HackEye" in p.name]
-    # Newest by the YYYYMMDD in the release name (plain name order would rank
-    # "...HackEyeV1" above "...HackEye20261012"); undated names rank last.
-    def release_key(p: Path) -> tuple[str, str]:
-        m = re.search(r"HackEye(\d{8})", p.name)
-        return (m.group(1) if m else "", p.name)
+    # Newest app release first: versioned names ("...HackEye26.1-48-1280") by version, then
+    # legacy dated names ("...HackEye20261011") by date. Dataset-creation models
+    # ("...-Vistas124-HackEye-1280") and other unversioned names rank last, so the
+    # fallback never picks one while an app release exists.
+    def release_key(p: Path) -> tuple[int, tuple[int, ...], str]:
+        v = re.search(r"HackEye(\d+)\.(\d+)(?:\.(\d+))?-", p.name)
+        if v:
+            return (2, tuple(int(x or 0) for x in v.groups()), p.name)
+        d = re.search(r"HackEye(\d{8})", p.name)
+        if d:
+            return (1, (int(d.group(1)),), p.name)
+        return (0, (), p.name)
 
     # Pinned default (by file name); without that file, the newest release.
     default = next((p for p in releases if p.name == DEFAULT_MODEL), None)
