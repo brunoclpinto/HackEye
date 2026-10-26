@@ -85,7 +85,7 @@ def test_straight_wall_and_corridor_face():
     pts = np.stack([wx[side], wy[side]], axis=1)
     c = pts - pts.mean(axis=0)
     resid = c @ np.linalg.svd(c, full_matrices=False)[2][1]
-    assert math.sqrt(float(np.mean(resid ** 2))) < 0.2                       # a straight line
+    assert math.sqrt(float(np.mean(resid ** 2))) < 0.25                      # a straight line (v26.2.4: 0.2 -> 0.25, the 18-20 m cells that the snapshot now holds are the blurriest)
     j = int(5 * FPS)                                                         # 3 m before the face
     rows, cols = np.nonzero(snaps[j][1] == BLD)
     fx, fy = to_world(wm, j, rows, cols)
@@ -189,7 +189,7 @@ def test_worldmap_endpoints(tmp_path, monkeypatch):
     r = c.post(f"/api/runs/{run}/worldmap")
     assert r.status_code == 200 and r.json()["frames"] == wm.n
     meta = c.get(f"/api/runs/{run}/worldmap").json()
-    assert meta["exists"] and meta["frames"] == wm.n and meta["origin"] == [100, 180] and meta["width"] == 200
+    assert meta["exists"] and meta["frames"] == wm.n and meta["origin"] == [100, 200] and meta["width"] == 200
     assert meta["cellM"] == pytest.approx(0.1)
     png = c.get(f"/api/runs/{run}/worldmap/5.png")
     img = cv2.imdecode(np.frombuffer(png.content, np.uint8), cv2.IMREAD_UNCHANGED)
@@ -200,7 +200,38 @@ def test_worldmap_endpoints(tmp_path, monkeypatch):
     gray = cv2.imdecode(np.frombuffer(c.get(f"/api/runs/{run}/worldmap/5.png?alpha=gray").content, np.uint8), cv2.IMREAD_UNCHANGED)
     assert gray.shape == (200, 200) and ((gray == 255) == ~known).all()
     assert c.get(f"/api/runs/{run}/worldmap/{wm.n}.png").status_code == 404
+    # v26.2.4: the cell endpoint returns the surface and the object layer on their own; nothing behind the user
+    cell = c.get(f"/api/runs/{run}/worldmap/cell?i=5&col=100&row=150").json()
+    assert cell["layers"] and cell["aheadM"] == 5.0 and cell["rightM"] == 0.0 and cell["surface"] == SW and cell["object"] is None
+    assert c.get(f"/api/runs/{run}/worldmap/cell?i=5&col=100&row=199").json()["aheadM"] == 0.1
+    assert c.get(f"/api/runs/{run}/worldmap/cell?i=5&col=100&row=200").status_code == 422
+    assert c.get(f"/api/runs/{run}/worldmap/cell?i={wm.n}&col=1&row=1").status_code == 404
+    with np.load(d / "worldmap.npz") as z:
+        assert z["surface"].shape == z["object"].shape == z["classes"].shape and list(z["origin"]) == [100, 200]
     pose = c.get(f"/api/runs/{run}/worldmap/pose.json").json()
     assert len(pose["pose"]) == wm.n and pose["pose"][-1][1] > 1.0
     (d / "hazards.json").unlink()
     assert c.post(f"/api/runs/{run}/worldmap").status_code == 404
+
+
+def test_forward_only_snapshot_and_separate_layers():
+    """v26.2.4: the user stands on the bottom edge (20 m ahead, nothing behind); an object keeps the surface under it in the surface layer."""
+    def scene(wx, wy):
+        out = np.full(wx.shape, SW, dtype=np.uint8)
+        out[(np.abs(wx - 0.0) <= 0.4) & (np.abs(wy - 6.0) <= 0.3)] = POLE
+        return out
+    wm = make_map(scene, 3.0, stationary=True)
+    o = wm.observer
+    assert (o.oc, o.orow, o.size) == (100, 200, 200) and o.fwd.min() > 0.0 and abs(o.fwd.max() - 20.0) < 1e-6
+    for i in range(wm.n):
+        wm.step(i, layers=True)
+    surf, objs = wm.last_layers
+    _, classes, _, _ = wm.step(wm.n - 1, layers=True)
+    ps = np.argwhere(objs == POLE)
+    assert len(ps) >= 3
+    r, c = ps[0]
+    assert surf[r, c] in (SW, 255) and (classes == POLE).any()
+    assert (surf[objs == 255] != POLE).all()
+    # without layers the snapshot is exactly the combined classes (the collision rules read these)
+    again = wm.fusion.snapshot(float(wm.times[-1]), wm.last_pose, o)
+    assert (again[0] == classes).all()

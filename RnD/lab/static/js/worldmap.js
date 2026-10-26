@@ -1,13 +1,15 @@
 // World map panel (v26.2 step 1 spike): the fused ego-centric bird's-eye snapshot of the frame at the playhead
-// (GET /api/runs/{id}/worldmap/{i}.png, CONTRACTS 8.1), heading-up, user at column 100 / row 180, 0.10 m per cell.
+// (GET /api/runs/{id}/worldmap/{i}.png, CONTRACTS 8.1), heading-up, forward only (v26.2.4): user at column 100 / row 200 (the bottom
+// edge), 0.10 m per cell, 20 m ahead. A click selects a cell (marker kept across frames); the box under the map reads it out.
 // Cells are coloured through the same class LUT as the mask (js/classes.js MaskStyle), so colours, hidden classes and
 // level edits follow the Classes panel. On top: the user marker, the +-0.6 m corridor to 10 steps, range rings every
 // 5 steps, and the current frame's hazards as dots (movers highlighted, the role danger outlined).
 import { $, ROLE_COLOR, lastAtOrBefore } from "./util.js";
 import { api } from "./api.js";
 
-const SIZE = 200, ORIGIN_COL = 100, ORIGIN_ROW = 180, CELL_M = 0.1;
+const SIZE = 200, ORIGIN_COL = 100, ORIGIN_ROW = 200, CELL_M = 0.1;
 const UNKNOWN = 255;
+const ITEM_NEAR_M = 0.3;     // an item whose position lies within this of the cell is listed with it
 const CORRIDOR_HALF_M = 0.6, CORRIDOR_STEPS = 10, RING_EVERY = 5, DEFAULT_STEP_M = 0.7;
 const MAX_FETCH_HZ = 6, CACHE = 24, STALE_S = 1.0;
 
@@ -19,6 +21,26 @@ function clockQuarter(bearing) {
 function clockText(q) {
   const m = (720 + 15 * q) % 720, hour = Math.floor(m / 60) || 12, min = m % 60;
   return min === 0 ? `${hour}` : `${hour}:${String(min).padStart(2, "0")}`;
+}
+
+/** Hazards items of a frame whose position (map / snapped / coasting position, the raw depth position, or the image measurement)
+ *  lies within ITEM_NEAR_M of the cell (`ahead`, `right` in metres). Returns one description line per item. */
+export function itemsNear(frame, ahead, right) {
+  const out = [];
+  for (const h of frame?.hazards ?? []) {
+    const pts = [];
+    if (Number.isFinite(h.distanceM) && Number.isFinite(h.lateralM)) pts.push([h.distanceM, h.lateralM]);
+    if (h.solidCorrected && Number.isFinite(h.rawDistanceM) && h.distanceM > 0) pts.push([h.rawDistanceM, h.lateralM * h.rawDistanceM / h.distanceM]);
+    if (Number.isFinite(h.imageDistanceM) && Number.isFinite(h.imageLateralM)) pts.push([h.imageDistanceM, h.imageLateralM]);
+    if (!pts.some(([f, r]) => Math.hypot(f - ahead, r - right) <= ITEM_NEAR_M)) continue;
+    const tags = [];
+    if (h.insideSolid) tags.push(h.solidCorrected ? "inside solid (snapped)" : "inside solid");
+    if (h.coasting) tags.push("coasting");
+    if (h.ghost) tags.push("ghost");
+    out.push(`${h.className ?? h.label ?? "item"} · role ${h.role ?? "none"} · track ${h.trackId ?? "?"} · distance source ${h.distanceSource ?? h.source ?? "?"}` +
+      (tags.length ? ` · ${tags.join(", ")}` : ""));
+  }
+  return out;
 }
 
 export class WorldMapPanel {
@@ -40,21 +62,68 @@ export class WorldMapPanel {
       try { localStorage.setItem("wmRules", this.showRules ? "1" : "0"); } catch { /* per-viewer convenience only */ }
       this.sig = ""; this.paintIfNeeded();
     });
-    for (const ev of ["pointermove", "pointerdown"]) this.canvas.addEventListener(ev, (e) => this.readout(e));
-    this.canvas.addEventListener("pointerleave", () => { $("#wmReadout").textContent = ""; });
+    this.canvas.addEventListener("click", (e) => this.select(e));
     this.paint();
   }
 
-  /** Hover / tap readout: clock position, steps and metres of the pointed map point (heading-up, user at 100/180, 0.1 m per cell). */
-  readout(e) {
+  /** Click / tap: select the map cell under the pointer (the marker stays until another click) and read it out. */
+  select(e) {
     const r = this.canvas.getBoundingClientRect();
     if (!r.width) return;
-    const col = (e.clientX - r.left) / r.width * SIZE, row = (e.clientY - r.top) / r.height * SIZE;
-    const ahead = (ORIGIN_ROW + 0.5 - row) * CELL_M, right = (col - ORIGIN_COL - 0.5) * CELL_M;
+    const col = Math.min(SIZE - 1, Math.max(0, Math.floor((e.clientX - r.left) / r.width * SIZE)));
+    const row = Math.min(SIZE - 1, Math.max(0, Math.floor((e.clientY - r.top) / r.height * SIZE)));
+    this.sel = { col, row };
+    this.cellData = null; this.cellKey = "";
+    this.sig = ""; this.refreshCell(); this.paintIfNeeded();
+  }
+
+  /** Fetch the selected cell's layers for the current snapshot (GET /worldmap/cell); latest wins. */
+  refreshCell() {
+    const sel = this.sel;
+    if (!sel || !this.run || !this.meta?.exists) { this.renderCell(); return; }
+    if (this.k < 0) { this.cellData = null; this.cellKey = ""; this.renderCell(); return; }
+    const key = `${this.run.id}|${this.k}|${sel.col}|${sel.row}`;
+    if (key === this.cellKey) { this.renderCell(); return; }
+    this.cellKey = key;
+    const token = this.token;
+    api(`/api/runs/${this.run.id}/worldmap/cell?i=${this.k}&col=${sel.col}&row=${sel.row}`, { quiet: true })
+      .then((d) => { if (token === this.token && key === this.cellKey) { this.cellData = d; this.renderCell(); } })
+      .catch(() => { if (token === this.token && key === this.cellKey) { this.cellData = null; this.renderCell(); } });
+  }
+
+  /** The text of the box under the map: the selected cell at the current frame. A never-observed cell (no surface, no object, no item) reads only "unmapped". */
+  cellText() {
+    if (!this.sel) return "Click the map to read a cell.";
+    const { col, row } = this.sel;
+    const ahead = (ORIGIN_ROW - row) * CELL_M, right = (col - ORIGIN_COL) * CELL_M;
+    const d = this.cellData;
+    if (!d) return this.k >= 0 && this.meta?.exists && this.cellKey ? "…" : "no snapshot at this time";
+    const items = itemsNear(this.currentHazardFrame(), ahead, right);
+    const style = this.getStyle();
+    const name = (id) => style?.info?.classes?.find?.((c) => c.id === id)?.name ?? `class ${id}`;
+    const level = (id) => {
+      const lv = style?.levelOf?.get(id);
+      const lab = style?.info?.levels?.find?.((l) => l.level === lv)?.label;
+      return lv === undefined ? "" : ` (level ${lv}${lab ? " " + lab : ""})`;
+    };
+    const surface = d.layers ? d.surface : d.combined;      // maps built before v26.2.4 have one class per cell
+    const obj = d.layers ? d.object : null;
+    if (surface === null && obj === null && !items.length) return "unmapped";
     const dist = Math.hypot(ahead, right), bearing = Math.atan2(right, ahead) * 180 / Math.PI;
     const step = this.stepM || DEFAULT_STEP_M;
-    const clock = ahead < 0 ? "behind" : clockText(clockQuarter(bearing));
-    $("#wmReadout").textContent = `${clock} · ${(dist / step).toFixed(1)} st · ${dist.toFixed(1)} m`;
+    const lines = [`${clockText(clockQuarter(bearing))} · ${(dist / step).toFixed(1)} steps · ${ahead.toFixed(1)} m ahead · ${Math.abs(right).toFixed(1)} m ${right < 0 ? "left" : "right"} · cell col ${col} row ${row}`,
+      `Region: ${surface === null ? "none observed" : name(surface) + level(surface)}`,
+      `Object: ${obj === null ? "none" : name(obj) + level(obj)}`];
+    for (const it of items) lines.push(`Item: ${it}`);
+    if (!items.length) lines.push("Item: none");
+    const far = (this.currentHazardFrame()?.hazards ?? []).filter((h) => h.distanceM > ORIGIN_ROW * CELL_M || Math.abs(h.lateralM) > 10);
+    if (far.length) lines.push(`Beyond 20 m (low trust, outside the 20 x 20 m work area): ${far.map((h) => `${h.className} ${h.distanceM.toFixed(0)} m`).join(", ")}`);
+    return lines.join("\n");
+  }
+
+  renderCell() {
+    const txt = this.cellText(), el = $("#wmCell");
+    if (el.textContent !== txt) el.textContent = txt;
   }
 
   reset() {
@@ -65,6 +134,9 @@ export class WorldMapPanel {
     this.cache = new Map();    // snapshot index -> Uint8Array(200*200), 255 = unknown
     this.pending = new Map();  // snapshot index -> promise
     this.k = -1;               // snapshot index wanted for the playhead
+    this.sel = null;           // selected cell {col, row}: kept across frames until another click
+    this.cellData = null;      // GET /worldmap/cell of the selected cell at snapshot k
+    this.cellKey = "";
     this.lastT = 0;
     this.sig = "";
     this.lastFetch = 0;
@@ -136,11 +208,12 @@ export class WorldMapPanel {
   /** Playhead moved (called on every drawn video frame). */
   update(t) {
     if (Number.isFinite(t)) this.lastT = t;
-    if (!this.run || !this.meta?.exists || !this.poseT.length) { this.paintIfNeeded(); return; }
+    if (!this.run || !this.meta?.exists || !this.poseT.length) { this.k = -1; this.refreshCell(); this.paintIfNeeded(); return; }
     const k = lastAtOrBefore(this.poseT, this.lastT, (x) => x);
     const inRange = k >= 0 && this.lastT - this.poseT[k] <= STALE_S + (this.poseT[k + 1] - this.poseT[k] || 0);
     this.k = inRange ? k : -1;
     if (this.k >= 0 && !this.cache.has(this.k)) this.request(this.k);
+    this.refreshCell();
     this.paintIfNeeded();
   }
 
@@ -197,6 +270,7 @@ export class WorldMapPanel {
     if (sig === this.sig) return;
     this.sig = sig;
     this.paint(grid, f);
+    this.renderCell();
   }
 
   paint(grid = null, frame = null) {
@@ -270,7 +344,7 @@ export class WorldMapPanel {
     ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.textBaseline = "middle";
     for (let q = -12; q <= 12; q += 4) {
       const b = q * 7.5, [dx, dy] = dirs(b), r = edge(b) - fs * 0.9;
-      ctx.fillText(String(clockText(q)), ux + dx * r, uy + dy * r);
+      ctx.fillText(String(clockText(q)), ux + dx * r, Math.min(uy + dy * r, W - fs * 0.8));
     }
     ctx.textBaseline = "alphabetic";
     // corridor +-0.6 m to 10 steps
@@ -330,8 +404,15 @@ export class WorldMapPanel {
     // user marker
     ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#000000"; ctx.lineWidth = 1.5;
     const m = Math.max(5, W / 55);
-    ctx.beginPath(); ctx.moveTo(ux, uy - m * 1.5); ctx.lineTo(ux + m, uy + m); ctx.lineTo(ux, uy + m * 0.4); ctx.lineTo(ux - m, uy + m); ctx.closePath();
+    const my = Math.min(uy, W) - m * 1.1;               // the user stands on the bottom edge: keep the marker inside the canvas
+    ctx.beginPath(); ctx.moveTo(ux, my - m * 1.5); ctx.lineTo(ux + m, my + m); ctx.lineTo(ux, my + m * 0.4); ctx.lineTo(ux - m, my + m); ctx.closePath();
     ctx.fill(); ctx.stroke();
+    if (this.sel) {                                      // the selected cell (click readout): crosshair box, kept while the frame changes
+      const cx = (this.sel.col + 0.5) * s, cy = (this.sel.row + 0.5) * s, q = Math.max(5, W / 60);
+      ctx.lineWidth = 3; ctx.strokeStyle = "#000000"; ctx.strokeRect(cx - q, cy - q, 2 * q, 2 * q);
+      ctx.lineWidth = 1.5; ctx.strokeStyle = "#ffe14d"; ctx.strokeRect(cx - q, cy - q, 2 * q, 2 * q);
+      ctx.beginPath(); ctx.moveTo(cx - q * 1.6, cy); ctx.lineTo(cx + q * 1.6, cy); ctx.moveTo(cx, cy - q * 1.6); ctx.lineTo(cx, cy + q * 1.6); ctx.stroke();
+    }
     $("#wmStatus").textContent = this.k >= 0 && this.poseT.length ? `t ${this.poseT[this.k].toFixed(1)} s · frame ${this.k + 1}/${this.poseT.length} · step ${step.toFixed(2)} m` : "";
   }
 }

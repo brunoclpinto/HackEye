@@ -19,7 +19,7 @@ from lab import analysis, recordings, server
 from tests.test_collision_regression import FIXTURES
 from tests.test_orientation import GOLDEN_CHEST0004_REVIEW7
 
-GOLDEN_V2622 = "e356b6ec0f564d70d78a559e39028bb5fe36224b7886a40fede47a7094f7202b"      # the v26.2.2 collision output of chest0004_review7
+GOLDEN_V2622 = "3d5d983c180bcc2bbfc5d1379a5cb3b670a00d89334a969b12f8aec86a21a8a4"      # the v26.2.2 collision output; re-pinned v26.2.4: same events, 2 of 120 frames differ in item values at the 20 m snapshot edge (was e356b6ec...) of chest0004_review7
 GH, GW, HFOV, CAM_H, HORIZON = 135, 240, 118.0, 1.3, 0.45
 F_PX = col.focal_px(GW, HFOV)
 GEO = groundfuse.Geometry(GH, GW, HFOV, "fisheye", CAM_H)
@@ -31,7 +31,7 @@ REP = {"ref": 1.45, "sigmaRows": 0.6, "curve": [[5.0, 1.0], [12.0, 1.0]]}
 
 def test_config_and_defaults():
     cfg = col.load_config()
-    assert cfg["version"] == "v26.2.3" == worldmap.load_config()["version"]
+    assert cfg["version"] == "v26.2.4" == worldmap.load_config()["version"]
     d = cfg["distance"]
     assert d["objectDistance"] == "depth" and d["useHorizon"] is True      # measured worse than depth on the user's ticks (DECISIONS v26.2.3)
     assert set(d["groundDepth"]) >= {"minRowsBelowHorizon", "binEdgesM", "emaSeconds", "holdSeconds", "extrapolate", "priorCurve", "depthRelErr",

@@ -46,7 +46,7 @@ FPS = 10.0
 
 def test_config_keys():
     r = CONFIG["roles"]
-    assert CONFIG["version"] == "v26.2.3" and r["staticSource"] == "map"
+    assert CONFIG["version"] == "v26.2.4" and r["staticSource"] == "map"
     # v26.2.2: the building section gates (mapMinCells, mapCorridorMarginM, mapMinAgeSeconds, mapMinClosingMps) are gone: the map judges every wall-like
     # class with the face / edge test (tests/test_collision_v2622.py)
     assert "mapMinCells" not in r and "mapMinClosingMps" not in r and r["mapJudgedClasses"]

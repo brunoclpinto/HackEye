@@ -493,32 +493,37 @@ export class Reviews {
   }
   _resetAuto() { this.cand = null; const i = $("#rvAddAutoInfo"); i.hidden = true; i.textContent = ""; }
 
-  /** Fill text + role from the analysed frame at the form time (fetched from /frame?t=); repeated clicks cycle candidates. */
+  _autoInfo(msg) { const i = $("#rvAddAutoInfo"); i.textContent = msg; i.hidden = false; }
+
+  /** Auto-fill (v26.2.4): (1) the form time becomes the playhead (the paused frame), always; (2) the highest-priority object of that analysed
+   *  frame is picked (role final > danger > feature > context > none, then safety level, then fewest steps); (3) the phrase, role and type
+   *  are filled in. It never saves: the user corrects by hand and presses Add. Repeated clicks at the same time cycle to the next candidate. */
   async autofill() {
-    const t = this._formTime();
-    if (!(t >= 0)) { toast("Enter a valid time first."); return; }
+    const t = this.h.getTime();
+    if (!(t >= 0)) { toast("No playhead time."); return; }
+    if (this.formT !== t || $("#rvAddT").value !== this._fmtT()) this._setFormTime(t);      // typed or stale time: the playhead wins
+    $("#rvAddType").value = this._addType() === "beeps" ? "beeps" : "speech"; this._typeUi();
     if (!this.cand || this.cand.t !== t) {
-      if (!this.run) { toast("Load a run to auto-fill."); return; }
       const btn = $("#rvAddAuto"), token = ++this.addToken;
       btn.disabled = true; btn.classList.add("busy"); const label = btn.textContent; btn.textContent = "…";
       let frame;
-      try { frame = await this.h.getFrame(t); }
-      finally { btn.disabled = false; btn.classList.remove("busy"); btn.textContent = label; }
-      if (token !== this.addToken || $("#rvAddForm").hidden) return; // form was reset or the time changed meanwhile
-      if (!frame) { toast("No analysed frame at this time (outside the run range)."); return; }
-      this.cand = { t, list: orderCandidates(frame), i: -1 };
+      try {
+        if (!this.run && !(await this.h.ensureRun?.(t))) { this._autoInfo("No analysed run covers this time: analyse the recording first."); toast("No analysed run covers this time.", "info"); return; }
+        frame = await this.h.getFrame(t);
+      } finally { btn.disabled = false; btn.classList.remove("busy"); btn.textContent = label; }
+      if (token !== this.addToken || $("#rvAddForm").hidden) return; // form was reset meanwhile
+      if (!frame) { this._autoInfo("No analysed frame at this time (outside the run range)."); toast("No analysed frame at this time (outside the run range).", "info"); return; }
+      this.cand = { t, list: orderCandidates(frame, this.h.levelOf), i: -1 };
     }
     const c = this.cand;
-    if (!c.list.length) { toast("nothing detected at this time", "info"); return; }
+    if (!c.list.length) { this._autoInfo("nothing detected at this time"); toast("nothing detected at this time", "info"); return; }
     c.i = (c.i + 1) % c.list.length;
     const it = c.list[c.i];
     let { text, role } = fillFor(it, this.h.getTemplates());
     if (this._addType() === "beeps") text = `beeps · ${it.label ?? it.className ?? "object"} at ${it.clockText ?? it.clock ?? "?"}`;
     $("#rvAddText").value = text.slice(0, 300);
     $("#rvAddRole").value = role;
-    const info = $("#rvAddAutoInfo");
-    info.textContent = `${c.i + 1}/${c.list.length} · ${it.className ?? it.label} · ${it.role ?? "none"}`;
-    info.hidden = false;
+    this._autoInfo(`${c.i + 1}/${c.list.length} · ${it.className ?? it.label} · ${it.role ?? "none"}`);
   }
 
   async submitAdd() {

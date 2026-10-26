@@ -106,7 +106,7 @@ def test_review1_fixture_is_the_documented_one(review1):
         t = npz[f"w{i}_t"]
         assert t[0] >= w["start"] - 0.5 and t[-1] <= w["end"] + 0.5
         assert npz[f"w{i}_grids"].shape == (len(t), meta["gridH"], meta["gridW"])
-    assert CONFIG["version"] == "v26.2.3"
+    assert CONFIG["version"] == "v26.2.4"
 
 
 def test_review1_start_summary_names_building_and_obstacle_within_the_first_1_5_s(review1):
@@ -505,7 +505,7 @@ def test_review3_fixture_is_the_documented_one(review3):
     assert len(ann) == 33 and sum(a["verdict"] == "correct" for a in ann) == 27 and sum(a["verdict"] == "remove" for a in ann) == 6
     assert sorted(round(a["t"], 2) for a in ann if a["verdict"] == "remove") == [7.84, 40.5, 41.17, 59.85, 118.66, 199.16]
     assert len(meta["systemEventsV26_1_6"]) > 0
-    assert CONFIG["version"] == "v26.2.3"
+    assert CONFIG["version"] == "v26.2.4"
 
 
 def test_review3_no_repeat_at_7_84_40_50_59_85_and_118_66(review3, review3_warm, review3_no_memory):

@@ -1,8 +1,8 @@
 {
-  "version": "v26.2.3",
+  "version": "v26.2.4",
   "cellM": 0.10,
   "windowM": 64.0,
-  "snapshot": {"size": 200, "originCol": 100, "originRow": 180},
+  "snapshot": {"size": 200, "originCol": 100, "originRow": 200},
   "halfLifeSeconds": 6.0,
   "weightFloor": 0.25,
   "confFullWeight": 3.0,

@@ -19,9 +19,9 @@ def _item(cls="pole", dist=8.0, lat=0.0, group="static", **kw):
 
 def _stub_map(mode="snap"):
     sm = col._StaticMap.__new__(col._StaticMap)
-    sm.ob = types.SimpleNamespace(orow=180, oc=100, cell=0.1, size=200)
+    sm.ob = types.SimpleNamespace(orow=200, oc=100, cell=0.1, size=200)
     wall = np.zeros((200, 200), dtype=bool)
-    wall[120:125, 70:130] = True                       # a wall face 5.6-6.0 m ahead, 6 m wide
+    wall[140:145, 70:130] = True                       # a wall face 5.6-6.0 m ahead, 6 m wide
     sm.wall_solid, sm.solid_depth, sm.solid_rays = wall, 0.8, 3
     sm.solid_mode, sm.solid_on = mode, mode in ("snap", "suppress")
     sm.judged = frozenset({"building"})
@@ -30,7 +30,7 @@ def _stub_map(mode="snap"):
 
 def test_config():
     r = CONFIG["roles"]
-    assert CONFIG["version"] == "v26.2.3"
+    assert CONFIG["version"] == "v26.2.4"
     assert r["staticSource"] == "map" and r["faceEdge"]["enabled"] and r["faceEdge"]["minFaceCells"] == 3
     assert "building" in r["mapJudgedClasses"] and "mapMinCells" not in r and "mapMinClosingMps" not in r
     assert r["insideSolid"]["mode"] == "snap" and CONFIG["coast"]["enabled"]
@@ -70,7 +70,7 @@ def test_suppress_mode_marks_and_mutes():
 def test_face_cell_across_the_path_is_a_face_and_a_wall_line_is_an_edge():
     n = 200
     rows, cols = np.mgrid[0:n, 0:n]
-    fwd = ((180 - rows) * 0.1).astype(np.float64)
+    fwd = ((200 - rows) * 0.1).astype(np.float64)
     right = ((cols - 100) * 0.1).astype(np.float64)
     wall = (np.abs(right - 0.5) <= 0.1) & (fwd > 0.5) & (fwd < 8.0)             # a wall beside the path, 0.5 m to the right (its blur is inside the corridor)
     cfg = faceedge.settings({})

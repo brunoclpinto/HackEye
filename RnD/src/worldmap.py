@@ -3,7 +3,8 @@
 Inputs per frame: the class grid, the depth map (when the run has one), the frame's horizon and ego block from
 hazards.json. Nothing is inferred again. Per frame:
 
-1. Ego observation (``Observer``): a 200 x 200 heading-up grid of 0.10 m cells (user at col 100 / row 180).
+1. Ego observation (``Observer``): a 200 x 200 heading-up grid of 0.10 m cells (v26.2.4: forward only, the user stands on the
+   bottom edge, col 100 / row 200: 20 m ahead, +-10 m to the sides, nothing behind).
    * surface classes: inverse ground-plane projection (each map cell -> the image pixel that sees it, using the
      collision pass's own geometry: ``focal_px`` / ``ground_distance_m`` / ``lateral_m`` inverted, the camera height
      and the lateral offset of the body calibration), so the map has no holes;
@@ -16,7 +17,9 @@ hazards.json. Nothing is inferred again. Per frame:
 3. Fusion (``Fusion``): a world-frame vote grid, exponentially decayed (lazily: votes are stored pre-multiplied by
    exp(lambda t), so a frame costs nothing for the decay), recentred as the user moves; class = argmax vote when the
    decayed weight is above a floor.
-4. Snapshot: the fused map resampled into the ego frame.
+4. Snapshot: the fused map resampled into the ego frame, as one class per cell (surface and objects voting together: the
+   collision rules read it) and, for the Lab's click readout (v26.2.4), as two separate layers: the winning surface class and the
+   winning object class of every cell.
 """
 from __future__ import annotations
 
@@ -288,6 +291,7 @@ class Fusion:
         keep = [int(c) for c in present if kind[c] in (KIND_SURFACE, KIND_OBJECT)]
         keep = keep or [0]                       # a run with no surface / object class at all: one empty layer
         self.classes = np.array(keep, dtype=np.uint8)
+        self.is_surface = np.array([kind[c] == KIND_SURFACE for c in keep])           # per vote layer: surface class / object class
         self.lut = np.full(256, -1, dtype=np.int16)
         for k, c in enumerate(keep):
             self.lut[c] = k
@@ -367,18 +371,31 @@ class Fusion:
     def _decay(self, t: float) -> float:
         return math.exp(-self.lam * (t - self.t_base))
 
-    def snapshot(self, t: float, pose: tuple[float, float, float], observer: Observer) -> tuple[np.ndarray, np.ndarray]:
+    def snapshot(self, t: float, pose: tuple[float, float, float], observer: Observer, layers: bool = False):
+        """The fused map in the ego frame: (classes, conf), or with ``layers`` (classes, conf, surface, object): the winning surface class and
+        the winning object class of every cell on their own (255 = none), so that an object does not hide the surface under it."""
         iy, ix = self._ego_to_world_idx(observer.fwd, observer.right, pose)
         inside = (iy >= 0) & (iy < self.n) & (ix >= 0) & (ix < self.n)
         iy, ix = np.clip(iy, 0, self.n - 1), np.clip(ix, 0, self.n - 1)
         v = self.votes[:, iy, ix]                                    # (K, size, size)
-        total = v.sum(axis=0) * np.float32(self._decay(t))
+        decay = np.float32(self._decay(t))
+        total = v.sum(axis=0) * decay
         top = v.argmax(axis=0)
         share = np.take_along_axis(v, top[None], 0)[0] / np.maximum(v.sum(axis=0), 1e-12)
         known = inside & (total > self.floor)
         classes = np.where(known, self.classes[top], UNKNOWN).astype(np.uint8)
         conf = np.where(known, 255.0 * np.minimum(1.0, total / self.full) * share, 0.0)
-        return classes, conf.astype(np.uint8)
+        if not layers:
+            return classes, conf.astype(np.uint8)
+        out = []
+        for sel in (self.is_surface, ~self.is_surface):
+            if not sel.any():
+                out.append(np.full(classes.shape, UNKNOWN, dtype=np.uint8))
+                continue
+            sub = v[sel]
+            ok = inside & (sub.sum(axis=0) * decay > self.floor)
+            out.append(np.where(ok, self.classes[sel][sub.argmax(axis=0)], UNKNOWN).astype(np.uint8))
+        return classes, conf.astype(np.uint8), out[0], out[1]
 
     def world_classes(self, t: float) -> tuple[np.ndarray, np.ndarray]:
         """Whole window: (classes uint8 [255 unknown], decayed total weight); for metrics."""
@@ -434,10 +451,11 @@ class WorldMap:
             j -= 1
         return np.asarray(self.depth[j])
 
-    def step(self, i: int, frame: dict | None = None, dmap=None):
+    def step(self, i: int, frame: dict | None = None, dmap=None, layers: bool = False):
         """Frame i: pose + observation + fusion + snapshot. Returns (obs, snapshot classes, conf, ms).
         ``frame`` = {"horizon", "scale", "depthScale", "ego"} (default: the stored one of ``frames``); ``dmap`` the depth map of
-        the frame (default: the nearest one of the run's depth)."""
+        the frame (default: the nearest one of the run's depth). ``layers``: also keep the separate surface / object layers in
+        ``self.last_layers`` (surface, object), for the Lab's cell readout; the collision pass does not need them."""
         t0 = time.perf_counter()
         frame = frame if frame is not None else self.frames[i]
         dmap = dmap if dmap is not None else self.depth_map(i)
@@ -447,7 +465,11 @@ class WorldMap:
         self.last_pose = pose
         obs, w = self.observer.observe(np.asarray(self.grids[i]), frame, dmap)
         self.fusion.update(t, pose, obs, w, self.observer)
-        classes, conf = self.fusion.snapshot(t, pose, self.observer)
+        if layers:
+            classes, conf, surf, objs = self.fusion.snapshot(t, pose, self.observer, True)
+            self.last_layers = (surf, objs)
+        else:
+            classes, conf = self.fusion.snapshot(t, pose, self.observer)
         self.last_frame, self.last_dmap = frame, dmap
         return obs, classes, conf, (time.perf_counter() - t0) * 1000.0
 
@@ -461,11 +483,14 @@ def build(grids, times, class_names, hazards, coll_cfg, cfg=None, depth=None, ho
     size = wm.observer.size
     classes = np.full((len(grids), size, size), UNKNOWN, dtype=np.uint8)
     conf = np.zeros((len(grids), size, size), dtype=np.uint8)
+    surface = np.full((len(grids), size, size), UNKNOWN, dtype=np.uint8)       # v26.2.4: the surface and the object layer on their own
+    objects = np.full((len(grids), size, size), UNKNOWN, dtype=np.uint8)
     ms = np.zeros(len(grids))
     for i in range(len(grids)):
-        obs, classes[i], conf[i], ms[i] = wm.step(i)
+        obs, classes[i], conf[i], ms[i] = wm.step(i, layers=True)
+        surface[i], objects[i] = wm.last_layers
         if hook is not None:
             hook(i, wm, obs, classes[i])
-    return {"classes": classes, "conf": conf, "t": wm.times, "pose": wm.pose,
+    return {"classes": classes, "conf": conf, "surface": surface, "object": objects, "t": wm.times, "pose": wm.pose,
             "cellM": np.float32(wm.cfg["cellM"]), "origin": np.array([wm.observer.oc, wm.observer.orow], dtype=np.int32),
             "ms": ms}

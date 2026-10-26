@@ -36,6 +36,16 @@ const reviews = new Reviews({
   getTime: () => video.currentTime || 0,
   isPaused: () => video.paused,
   getFrame: (t) => hazards.frameAt(t),
+  levelOf: (name) => { const st = overlay.style, c = st?.info?.classes?.find((x) => x.name === name); return c ? st.levelOf.get(c.id) : 0; },
+  /** Auto-fill without a loaded run: load the newest done run of this recording that covers t. */
+  ensureRun: async (t) => {
+    if (S.run) return true;
+    const r = (S.runs ?? []).filter((x) => x.status === "done" && x.request.start <= t && t <= x.request.end + 1)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+    if (!r) return false;
+    await loadRun(r.id, { seek: false });
+    return !!S.run;
+  },
   changed: () => refreshAudioEvents(),
   getTemplates: () => S.config?.speech?.templates ?? null,
   transport: (id) => $(`#${id}`).click(),

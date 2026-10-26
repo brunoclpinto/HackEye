@@ -237,4 +237,7 @@ button.link[hidden] { display: none; }
 .wm-bar button { min-height: 28px; padding: 2px 8px; }
 .wm-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85em; }
 .wm-canvas { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 4px; background: #0b0d10; touch-action: manipulation; }
+.wm-canvas { cursor: crosshair; }
+.wm-cell { margin: 4px 0 0; padding: 6px 8px; min-height: 4.8em; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--fg, inherit);
+  font-size: 12px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
 .snd-scroll { overflow-x: auto; max-width: 100%; }

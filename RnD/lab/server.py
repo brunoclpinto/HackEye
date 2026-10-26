@@ -350,7 +350,8 @@ def rerun_collision(run_id: str) -> dict:
 
 
 # --- world map (v26.2 step 1 spike; CONTRACTS 8.1) ---------------------------------------------------------------
-# worldmap.npz: classes (N,200,200) uint8 (255 = unknown), conf (N,200,200) uint8, t, pose (N,3), cellM, origin, ms.
+# worldmap.npz: classes (N,200,200) uint8 (255 = unknown), conf (N,200,200) uint8, surface / object (N,200,200) uint8 (v26.2.4, the layers
+# on their own), t, pose (N,3), cellM, origin, ms.
 # Built from stored files only (pure numpy, synchronous like the collision pass; never the GPU queue).
 
 _WM_CACHE_RUNS = 1
@@ -411,6 +412,31 @@ def get_worldmap_pose(run_id: str) -> dict:
     wm = _run_worldmap(run_id)
     return {"t": [round(float(v), 4) for v in wm["t"]],
             "pose": [[round(float(a), 3) for a in p] for p in wm["pose"]]}
+
+
+@app.get("/api/runs/{run_id}/worldmap/cell")
+def get_worldmap_cell(run_id: str, i: int = Query(), col: int = Query(), row: int = Query()) -> dict:
+    """One map cell of snapshot ``i`` (v26.2.4, the Lab's click readout): the surface and the object layer on their own, the combined class
+    the collision rules read, their confidences, and the cell's place (metres ahead / right of the user). A layer is ``null`` where nothing was
+    observed (255 in the file). Maps built before v26.2.4 have no layers: ``layers`` is false and ``surface`` / ``object`` are null."""
+    wm = _run_worldmap(run_id)
+    n, h, w = wm["classes"].shape
+    if i < 0 or i >= n:
+        raise HTTPException(404, "No such frame")
+    if not (0 <= row < h and 0 <= col < w):
+        raise HTTPException(422, "cell outside the map")
+    ox, oy = (int(v) for v in wm["origin"])
+    cell = float(wm["cellM"])
+
+    def cls(a):
+        v = int(a[i, row, col])
+        return None if v == 255 else v
+
+    layers = "surface" in wm and "object" in wm
+    return {"i": i, "t": round(float(wm["t"][i]), 4), "col": col, "row": row,
+            "aheadM": round((oy - row) * cell, 2), "rightM": round((col - ox) * cell, 2),
+            "layers": layers, "combined": cls(wm["classes"]), "conf": int(wm["conf"][i, row, col]),
+            "surface": cls(wm["surface"]) if layers else None, "object": cls(wm["object"]) if layers else None}
 
 
 @app.get("/api/runs/{run_id}/worldmap/{index}.png")
