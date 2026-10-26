@@ -2,14 +2,19 @@
 
 One entry per version: what prompted it (usually the user's review in the Lab), the decisions made with the user, the implementation choices and deviations workers made, known limitations, and the measured result. The current rules live in [`../lab/CONTRACTS.md`](../lab/CONTRACTS.md); this file explains **why** they are what they are.
 
-**Ground truth.** The user's Lab reviews are kept as regression fixtures in [`../tests/fixtures/`](../tests/fixtures/) (`4929_review{1,2,3,4,5}.{npz,json}`) and replayed by `tests/test_collision_regression.py`. A version bump wipes the Lab, so the fixtures are the permanent record.
+**Ground truth.** The user's Lab reviews are kept as regression fixtures in [`../tests/fixtures/`](../tests/fixtures/) (`4929_review1`–`6`, `chest0002_crosswalk`, `chest0004_review7`, `chest0004_review8`; `.npz` + `.json` each) and replayed by `tests/test_collision_regression.py` and the per-version tests. A version bump wipes the Lab, so the fixtures are the permanent record.
 
 **How we work** (user decisions, standing):
 - **Versioning:** `v<YY>.<major>.<minor>`, with the minor dropped when 0. v26.1 is collision detection, and v26.1.x are improvements within it. `RnD/VERSION` holds the current version.
 - **Fresh Lab per version:** a version change wipes Lab runs and reviews (no archive). Video proxies and per-recording settings are kept. Reviews are therefore saved as fixtures *before* bumping.
-- **Roles:** the main session (Opus) plans, writes contracts, reviews and verifies. Implementation is done by Sonnet subagent workers; every plan states a worker recommendation. Workers never commit. Commits and pushes happen only when the user asks.
+- **Roles:** the main session (Opus) plans, writes contracts, reviews and verifies. Implementation is done by Sonnet subagent workers; every plan states a worker recommendation. When the user asks for a version ("bump version, commit, push, mail"), the delivery is: tests (unit + E2E) → DECISIONS + CONTRACTS → bump → Lab restart (never while an analysis runs) → commit on the milestone branch → push → a summary mail to the user.
+- **Don't block on results** (user rule, 2026-10-25): when a measurement misses expectations (a ✓ lost, a ✗ back, a target missed), ship the best measured variant anyway and list every miss in the entry's **Known / possible issues** section; offer alternatives in the mail. Only destructive or irreversible steps wait for the user.
+- **Questions by mail:** when the user is away, blocking questions go by email; the done-mail states how a terse answer was interpreted.
+- **Branches:** one branch per milestone (`v26.2`); after it is squash-merged into `main`, the branch is deleted locally and remotely.
 - **Less is more:** context first, then only potential dangers. Every addition to speech must earn its place.
 - **Planning first:** features and changes are planned and approved before being built. Plans are kept in [`plans/`](plans/) (from v26.1.7 on).
+
+**Where we are:** the milestone status, the open issues and the next steps are kept in [`plans/v26.2.md`](plans/v26.2.md) (section *Status and next steps*); each version's own known issues are at the end of its entry below.
 
 ---
 
