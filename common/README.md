@@ -11,7 +11,7 @@ Cross-implementation shared state for HackEye — currently **data, not code**.
   124-class Mapillary Vistas v2.0, so `config/safety_mapping.json` now
   reflects that instead (see its own `_source` field).
   `config/safety_mapping_hackeye48.json` is the same table collapsed to the
-  48-class HackEye merge (`HackEye-Models/.../merges/HackEye26.1-48.yaml`) used by
+  48-class HackEye merge (`HackEye-Models/taxonomies/HackEye26.1-48.yaml`) used by
   `Yolo26m-sem-HackEye26.1-48-1280.pt`; `RnD/` picks whichever mapping's class
   names match the loaded checkpoint. Consumed today by
   `RnD/` (Python). **Not yet consumed by the Swift app** — the Swift
