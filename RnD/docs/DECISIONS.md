@@ -1018,3 +1018,35 @@ The target (0.9 / 0.8) was **not reached**; the user accepted residual false and
 1. **Old maps:** a `worldmap.npz` built before v26.2.4 has no separate layers; its readout shows only the combined class. The Lab was cleaned, so this only matters for maps copied in from elsewhere.
 2. **Nothing behind the user is shown any more.** Rules that need it read the fusion grid, but a reviewer can no longer see what the map remembers behind.
 3. **The DECISIONS entry was written at commit time from the plan and the code change.** The build session left no notes on worker deviations or measurements beyond the tests.
+
+## v26.2.4 follow-up — Open issues panel and a Notes box in the Lab (plan [`plans/v26.2.4-followup-notes.md`](plans/v26.2.4-followup-notes.md); user requests 2026-10-27; no version bump, no Lab wipe)
+
+**Why.** The user asked for "a freeform text box where i'll write reviewes, remarks and fix requests". While that was being built, they added: "above freeform review add open issues group with subgroups as presented before in here where i can click the issues and close and comment on them to be used here, similar to reviews."
+
+**What was built.** Both panels sit at the top of the review panel. Open issues comes first and Notes below it.
+- **Open issues (N open):** the same list and groups as `plans/v26.2.md`:
+  - Open issues O1–O6
+  - Needs your decision 5–9
+  - Untested or technical debt 10–14
+  - Long-term, on hold 15–17
+  - Closed (items 1–4)
+  
+  Each row has Close / Reopen. A click expands its details and a comment box that autosaves like the review notes. The catalogue is `lab/issues.json` in the repo, kept by Claude together with the plan. The user's close, reopen and comment state is `LAB_DIR/issues-state.json`, which survives version wipes. CONTRACTS §9.5.
+- **Notes:** one Lab-wide freeform document, `LAB_DIR/notes.json`, which also survives wipes. Each save keeps the previous text in `notes.prev.json`. It autosaves and retries when offline. **⏱ Insert time** adds `[<recording> @ m:ss.s · run <id>]` at the cursor. A save from a stale tab or device gets a 409 and a Load theirs / Keep mine choice, so nothing is overwritten silently. CONTRACTS §9.4.
+- **Export:** `GET /api/reviews/export` now carries `notes` and `issues` (only the issues the user touched). Claude already reads that export at the start of every Lab task, so notes and issue actions are picked up exactly like reviews. Claude never edits the user's notes. A closed issue is moved to "Closed" in the plan and in the catalogue, with the user's comment as the reason.
+- **No version bump:** this is Lab tooling with no change to analysis output, following the precedent of the v26.1.14 ETA and the v26.1.15 orientation follow-ups. The user's run `5fda5626e808` (0–454 s, 42 min on CPU) was kept.
+
+**Worker notes.**
+- A Sonnet worker built both panels. Opus wrote the plan, the issue catalogue and the docs.
+- Opus added `DELETE /api/issues/{id}/state`. It resets one issue to the catalogue state, so the E2E cleanup leaves no "touched" marks in the export.
+- Opus fixed two E2E test mistakes: a Playwright `arg=` keyword, and opening the collapsed Closed group before clicking Reopen.
+
+**Tests.**
+- Unit: **619 passed, 6 skipped**. New: `test_lab_notes.py` (6) and `test_lab_issues.py` (6).
+- Browser E2E after the Lab restart: **75 passed**, with the new `test_notes.py` (3) and `test_issues.py` (2). The E2E tests back up the user's notes and issue state and restore them.
+- Screenshots were checked at 1500 px and 390 px, with no horizontal scroll.
+
+### Known / possible issues
+1. With every group open, the issue list is long and pushes the notification list down the review panel. The section and each subgroup collapse, and the choice is remembered per browser.
+2. The E2E notes restore writes the notes back, so `notes.json` gets a new `updatedAt` even when the text is unchanged. An open Lab tab may then show the conflict notice once if it had unsaved edits during a test run.
+3. The issue badges use the id as written, so `O1` can look like `01` in the badge font.

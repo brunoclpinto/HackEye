@@ -9,6 +9,8 @@ import { HazardWindow } from "./js/hazards.js";
 import { ClassesPanel } from "./js/classes.js";
 import { EtaTracker, runStartMs } from "./js/eta.js";
 import { SoundsPanel } from "./js/sounds.js";
+import { NotesPanel } from "./js/notes.js";
+import { IssuesPanel } from "./js/issues.js";
 import { WorldMapPanel } from "./js/worldmap.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -28,6 +30,8 @@ const classesPanel = new ClassesPanel(overlay);
 const audio = new AudioEngine(video);
 window.__labAudio = audio;                                  // E2E hook (CONTRACTS 13): the tests set / clear the sound profile on it
 const sounds = new SoundsPanel({ audio, rerun: () => rerunCollision(), hasRun: () => !!S.run });
+const notesPanel = new NotesPanel({ getRecId: () => S.rec?.id ?? null, getTime: () => S.pendingSeek ?? (video.currentTime || 0), getRunId: () => S.run?.id ?? null });
+const issuesPanel = new IssuesPanel();
 const worldmap = new WorldMapPanel({ getStyle: () => overlay.style, getFrames: () => overlay.frames, isPlaying: () => !video.paused });
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
 const reviews = new Reviews({
@@ -156,6 +160,7 @@ async function selectRecording(id, { keepRun = false } = {}) {
   if (!rec) { toast(`Unknown recording ${id}`); return; }
   const changed = S.rec?.id !== id;
   S.rec = rec;
+  notesPanel.recordingChanged();
   if (changed) {
     clearTimeout(S.runPoll);
     $("#runProgress").hidden = true;
@@ -816,6 +821,8 @@ async function init() {
   ]);
   S.config = config; S.models = models;
   sounds.load();
+  notesPanel.load();
+  issuesPanel.load();
   fillMountSelect();
   if (models) {
     for (const m of models.models) $("#modelSel").add(new Option(m.name + (m.default ? " (default)" : ""), m.path));

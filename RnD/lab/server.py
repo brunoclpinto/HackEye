@@ -24,10 +24,10 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
-from fastapi.responses import FileResponse, Response  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from lab import analysis, display, recordings, reviews, sounds, versioning  # noqa: E402
+from lab import analysis, display, issues, notes, recordings, reviews, sounds, versioning  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -729,6 +729,42 @@ def _review_call(fn, *args):
         raise HTTPException(exc.status, exc.message) from None
 
 
+@app.get("/api/notes")
+def get_notes() -> dict:
+    return notes.get()
+
+
+@app.put("/api/notes")
+def put_notes(body: dict):
+    try:
+        return notes.put(body)
+    except notes.NotesError as exc:
+        if exc.status == 409:
+            return JSONResponse({"detail": {"message": exc.message, "current": exc.current}}, status_code=409)
+        raise HTTPException(exc.status, exc.message) from None
+
+
+@app.get("/api/issues")
+def get_issues() -> dict:
+    return issues.list_issues()
+
+
+@app.put("/api/issues/{issue_id}")
+def put_issue(issue_id: str, body: dict) -> dict:
+    try:
+        return issues.update(issue_id, body)
+    except issues.IssuesError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
+@app.delete("/api/issues/{issue_id}/state")
+def reset_issue(issue_id: str) -> dict:
+    try:
+        return issues.reset(issue_id)
+    except issues.IssuesError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
 # (declared before the {name}.json run route; no path clash, kept with its peers)
 @app.get("/api/reviews/export")
 def export_reviews(recording: str | None = None) -> dict:
@@ -737,7 +773,7 @@ def export_reviews(recording: str | None = None) -> dict:
         ids = [recording]
     else:
         ids = reviews.recordings_with_reviews()
-    return reviews.export(ids)
+    return {**reviews.export(ids), "notes": notes.get(), "issues": issues.export_items()}
 
 
 @app.get("/api/recordings/{rec_id}/reviews")

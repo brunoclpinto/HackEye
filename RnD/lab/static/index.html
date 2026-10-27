@@ -218,6 +218,25 @@
   </main>
 
   <aside id="reviewPanel" aria-label="Notification review">
+    <details id="secIssues" class="issues" open>
+      <summary id="issuesTitle">Open issues</summary>
+      <div id="issuesBody"></div>
+    </details>
+    <details id="secNotes" class="notes" open>
+      <summary>Notes</summary>
+      <textarea id="notesText" rows="8" spellcheck="true" aria-label="Notes: reviews, remarks, fix requests" placeholder="Reviews, remarks, fix requests&hellip; (saved on the server, kept across versions)"></textarea>
+      <div class="notes-bar">
+        <button type="button" id="notesStamp" disabled title="Insert the recording, playhead time and run at the cursor">&#9201; Insert time</button>
+        <span id="notesStatus" class="hint" aria-live="polite"></span>
+      </div>
+      <div id="notesConflict" class="notes-conflict" role="alert" hidden>
+        <span>These notes were changed elsewhere (another tab or device).</span>
+        <span class="notes-conflict-btns">
+          <button type="button" id="notesTheirs">Load theirs</button>
+          <button type="button" id="notesMine" class="primary">Keep mine</button>
+        </span>
+      </div>
+    </details>
     <div class="rv-head">
       <h2>Notification review</h2>
       <div id="rvTotal" class="hint rv-total"></div>

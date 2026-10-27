@@ -46,6 +46,9 @@ LAB_DIR/
   runs/<runId>/events.json       collision output (§7.15)
   reviews/<recId>.json           notification reviews / ground truth (§10)
   display/<mapping file>.json    saved Lab view: class→level/show and level colour/opacity overrides (§9.3); survives version wipes
+  notes.json                     the user's freeform notes: reviews, remarks, fix requests (§9.4); survives version wipes
+  notes.prev.json                the notes before the last save (one backup generation)
+  issues-state.json              the user's close / reopen / comment per issue id (§9.5); survives version wipes
   .ultralytics/                  YOLO_CONFIG_DIR
 ```
 
@@ -721,7 +724,11 @@ Endpoints are plain `def` (threadpool). JSON responses are gzip-compressed (`min
 | `POST /api/recordings/{id}/reviews` | annotation | the stored annotation, 201 |
 | `PUT /api/recordings/{id}/reviews/{annId}` | fields | the updated annotation |
 | `DELETE /api/recordings/{id}/reviews/{annId}` | | 204 |
-| `GET /api/reviews/export?recording=<id>` | omit the query for all recordings | the export (§10) |
+| `GET /api/reviews/export?recording=<id>` | omit the query for all recordings | the export (§10), always with the top-level `notes` and `issues` |
+| `GET /api/issues` | | `{"updatedAt", "groups": [{id, title, openCount, items: [catalogue item + status, closedAt, note, noteUpdatedAt, userChanged]}]}` (§9.5) |
+| `PUT /api/issues/{id}` | `{"status"?: "open"\|"closed", "note"?}` (note ≤ 4000 chars) | the item; 404 unknown id, 422 bad values |
+| `GET /api/notes` | | `{"text", "updatedAt"}` (§9.4); `{"text": "", "updatedAt": null}` when there is no file |
+| `PUT /api/notes` | `{"text", "baseUpdatedAt", "force"?}` | the saved doc; **409** `detail = {"message", "current": {text, updatedAt}}` when `baseUpdatedAt` is not the stored `updatedAt` (unless `force`); 422 for non-string text or over 100 000 characters |
 
 - The windowed `hazards`/`frame` endpoints (a full-length run's `hazards.json` is ~120 MB) parse `hazards.json` once per run, keep an LRU of 2 runs and invalidate when the file's mtime/size changes (a collision re-run rewrites it). They return 409 if the run is not done and 404 if `hazards.json` does not exist.
 - The collision pass calls `collision.resolve_settings(config, mount, hfovDeg, cameraHeightM, stepLengthM)` and `collision.run_collision(grids, times, class_names, config, settings, motion)`.
@@ -816,6 +823,21 @@ Collapsible panel under the Overlay panel. It changes **only how the mask is pai
   - Each button is enabled only with unsaved changes in its section. An "unsaved changes" marker and a Discard link show until it is saved.
   - On load, the server-saved view wins over defaults, and a differing local draft wins over the server (marked unsaved).
 
+### 9.5 Open issues panel  (`js/issues.js`, `lab/issues.py`, catalogue `lab/issues.json`; v26.2.4 follow-up)
+A collapsible **Open issues (N open)** section at the very top of `#reviewPanel`, above Notes, where the user closes and comments on the known issues, like reviews.
+- **Catalogue:** `lab/issues.json` in the repo, maintained by Claude together with `docs/plans/v26.2.md` (same ids and groups: `open` O1…, `decision` 5–9, `debt` 10–14, `hold` 15–17, `closed`). Items: `{id, group, title, details: [lines], refs?, status?, closedAt?, reason?}`. Read on every request, so catalogue edits show without a restart.
+- **User state:** `LAB_DIR/issues-state.json` `{id: {status, closedAt, note, noteUpdatedAt}}`, outside the version wipe. The status is the user's when set, else the catalogue's (default open). Closed items are listed in the **Closed** group (collapsed by default) and keep their `group` of origin.
+- **Rows:** id badge, title, **Close** / **Reopen** toggle (optimistic, serial write queue, toast + reload on failure). A click on the title expands the details (`backticks` as code), refs, the reason / origin of closed items, and a note that autosaves 600 ms after the last keystroke and on blur ("saved ✓"), as the review notes. Open/closed sections are remembered in localStorage; the panel re-reads on focus when no note is being edited.
+- **Export:** `issues` in the reviews export lists every item the user touched (closed, reopened or commented) with its catalogue text. Claude acts on it: a closed issue moves to "Closed" in `plans/v26.2.md` and `issues.json` (date, the user's comment as reason); a comment on an open issue is a decision or request. New known issues of a shipped version are added to `issues.json`.
+
+### 9.4 Notes panel  (`js/notes.js`, `lab/notes.py`; v26.2.4 follow-up)
+A collapsible **Notes** section at the top of `#reviewPanel` (open by default; open/closed remembered in localStorage) where the user writes reviews, remarks and fix requests in free text. **One document for the whole Lab**, not per recording.
+- **Box:** `#notesText`, a plain textarea (about 8 rows, vertically resizable). **⏱ Insert time** (`#notesStamp`) inserts `[<recId> @ m:ss.s · run <runId>] ` at the cursor (no run part without a loaded run; disabled without a recording).
+- **Saving:** autosave 800 ms after the last keystroke and on blur (`PUT /api/notes` with `baseUpdatedAt`); status `#notesStatus` (`Saving…` / `Saved ✓ HH:MM` / `Not saved: …, retrying`). Failed saves retry with backoff (2, 4, 8 s, then every 15 s); an unsaved edit is mirrored to localStorage `hackeye.lab.notes.draft`; `beforeunload` warns only while a save is pending.
+- **Conflict:** a 409 (the notes changed on another device or tab) shows a notice with **Load theirs** and **Keep mine** (`force`); nothing is overwritten without a click.
+- **Sync:** on `visibilitychange` (visible) and window `focus`, with no unsaved edit, the box re-reads the server.
+- **Storage:** `LAB_DIR/notes.json` (§2), outside the version wipe (§11); each save first copies the old file to `notes.prev.json`. The export (§10) carries the notes, so they are read with the reviews at the start of every Lab task. Claude never edits or clears them.
+
 ## 10. Reviews: storage, matching, export  (`lab/reviews.py`)
 
 **Purpose:** ground truth for analysing and planning later collision versions. The user judges each notification while watching and adds notifications the system missed. **Reviews belong to the recording, not the run**: what should be notified at a recording time is stable across re-analysis. Each verdict snapshots the event it judged plus the `runId` and `collisionVersion` it came from.
@@ -853,7 +875,9 @@ Collapsible panel under the Overlay panel. It changes **only how the mask is pai
 
 **Export** (`GET /api/reviews/export`):
 ```jsonc
-{"exportedAt": "...", "recordings": [
+{"exportedAt": "...", "notes": {"text": "...", "updatedAt": "..."},   // the Notes panel (§9.4), also with ?recording=
+ "issues": [ ...issues the user closed, reopened or commented (§9.5)... ],
+ "recordings": [
   {"recording": "4929", "summary": {"correct": 3, "incorrect": 1, "remove": 1, "added": 2},
    "annotations": [ { ...annotation...,
       "context": {                                   // from the annotation's run; null if it has no runId or the run's data is gone
@@ -875,7 +899,7 @@ The rule: **each new version cleans up the previous version's Lab content, so it
   - Marker missing → write it with the current version, wipe nothing (first adoption).
   - Marker version == current → nothing.
   - Marker version != current → **wipe the contents** of `LAB_DIR/runs/` and `LAB_DIR/reviews/` (only entries directly inside them; symlinks are unlinked, never followed; a `runs/` or `reviews/` that is itself a symlink is refused), then rewrite the marker and log `[lab] version A -> B: removed N runs, M review files`. If the wipe fails part-way, the marker is kept so the next start retries.
-- **Kept:** `proxies/`, `recordings/` (settings), `.ultralytics/`.
+- **Kept:** `proxies/`, `recordings/` (settings), `display/`, `notes.json` / `notes.prev.json`, `issues-state.json`, `client-log.jsonl`, `.ultralytics/`.
 - **Result** dict: `{"previous", "current", "wiped": bool, "runsRemoved", "reviewFilesRemoved"}`.
 - **`GET /api/version`** → `{"version", "since", "lastWipe": <result of the last check>}`. The UI shows the version in the page header.
 - **Live check:** a background thread re-reads `RnD/VERSION` every 30 s. If it differs from the marker it (1) refuses new submissions and cancels every queued and running job, (2) waits up to 30 s for the worker to go idle, (3) releases the GPU model, (4) runs the wipe. If the worker doesn't go idle in time it logs an error, skips the wipe and retries on the next check. Submissions are accepted again afterwards.
