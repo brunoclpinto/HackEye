@@ -235,3 +235,159 @@ def test_forward_only_snapshot_and_separate_layers():
     # without layers the snapshot is exactly the combined classes (the collision rules read these)
     again = wm.fusion.snapshot(float(wm.times[-1]), wm.last_pose, o)
     assert (again[0] == classes).all()
+
+
+# --- v26.2.5: wall faces, objects win their cells, frame-0 depth scale ---------------------------------------------
+
+FACE_NAMES = ["flat sidewalk", "building", "pole", "person", "nature sky"]
+
+
+def _face_observer(**over):
+    cfg = {**worldmap.load_config(), **over}
+    kind = worldmap.class_kinds(cfg, FACE_NAMES)
+    settings = {"hfovDeg": HFOV, "cameraHeightM": CAM_H, "lateralOffsetM": 0.0, "projection": "rectilinear", "distanceSource": "depth",
+                "objectDistance": "depth"}
+    return worldmap.Observer(cfg, settings, kind, GH, GW, None, FACE_NAMES)
+
+
+def _facade(c0=60, c1=140, wall_m=10.0, seed=3):
+    """A facade 10 m away: the building column stands on the sidewalk, its base row jitters by +-2 rows (segmentation noise), the depth map
+    holds the wall's depth everywhere except the edge pixel of each run, which reads the (nearer) ground below it."""
+    rng = np.random.RandomState(seed)
+    grid = np.full((GH, GW), SKY, dtype=np.uint8)
+    grid[70:, :] = SW
+    depth = np.full((GH, GW), wall_m, dtype=np.float32)
+    for c in range(c0, c1):
+        base = 88 + int(rng.randint(-2, 3))
+        grid[20:base + 1, c] = BLD
+        depth[base, c] = 4.0
+    frame = {"horizon": HORIZON, "scale": 1.0, "depthScale": 1.0, "ego": {}, "dcorr": None}
+    return grid, depth, frame
+
+
+def test_a_noisy_facade_is_one_continuous_line_at_the_wall_distance():
+    ob = _face_observer()
+    grid, depth, frame = _facade()
+    rr, cc, dist, lat = ob.object_bases(grid, frame, depth)
+    assert len(rr) >= 70 and np.all(np.abs(dist - 10.0) < 0.3)             # the edge pixel (4 m) no longer decides the distance
+    obs, _ = ob.observe(grid, frame, depth)
+    rows, cols = np.nonzero(obs == BLD)
+    assert rows.size and np.all(np.abs((ob.orow - rows) * ob.cell - 10.0) < 0.6)
+    line = np.unique(cols[np.abs((ob.orow - rows) * ob.cell - 10.0) < 0.2])
+    assert line.size == line.max() - line.min() + 1                           # no gap along the facade
+
+
+def test_an_outlier_column_is_dropped():
+    ob = _face_observer()
+    grid, depth, frame = _facade()
+    depth[:, 100] = 20.0                                                       # one column reads twice the wall distance (a see-through)
+    rr, cc, dist, _ = ob.object_bases(grid, frame, depth)
+    assert 100 not in set(cc.tolist()) and 99 in set(cc.tolist()) and 101 in set(cc.tolist())
+    assert np.all(np.abs(dist - 10.0) < 0.3)
+
+
+def test_a_base_on_the_sky_is_dropped():
+    ob = _face_observer()
+    grid, depth, frame = _facade()
+    grid[89:100, 80] = SKY                                                     # column 80: the building ends over the sky, not the ground
+    rr, cc, _, _ = ob.object_bases(grid, frame, depth)
+    assert 80 not in set(cc.tolist()) and 79 in set(cc.tolist())
+
+
+def test_a_thin_wall_line_wins_its_cells_against_the_surface():
+    def fusion(share):
+        cfg = {**worldmap.load_config(), "objectWinShare": share}
+        kind = worldmap.class_kinds(cfg, FACE_NAMES)
+        ob = worldmap.Observer(cfg, {"hfovDeg": HFOV, "cameraHeightM": CAM_H, "distanceSource": "ground"}, kind, GH, GW, None, FACE_NAMES)
+        fu = worldmap.Fusion(cfg, kind, np.array([SW, BLD]), (0.0, 0.0))
+        surf = np.full((ob.size, ob.size), worldmap.UNKNOWN, np.uint8)
+        surf[100:180, 60:140] = SW
+        wall = np.full((ob.size, ob.size), worldmap.UNKNOWN, np.uint8)
+        wall[130:133, 60:140] = BLD
+        for _ in range(3):                                                    # the surface is seen in 3 frames, the wall line in 2
+            fu.update(0.0, (0.0, 0.0, 0.0), surf, np.full(surf.shape, 1.0, np.float32), ob)
+        for _ in range(2):
+            fu.update(0.0, (0.0, 0.0, 0.0), wall, np.full(wall.shape, 1.0, np.float32), ob)
+        return fu.snapshot(0.0, (0.0, 0.0, 0.0), ob)
+    cls, conf = fusion(0.35)                                                  # 2 of 5 votes = 0.4 of the cell
+    assert (cls[131, 65:135] == BLD).all() and (cls[140:170, 65:135] == SW).all() and conf[131, 100] > 0
+    cls, _ = fusion(0.0)                                                      # the old argmax: the surface hides the wall
+    assert (cls[131, 65:135] == SW).all()
+
+
+def test_a_frame_without_a_depth_scale_uses_the_nearest_one_of_the_run():
+    wm = make_map(l_wall, 1.0)
+    wm.frames[3]["depthScale"] = 0.4
+    wm.first_ds = worldmap.first_depth_scale(wm.frames)
+    assert wm.first_ds == 0.4
+    assert wm.resolve_frame(wm.frames[0])["depthScale"] == 0.4                # offline: before the first known one, the first known one
+    assert wm.resolve_frame(wm.frames[3])["depthScale"] == 0.4
+    wm.frames[4]["depthScale"] = 0.5
+    assert wm.resolve_frame(wm.frames[4])["depthScale"] == 0.5
+    assert wm.resolve_frame(wm.frames[5])["depthScale"] == 0.5                # later gaps: the last known one
+    online = make_map(l_wall, 1.0)
+    online.first_ds = None
+    assert online.resolve_frame(online.frames[0])["depthScale"] is None       # online, nothing known yet: none
+
+
+def _clear_fusion(factor):
+    cfg = {**worldmap.load_config(), "objectClearFactor": factor, "objectClearMarginM": 0.3, "objectClearRays": 0}
+    kind = worldmap.class_kinds(cfg, FACE_NAMES)
+    ob = worldmap.Observer(cfg, {"hfovDeg": HFOV, "cameraHeightM": CAM_H, "distanceSource": "ground"}, kind, GH, GW, None, FACE_NAMES)
+    return ob, worldmap.Fusion(cfg, kind, np.array([SW, BLD]), (0.0, 0.0))
+
+
+def _obs(ob, ground=None, wall=None):
+    o = np.full((ob.size, ob.size), worldmap.UNKNOWN, np.uint8)
+    if ground:
+        o[ground] = SW
+    if wall:
+        o[wall] = BLD
+    return o
+
+
+def test_a_stale_wall_is_cleared_after_a_few_frames_of_seen_ground():
+    """v26.2.5 negative evidence: object votes in cells the camera now sees as ground shrink by objectClearFactor per frame."""
+    ob, fu = _clear_fusion(0.3)
+    one = np.ones((ob.size, ob.size), np.float32)
+    for _ in range(2):
+        fu.update(0.0, (0.0, 0.0, 0.0), _obs(ob, wall=(slice(130, 133), slice(60, 140))), one, ob)
+    _, _, _, objs = fu.snapshot(0.0, (0.0, 0.0, 0.0), ob, True)
+    assert (objs[131, 70:130] == BLD).all()                                    # the wall is on the map
+    for n in range(4):                                                        # the ground is seen there, with no wall in the frame
+        fu.update(0.0, (0.0, 0.0, 0.0), _obs(ob, ground=(slice(100, 180), slice(60, 140))), one, ob)
+    _, _, _, objs = fu.snapshot(0.0, (0.0, 0.0, 0.0), ob, True)
+    assert (objs[131, 70:130] == worldmap.UNKNOWN).all()                       # 2 x 0.3^4 is below the weight floor
+    cls, _, surf, _ = fu.snapshot(0.0, (0.0, 0.0, 0.0), ob, True)
+    assert (surf[140:170, 70:130] == SW).all()                                 # surface votes are untouched
+
+
+def test_a_current_wall_line_and_its_margin_are_not_cleared_by_the_ground_beside_it():
+    ob, fu = _clear_fusion(0.0)                                                # factor 0: a cleared cell loses every object vote at once
+    one = np.ones((ob.size, ob.size), np.float32)
+    fu.update(0.0, (0.0, 0.0, 0.0), _obs(ob, wall=(slice(116, 134), slice(60, 140))), one, ob)       # an older, thicker wall
+    cur = _obs(ob, ground=(slice(100, 180), slice(60, 140)), wall=(slice(130, 133), slice(60, 140)))   # now: a thin line and ground around it
+    fu.update(0.0, (0.0, 0.0, 0.0), cur, one, ob)
+    _, _, _, objs = fu.snapshot(0.0, (0.0, 0.0, 0.0), ob, True)
+    assert (objs[130:133, 70:130] == BLD).all()                                # the line itself
+    assert (objs[128:130, 70:130] == BLD).all() and (objs[133:135, 70:130] == BLD).all()      # within the 0.3 m margin: kept
+    assert (objs[118:124, 70:130] == worldmap.UNKNOWN).all()                   # further away, ground is seen: cleared
+
+
+def test_a_face_clears_the_free_space_on_its_ray_even_where_no_ground_is_visible():
+    cfg = {**worldmap.load_config(), "objectClearFactor": 0.0, "objectClearRays": 1}
+    kind = worldmap.class_kinds(cfg, FACE_NAMES)
+    ob = worldmap.Observer(cfg, {"hfovDeg": HFOV, "cameraHeightM": CAM_H, "lateralOffsetM": 0.0, "projection": "rectilinear",
+                                 "distanceSource": "depth", "objectDistance": "depth"}, kind, GH, GW, None, FACE_NAMES)
+    fu = worldmap.Fusion(cfg, kind, np.array([SW, BLD]), (0.0, 0.0))
+    stale = np.full((ob.size, ob.size), worldmap.UNKNOWN, np.uint8)
+    stale[148:152, 60:130] = BLD                                               # a stale wall 5 m ahead
+    fu.update(0.0, (0.0, 0.0, 0.0), stale, np.ones(stale.shape, np.float32), ob)
+    grid, depth, frame = _facade(c0=100, c1=140)
+    grid[:, :] = np.where(grid == SW, PERSON, grid)                            # no ground in the frame at all (a mover hides it)
+    obs, w = ob.observe(grid, frame, depth)
+    assert (obs == SW).sum() == 0 and (obs == BLD).any()
+    fu.update(0.1, (0.0, 0.0, 0.0), obs, w, ob)
+    _, _, _, objs = fu.snapshot(0.1, (0.0, 0.0, 0.0), ob, True)
+    assert (objs[149:151, 95:105] != BLD).all()                               # on the face's rays: cleared
+    assert (objs[149:151, 62:75] == BLD).all()                                 # off the rays: kept

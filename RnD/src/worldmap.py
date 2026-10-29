@@ -87,7 +87,8 @@ def integrate_pose(times: np.ndarray, egos: list[dict], coll_cfg: dict) -> np.nd
 class Observer:
     """One frame's ego-centric observation: (classes uint8 [255 = unknown], weight float32)."""
 
-    def __init__(self, cfg: dict, settings: dict, kind: np.ndarray, gh: int, gw: int, gd_cfg: dict | None = None):
+    def __init__(self, cfg: dict, settings: dict, kind: np.ndarray, gh: int, gw: int, gd_cfg: dict | None = None,
+                 class_names: list[str] | None = None):
         snap = cfg["snapshot"]
         self.size = int(snap["size"])
         self.oc, self.orow = int(snap["originCol"]), int(snap["originRow"])
@@ -114,6 +115,20 @@ class Observer:
         self.fwd = ((self.orow - rows) * self.cell).astype(np.float64)       # metres ahead of the user
         self.right = ((cols - self.oc) * self.cell).astype(np.float64)       # metres to the right (body centre line)
         self.weight = (1.0 / (1.0 + (np.maximum(self.fwd, 0.0) / self.range_w) ** 2)).astype(np.float32)
+        # v26.2.5: wall faces (image columns -> one continuous line) and the sky (an object base on sky is not a ground contact)
+        self.face_lut = np.zeros(256, dtype=bool)
+        self.sky_id = -1
+        for cid, name in enumerate(class_names or []):
+            if cid < 256 and name in cfg.get("faceClasses", ()):
+                self.face_lut[cid] = True
+            if name in ("nature sky", "sky"):
+                self.sky_id = cid
+        self.depth_rows = max(1, int(cfg.get("faceDepthRows", 6)))
+        self.smooth_cols = max(0, int(cfg.get("faceSmoothCols", 3)))
+        self.outlier_frac = float(cfg.get("faceOutlierFrac", 0.25))
+        self.join_frac = float(cfg.get("faceJoinFrac", 0.2))
+        self.join_cols = max(1, int(cfg.get("faceJoinCols", 2)))
+        self.thick_m = float(cfg.get("faceThicknessM", 0.3))
 
     # -- helpers ----------------------------------------------------------------------------------------------
     def _lateral(self, x: np.ndarray, d: np.ndarray) -> np.ndarray:
@@ -142,6 +157,10 @@ class Observer:
         base = is_obj & ~below_same
         below_surface = np.zeros_like(is_obj)
         below_surface[:-1] = kgrid[1:] == KIND_SURFACE
+        if self.sky_id >= 0:
+            below_sky = np.zeros_like(is_obj)
+            below_sky[:-1] = cls[1:] == self.sky_id
+            base &= ~below_sky                         # v26.2.5: an object base standing on the sky is not a ground contact
         rr, cc = np.nonzero(base)
         empty = (rr[:0], cc[:0], np.zeros(0), np.zeros(0))
         if not rr.size:
@@ -154,20 +173,15 @@ class Observer:
         if not self.use_horizon and not has_depth:
             return empty                                # horizon off: depth is the only distance
         if has_depth:
-            dh, dw = dmap.shape
-            up = int(self.cfg.get("objectDepthRowsAbove", 0))                 # read the depth inside the object, not at its edge
-            r_d = np.maximum(rr - up, 0)
-            r_d = np.where(grid[r_d, cc] == grid[rr, cc], r_d, rr)
-            v = dmap[np.minimum(dh - 1, ((r_d + 0.5) / gh * dh).astype(int)),
-                     np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(np.float64)
-            dist = float(frame["depthScale"]) * v
+            dist = float(frame["depthScale"]) * self._run_depth(grid, dmap, rr, cc)
             good = np.isfinite(dist) & (dist > 0)
             rep_ = frame.get("dcorr")
-            if self.use_horizon and self.object_mode != "depth" and rep_ is not None:
-                # v26.2.3: the same fusion the collision pass uses for an item (groundfuse.resolve), per base pixel
-                rows_below = (y_b - horizon) * gh
+            if self.use_horizon and self.object_mode != "depth" and rep_ is not None and contact.any():
+                # v26.2.3: the same fusion the collision pass uses for an item (groundfuse.resolve), per base pixel; v26.2.5: only for
+                # bases that stand on a surface, the others keep the depth of their run
                 g_m, sg_m = groundfuse.ground_m(self.geo, y_b * gh, cc + 0.5, horizon, rep_, float(rep_["sigmaRows"]))
-                dist, _ = groundfuse.resolve(np.where(good, dist, 1.0), g_m, sg_m, rows_below, contact, rep_, self.gd, self.object_mode)
+                fused, _ = groundfuse.resolve(np.where(good, dist, 1.0), g_m, sg_m, (y_b - horizon) * gh, contact, rep_, self.gd, self.object_mode)
+                dist = np.where(contact, fused, dist)
         else:                                           # ground distance of the base row; needs the ground below it
             good = contact
             dist = np.where(good, ground, 0.0)
@@ -175,13 +189,134 @@ class Observer:
         rr, cc, dist = rr[good], cc[good], dist[good]
         if not rr.size:
             return empty
+        face = self.face_lut[grid[rr, cc]]
+        if face.any():
+            dist, keep = self._smooth_faces(grid[rr, cc], cc, dist, face)
+            rr, cc, dist = rr[keep], cc[keep], dist[keep]
+            if not rr.size:
+                return empty
         lat_b = self._lateral((cc + 0.5) / gw, dist) + self.lat_off
         return rr, cc, dist, lat_b
+
+    def _run_depth(self, grid: np.ndarray, dmap: np.ndarray, rr: np.ndarray, cc: np.ndarray) -> np.ndarray:
+        """v26.2.5: the depth of every base = the median of the bottom ``faceDepthRows`` rows of its vertical run (same class, same
+        column), in depth-map units. One edge pixel mixes the object's depth with what is below or behind it."""
+        gh, gw = self.gh, self.gw
+        dh, dw = dmap.shape
+        cls = grid[rr, cc]
+        col_d = np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))
+        vals = np.full((self.depth_rows, rr.size), np.nan)
+        alive = np.ones(rr.size, dtype=bool)
+        for k in range(self.depth_rows):
+            r = rr - k
+            alive &= (r >= 0)
+            alive &= grid[np.maximum(r, 0), cc] == cls
+            row_d = np.minimum(dh - 1, ((np.maximum(r, 0) + 0.5) / gh * dh).astype(int))
+            vals[k] = np.where(alive, dmap[row_d, col_d], np.nan)
+        vals[~np.isfinite(vals) | (vals <= 0)] = np.nan
+        with np.errstate(all="ignore"):
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                med = np.nanmedian(vals, axis=0)
+        return med.astype(np.float64)
+
+    def _smooth_faces(self, cls: np.ndarray, cc: np.ndarray, dist: np.ndarray, face: np.ndarray):
+        """v26.2.5: for the face-class bases, a running median of the distance over +-``faceSmoothCols`` image columns of the same class; a
+        point further than ``faceOutlierFrac`` from it is dropped, the others take the median. Returns (dist, keep mask)."""
+        out = dist.copy()
+        keep = np.ones(dist.size, dtype=bool)
+        k = self.smooth_cols
+        for c in np.unique(cls[face]):
+            idx = np.flatnonzero(face & (cls == c))
+            order = idx[np.argsort(cc[idx], kind="stable")]
+            cols = cc[order]
+            # rank of every point inside its column -> a dense (columns, runs) table
+            first = np.searchsorted(cols, cols, side="left")
+            rank = np.arange(cols.size) - first
+            nrank = int(rank.max()) + 1
+            table = np.full((self.gw + 2 * k, nrank), np.nan)
+            table[cols + k, rank] = dist[order]
+            stack = np.concatenate([table[j:j + self.gw] for j in range(2 * k + 1)], axis=1)       # (gw, (2k+1) * runs)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                med = np.nanmedian(stack, axis=1)
+            m = med[cols]
+            bad = np.abs(dist[order] - m) > self.outlier_frac * m
+            keep[order[bad]] = False
+            out[order] = m
+        return out, keep
+
+    def _face_rays(self, cls: np.ndarray, dist: np.ndarray, lat_b: np.ndarray) -> None:
+        """v26.2.5 (optional clearing): the cells on the ray from the user to each face point, from ``minForwardM`` to the face distance minus
+        ``objectClearMarginM``, are free space even where the ground is not visible (hidden behind a mover). Stored in ``self.ray_clear``."""
+        if float(self.cfg.get("objectClearRays", 0)) <= 0:
+            return
+        face = self.face_lut[cls]
+        if not face.any():
+            return
+        margin = float(self.cfg.get("objectClearMarginM", 0.3))
+        d, l = dist[face], lat_b[face]
+        end = d - margin
+        ok = end > self.min_fwd
+        d, l, end = d[ok], l[ok], end[ok]
+        if not d.size:
+            return
+        rng_ = np.hypot(d, l)
+        n = int(np.ceil((end / d * rng_).max() / self.cell)) + 1
+        k = np.arange(1, n + 1)[None, :] * self.cell                         # range along the ray
+        frac = k / rng_[:, None]
+        valid = (frac * d[:, None] >= self.min_fwd) & (frac * d[:, None] <= end[:, None])
+        rows = self.orow - np.rint(frac * d[:, None] / self.cell).astype(np.int64)
+        cols = self.oc + np.rint(frac * l[:, None] / self.cell).astype(np.int64)
+        m = np.zeros((self.size, self.size), dtype=bool)
+        v = valid & (rows >= 0) & (rows < self.size) & (cols >= 0) & (cols < self.size)
+        m[rows[v], cols[v]] = True
+        a = m.copy(); a[1:] |= m[:-1]; a[:-1] |= m[1:]
+        b = a.copy(); b[:, 1:] |= a[:, :-1]; b[:, :-1] |= a[:, 1:]
+        self.ray_clear = b
+
+    def _face_cells(self, grid, rr, cc, dist, lat_b):
+        """v26.2.5: cells of the faces: adjacent image columns of the same face class whose distances differ by less than ``faceJoinFrac``
+        are joined by a straight segment on the map, ``faceThicknessM`` thick, extended away from the user along the ray.
+        Returns (rows, cols, class values, distance keys) of the cells to write."""
+        cls = grid[rr, cc]
+        face = np.flatnonzero(self.face_lut[cls])
+        empty = (np.zeros(0, np.int64),) * 2 + (np.zeros(0, np.uint8), np.zeros(0))
+        if not face.size:
+            return empty
+        order = face[np.lexsort((cc[face], cls[face]))]
+        a, b = order[:-1], order[1:]
+        same = (cls[a] == cls[b]) & (cc[b] - cc[a] >= 1) & (cc[b] - cc[a] <= self.join_cols)
+        same &= np.abs(dist[a] - dist[b]) <= self.join_frac * np.maximum(dist[a], dist[b])
+        # one segment per point (a point with no joined neighbour is a degenerate segment: thickness only)
+        seg_a = np.concatenate([order, a[same]])
+        seg_b = np.concatenate([order, b[same]])
+        n_steps = max(1, int(round(self.thick_m / self.cell)))
+        pf = np.stack([dist[seg_a], dist[seg_b]], 1)                 # forward (m) of the two ends
+        pr = np.stack([lat_b[seg_a], lat_b[seg_b]], 1)               # right (m)
+        n_s = 4
+        t = np.linspace(0.0, 1.0, n_s)
+        f_s = (pf[:, :1] * (1 - t) + pf[:, 1:] * t).ravel()
+        r_s = (pr[:, :1] * (1 - t) + pr[:, 1:] * t).ravel()
+        rng_ = np.maximum(np.hypot(f_s, r_s), 1e-6)
+        rows, cols, vals, keys = [], [], [], []
+        v = np.repeat(cls[seg_a], n_s)
+        for s_ in range(n_steps + 1):
+            off = s_ * self.cell
+            f2, r2 = f_s * (1 + off / rng_), r_s * (1 + off / rng_)
+            rows.append(self.orow - np.rint(f2 / self.cell).astype(np.int64))
+            cols.append(self.oc + np.rint(r2 / self.cell).astype(np.int64))
+            vals.append(v)
+            keys.append(f_s)
+        return np.concatenate(rows), np.concatenate(cols), np.concatenate(vals), np.concatenate(keys)
 
     def observe(self, grid: np.ndarray, frame: dict, dmap: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
         gh, gw, size = self.gh, self.gw, self.size
         obs = np.full((size, size), UNKNOWN, dtype=np.uint8)
         horizon = float(frame["horizon"])
+        self.last_horizon = horizon
         cam_h = self.cam_h * self.ground_scale(frame)
         kgrid = self.kind[grid]
         if not self.use_horizon and dmap is not None and frame.get("depthScale"):
@@ -189,20 +324,28 @@ class Observer:
         else:
             self._ground_surfaces(obs, grid, kgrid, horizon, cam_h)
         # --- object bases ----------------------------------------------------------------------------------
+        self.ray_clear = None
         rr, cc, dist, lat_b = self.object_bases(grid, frame, dmap, kgrid)
         if rr.size:
             col = self.oc + np.rint(lat_b / self.cell).astype(np.int64)
             row = self.orow - np.rint(dist / self.cell).astype(np.int64)
             half = np.minimum(4, np.rint(dist / self.f_px / 2.0 / self.cell).astype(np.int64))   # one image column's width
-            order = np.argsort(-dist)                  # nearer points are written last and win
-            rr, cc, col, row, half = rr[order], cc[order], col[order], row[order], half[order]
             vals = grid[rr, cc]
+            cells_r, cells_c, cells_v, cells_k = [], [], [], []
             for off in range(-4, 5):
                 m = half >= abs(off)
-                cx = col[m] + off
-                ry = row[m]
-                inside = (cx >= 0) & (cx < size) & (ry >= 0) & (ry < size)
-                obs[ry[inside], cx[inside]] = vals[m][inside]
+                cells_r.append(row[m])
+                cells_c.append(col[m] + off)
+                cells_v.append(vals[m])
+                cells_k.append(dist[m])
+            fr_, fc_, fv_, fk_ = self._face_cells(grid, rr, cc, dist, lat_b)       # v26.2.5: the joined, thick wall faces
+            cells_r.append(fr_); cells_c.append(fc_); cells_v.append(fv_); cells_k.append(fk_)
+            ry, cx, vv, kk = (np.concatenate(x) for x in (cells_r, cells_c, cells_v, cells_k))
+            order = np.argsort(-kk, kind="stable")        # nearer points are written last and win
+            ry, cx, vv = ry[order], cx[order], vv[order]
+            inside = (cx >= 0) & (cx < size) & (ry >= 0) & (ry < size)
+            obs[ry[inside], cx[inside]] = vv[inside]
+            self._face_rays(grid[rr, cc], dist, lat_b)
         w = np.where(obs != UNKNOWN, self.weight, 0.0).astype(np.float32)
         gain = float(self.cfg.get("objectVoteGain", 1.0))        # an object base is one thin line among many surface cells
         if gain != 1.0:
@@ -359,7 +502,9 @@ class Fusion:
         ok = (col >= 0) & (col < size) & (row >= 0) & (row < size)
         col, row = np.clip(col, 0, size - 1), np.clip(row, 0, size - 1)
         cls = obs[row, col]
+        inb = ok.copy()
         ok &= cls != UNKNOWN
+        self._clear_stale_objects(obs, observer, row, col, ii, jj, inb, getattr(observer, 'last_horizon', None))
         k = self.lut[cls]
         ok &= k >= 0
         if not ok.any():
@@ -367,6 +512,36 @@ class Fusion:
         amp = w[row, col] * np.float32(math.exp(self.lam * (t - self.t_base)))
         self.votes[k[ok], ii[ok], jj[ok]] += amp[ok]
         self.count[ii[ok], jj[ok]] += 1
+
+    def _clear_stale_objects(self, obs, observer, row, col, ii, jj, ok, frame_horizon=None) -> None:
+        """v26.2.5 negative evidence: a world cell that the current frame sees as a surface (visible ground) loses ``1 - objectClearFactor``
+        of its object votes, except within ``objectClearMarginM`` of a cell the frame writes as an object (the horizon-projected ground and
+        the depth-placed wall disagree by a few tenths). Surface votes are untouched; the stored (pre-multiplied) votes scale linearly."""
+        f = float(self.cfg.get("objectClearFactor", 1.0))
+        obj_layers = np.flatnonzero(~self.is_surface)
+        if f >= 1.0 or not obj_layers.size:
+            return
+        kgrid = observer.kind[obs]
+        is_obj = (kgrid == KIND_OBJECT) & (obs != UNKNOWN)
+        near = is_obj.copy()
+        m = int(round(float(self.cfg.get("objectClearMarginM", 0.3)) / self.cell))
+        for _ in range(m):                                   # square dilation by the margin
+            a = near.copy()
+            a[1:] |= near[:-1]; a[:-1] |= near[1:]
+            b = a.copy()
+            b[:, 1:] |= a[:, :-1]; b[:, :-1] |= a[:, 1:]
+            near = b
+        clear = (kgrid == KIND_SURFACE) & (obs != UNKNOWN)
+        if getattr(observer, "ray_clear", None) is not None:
+            clear |= observer.ray_clear
+        clear &= ~near
+        # an object whose base left the bottom of the image stands just nearer than the nearest visible ground: keep a band at the bottom edge
+        d_bottom = float(observer.cam_h) * observer.f_px / (max(1.0 - float(frame_horizon), 1e-6) * observer.gh) if frame_horizon is not None else 0.0
+        clear &= observer.fwd >= d_bottom + float(self.cfg.get("objectClearBottomM", 0.5))
+        sel = ok & clear[row, col]
+        if sel.any():
+            for k in obj_layers:
+                self.votes[k, ii[sel], jj[sel]] *= np.float32(f)
 
     def _decay(self, t: float) -> float:
         return math.exp(-self.lam * (t - self.t_base))
@@ -385,6 +560,19 @@ class Fusion:
         known = inside & (total > self.floor)
         classes = np.where(known, self.classes[top], UNKNOWN).astype(np.uint8)
         conf = np.where(known, 255.0 * np.minimum(1.0, total / self.full) * share, 0.0)
+        # v26.2.5: a thin wall line is not hidden by the big surface area projected through it: a cell is the winning object class
+        # when the object layers hold at least ``objectWinShare`` of its (decayed) weight, above the floor
+        win = float(self.cfg.get("objectWinShare", 0.0))
+        if win > 0.0 and (~self.is_surface).any() and self.is_surface.any():
+            vo = v[~self.is_surface]
+            o_raw = vo.sum(axis=0)
+            o_dec = o_raw * decay
+            o_win = inside & (o_dec > self.floor) & (o_raw >= win * np.maximum(v.sum(axis=0), 1e-12)) & self.is_surface[top]
+            if o_win.any():
+                o_top = vo.argmax(axis=0)
+                o_share = np.take_along_axis(vo, o_top[None], 0)[0] / np.maximum(o_raw, 1e-12)
+                classes = np.where(o_win, self.classes[~self.is_surface][o_top], classes).astype(np.uint8)
+                conf = np.where(o_win, 255.0 * np.minimum(1.0, o_dec / self.full) * o_share, conf)
         if not layers:
             return classes, conf.astype(np.uint8)
         out = []
@@ -414,6 +602,14 @@ def frames_from_hazards(hazards: dict) -> list[dict]:
     return out
 
 
+def first_depth_scale(frames: list[dict] | None) -> float | None:
+    """The first known depth scale of a run (None when it has none)."""
+    for f in frames or ():
+        if f.get("depthScale"):
+            return float(f["depthScale"])
+    return None
+
+
 def settings_from_hazards(hazards: dict) -> dict:
     s = hazards["settings"]
     return {"hfovDeg": s["hfovDeg"], "cameraHeightM": s["cameraHeightM"], "lateralOffsetM": s.get("lateralOffsetM", 0.0),
@@ -433,11 +629,13 @@ class WorldMap:
         self.kind = class_kinds(self.cfg, list(class_names))
         n, gh, gw = grids.shape
         self.n, self.gh, self.gw = n, gh, gw
-        self.observer = Observer(self.cfg, settings, self.kind, gh, gw, groundfuse.settings((coll_cfg or {}).get("distance", {})))
+        self.observer = Observer(self.cfg, settings, self.kind, gh, gw, groundfuse.settings((coll_cfg or {}).get("distance", {})), list(class_names))
         self.pose_tracker = PoseTracker(coll_cfg)
         self.pose = np.zeros((n, 3))
         present = np.flatnonzero(np.bincount(np.asarray(grids).ravel(), minlength=256))
         self.fusion = Fusion(self.cfg, self.kind, present, (0.0, 0.0))
+        self.last_ds: float | None = None
+        self.first_ds = first_depth_scale(frames)
         self.depth_t = self.depth = None
         if depth is not None:
             self.depth_t, self.depth = np.asarray(depth["t"], dtype=float), depth["depth"]
@@ -451,13 +649,23 @@ class WorldMap:
             j -= 1
         return np.asarray(self.depth[j])
 
+    def resolve_frame(self, frame: dict) -> dict:
+        """v26.2.5: a frame without a depth scale (the plane anchor needs a few frames) uses the nearest known scale of the run: the last
+        known one, or, before any (offline, the whole run is known), the first known one of the run."""
+        ds = frame.get("depthScale")
+        if ds:
+            self.last_ds = float(ds)
+            return frame
+        ds = self.last_ds if self.last_ds is not None else self.first_ds
+        return frame if not ds else {**frame, "depthScale": ds}
+
     def step(self, i: int, frame: dict | None = None, dmap=None, layers: bool = False):
         """Frame i: pose + observation + fusion + snapshot. Returns (obs, snapshot classes, conf, ms).
         ``frame`` = {"horizon", "scale", "depthScale", "ego"} (default: the stored one of ``frames``); ``dmap`` the depth map of
         the frame (default: the nearest one of the run's depth). ``layers``: also keep the separate surface / object layers in
         ``self.last_layers`` (surface, object), for the Lab's cell readout; the collision pass does not need them."""
         t0 = time.perf_counter()
-        frame = frame if frame is not None else self.frames[i]
+        frame = self.resolve_frame(frame if frame is not None else self.frames[i])
         dmap = dmap if dmap is not None else self.depth_map(i)
         t = float(self.times[i])
         pose = self.pose_tracker.advance(t, frame["ego"])

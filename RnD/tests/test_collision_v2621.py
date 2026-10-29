@@ -30,6 +30,19 @@ def _ground_depth(n):
     return {"t": np.arange(n) / FPS, "depth": np.repeat(z[None, :, None], n, axis=0).repeat(W, axis=2), "units": "metric", "anchor": "none"}
 
 
+def _vertical_objects(frames, depth, cls="pole"):
+    """v26.2.5: the world map reads an object's depth as the median of the bottom rows of its run (a vertical object has one depth), so a
+    synthetic depth map must give an object column the depth of its base row, not the ground distance of every row it covers."""
+    z = depth["depth"].copy()
+    cid = ID[cls]
+    for i, g in enumerate(frames):
+        m = g == cid
+        for c in np.flatnonzero(m.any(axis=0)):
+            rows = np.flatnonzero(m[:, c])
+            z[i, rows, c] = z[i, rows.max(), c]
+    return {**depth, "depth": z}
+
+
 DSET = dataclasses.replace(SETTINGS, distance_source="depth")
 
 
@@ -46,7 +59,7 @@ FPS = 10.0
 
 def test_config_keys():
     r = CONFIG["roles"]
-    assert CONFIG["version"] == "v26.2.4" and r["staticSource"] == "map"
+    assert CONFIG["version"] == "v26.2.5" and r["staticSource"] == "map"
     # v26.2.2: the building section gates (mapMinCells, mapCorridorMarginM, mapMinAgeSeconds, mapMinClosingMps) are gone: the map judges every wall-like
     # class with the face / edge test (tests/test_collision_v2622.py)
     assert "mapMinCells" not in r and "mapMinClosingMps" not in r and r["mapJudgedClasses"]
@@ -74,7 +87,8 @@ def _leaving_pole_frames(seconds=8.0, d0=9.0, leave_d=1.45):
 
 def test_pole_leaving_the_bottom_of_the_frame_keeps_beeping_until_passed():
     frames = _leaving_pole_frames()
-    doc, ev = _run(frames, mot=motion(8))
+    dep = _vertical_objects(frames, _ground_depth(len(frames)))
+    doc, ev = _run(frames, mot=motion(8), depth=dep)
     ghosts = [(f["t"], h) for f in doc["frames"] for h in f["hazards"] if h.get("ghost")]
     assert ghosts, "the pole is followed on the map after the image lost it"
     assert all(h["className"] == "pole" and h["role"] == "danger" and h["collision"] for _, h in ghosts)
@@ -85,7 +99,7 @@ def test_pole_leaving_the_bottom_of_the_frame_keeps_beeping_until_passed():
     assert min(t for t, _ in ghosts) <= last_image + 0.5
     tones = [e for e in ev["events"] if e["type"] == "tone" and e["kind"].startswith("collision") and e["t"] > last_image + 0.6]
     assert tones, "the collision beeps continue after the image lost the pole"
-    img_doc, img_ev = _run(frames, mot=motion(8), config=IMAGE)
+    img_doc, img_ev = _run(frames, mot=motion(8), config=IMAGE, depth=dep)
     assert not [1 for f in img_doc["frames"] for h in f["hazards"] if h.get("ghost")]
     img_tones = [e for e in img_ev["events"] if e["type"] == "tone" and e["kind"].startswith("collision") and e["t"] > last_image + 0.6]
     assert len(tones) >= 4 and not img_tones
@@ -138,17 +152,19 @@ def test_review7_the_building_section_is_still_spoken_and_beeps(review7, review7
     old = [e for e in review7_image[2][0]["events"] if e["type"] == "speech" and e["text"].startswith("building at 12 in")]
     assert [round(e["t"], 2) for e in old] == [11.83]                             # v26.2.0 (lane part)
     ev = review7[2][0]["events"]
-    sp = [e for e in ev if e["type"] == "speech" and e["text"].startswith("building at 11:45 in")]
+    sp = [e for e in ev if e["type"] == "speech" and e["text"].startswith("building at 1") and "in" in e["text"] and 12 <= e["t"] <= 14]
     # v26.2.2 (re-pinned): the face / edge test judges it; still 13.50 "in 8" (the first face frame is 12.33 at 10 steps, the speech policy needs the
     # confirmed face), the clock reads 11:45 instead of 12 because the nearest FACE cell, not the nearest corridor cell, is the measurement
-    assert [(round(e["t"], 2), e["text"]) for e in sp] == [(13.5, "building at 11:45 in 8")]
+    # v26.2.5 (re-pinned): the facade is a continuous face line on the map, the clock reads 12 (the face line's nearest cell) instead of 11:45;
+    # same time and steps (13.50, 8)
+    assert [(round(e["t"], 2), e["text"]) for e in sp] == [(13.5, "building at 12 in 8")]
     beeps = [e for e in ev if e["type"] == "beeps" and e["kind"] == "collision-center" and "building" in e["text"] and 14.0 <= e["t"] <= 17.0]
     assert beeps and beeps[0]["minSteps"] <= 5               # 15.33 "center · building at 12:15 · 5→4 steps" (the clock moved with the measurement)
     # the wall is judged on the map: face cells in the corridor, its own image contact point kept for the Lab, no lane part item
     frames = review7[2][0]["doc"]["frames"]
     mp = [(f["t"], h) for f in frames for h in f["hazards"] if h["className"] == "building" and h.get("mapCells") and h["role"] == "danger"]
     assert mp and all(h["source"] == "map" and h["faceEdge"]["verdict"] == "face" and h["faceEdge"]["face"] >= CONFIG["roles"]["faceEdge"]["minFaceCells"] for _, h in mp)
-    assert min(t for t, h in mp) == pytest.approx(12.33, abs=0.2)
+    assert min(t for t, h in mp) == pytest.approx(11.5, abs=0.2)             # v26.2.5: the facade line is on the map earlier (was 12.33)
     assert abs(mp[0][1]["lateralM"]) <= 0.6 and mp[0][1]["stepsTo"] <= CONFIG["roles"]["dangerSteps"]
     assert not any(h.get("lanePart") for f in frames for h in f["hazards"])
     assert all("corridor" in f for f in frames)

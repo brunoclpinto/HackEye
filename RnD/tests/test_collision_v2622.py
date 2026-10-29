@@ -30,7 +30,7 @@ def _stub_map(mode="snap"):
 
 def test_config():
     r = CONFIG["roles"]
-    assert CONFIG["version"] == "v26.2.4"
+    assert CONFIG["version"] == "v26.2.5"
     assert r["staticSource"] == "map" and r["faceEdge"]["enabled"] and r["faceEdge"]["minFaceCells"] == 3
     assert "building" in r["mapJudgedClasses"] and "mapMinCells" not in r and "mapMinClosingMps" not in r
     assert r["insideSolid"]["mode"] == "snap" and CONFIG["coast"]["enabled"]

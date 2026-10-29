@@ -1050,3 +1050,39 @@ The target (0.9 / 0.8) was **not reached**; the user accepted residual false and
 1. With every group open, the issue list is long and pushes the notification list down the review panel. The section and each subgroup collapse, and the choice is remembered per browser.
 2. The E2E notes restore writes the notes back, so `notes.json` gets a new `updatedAt` even when the text is unchanged. An open Lab tab may then show the conflict notice once if it had unsaved edits during a test run.
 3. The issue badges use the id as written, so `O1` can look like `01` in the badge font.
+
+## v26.2.5 — walls on the world map as solid faces, stale walls cleared (plan [`plans/v26.2.5.md`](plans/v26.2.5.md); user note in the Lab Notes box 2026-10-29; collision + worldmap version bumped, Lab wiped: run `5fda5626e808` removed)
+
+**Why.** The user's note on run `5fda5626e808` (Chest-center-0004, ground+depth): "at time 0, building is detect on the right with representation of boundary on video image but only a few pixels on the world map … world map at around 1:45 and 2:00 should items when its definitly a wall like the bounding lines show, correct this issues." No speech reviews were exported, so there were no fixtures to save.
+
+**Diagnosis (Opus).** (1) Frames 0–1 had no `depthScale` (the plane anchor needs 3 fits), so at 0 s the facade gave only horizon-placed contact bases: 72 cells. (2) Each object base was one edge pixel read alone; edge depth mixes the wall with what is below or behind it, and most bases sat on a sign, pole, tree, car or sky rather than the ground, so walls landed as dashes from 3 to 20 m. (3) The combined map's argmax let surface votes hide the thin wall line (115 s: 8,570 object cells → 1,492 shown). (4) Fusion only ever added object votes, so jittered faces accumulated into a cloud over the 6 s half-life.
+
+**What was built (Sonnet worker, Opus review).**
+- **Frame 0–1 depth scale:** the collision pass reports the frame's own plane-fit scale as `depthScale` on frames 0–1 (the anchor `a_now` itself is unchanged, so ego speed and items are not affected); the world map falls back to the nearest known scale of the run when a frame has none.
+- **Wall faces (`faceClasses`):** per image column, the distance is the median depth of the bottom `faceDepthRows` 6 rows of the run (all object bases use this median now); ground+depth fusion only for bases standing on a surface; bases on sky dropped; running median over ±`faceSmoothCols` 3 columns with an outlier drop (`faceOutlierFrac` 0.25); adjacent columns within `faceJoinFrac` 0.2 (gap ≤ `faceJoinCols` 2) are joined by a rasterised line `faceThicknessM` 0.3 m thick.
+- **Objects win their cells:** an object class wins a combined cell when the object votes are ≥ `objectWinShare` 0.35 of the total. Its `conf` is from the object weight (otherwise it would sit under `mapMinConf`).
+- **Negative evidence:** cells the current frame sees as ground multiply object votes by `objectClearFactor` 0.3, and so do the cells along each face column's ray up to the face minus `objectClearMarginM` 0.3 (`objectClearRays`). Cells within the margin of the frame's own objects, and cells nearer than the last image row's ground + `objectClearBottomM` 0.5 (objects whose base just left the image, e.g. a pole being passed), are not cleared.
+
+**Before → after on run `5fda5626e808`** (map built in memory; scatter = building + wall cells > 0.5 m from up to 3 RANSAC lines):
+
+| t (s) | combined building | combined wall | fused object cells | fused scatter |
+|---|---|---|---|---|
+| 0 | 72 → 420 | 0 → 12 | 72 → 432 | 0 → 19 |
+| 1 | 957 → 1313 | 6 → 9 | 1073 → 1328 | 461 → 314 |
+| 3 | 1941 → 2048 | 15 → 19 | 2415 → 2119 | 1235 → 754 |
+| 105 | 2248 → 2138 | 512 → 194 | 4468 → 2304 | 3045 → 1101 |
+| 115 | 1492 → 1296 | 15 → 41 | 8647 → 1860 | 6141 → 898 |
+| 120 | 3376 → 4247 | 463 → 538 | 9056 → 5798 | 6258 → 3187 |
+
+At 0 s the right facade is a continuous line; at 105 s the walls are thin lines at 15–16 m instead of a cloud. World map 6.8–7.3 → 10.8 ms/frame mean (p95 7.5–9.1 → 12.5).
+
+**Collision output.** `chest0004_review7` window 0: 13.50 "building at 11:45 in 8" → "building at 12 in 8" (same time and steps); beep 15.33 "5→4 steps at 12:15" → 15.67 "5→4 steps at 12". The first map face of the 10.9 s building is at ~11.5 s (was 12.33). Goldens re-pinned (`GOLDEN_V2622` `7cac303f…`, `GOLDEN_CHEST0004_REVIEW7` `d301fe13…`; both also carry `depthScale` on frames 0–1). The 4929 reviews and every other pinned test are unchanged. Worker deviations: frames 0–1 (not only 0) lacked a scale; the object-win `conf` rule above; a synthetic pole fixture got vertical object depth (`_vertical_objects`) because the bottom-rows median misreads a depth map that gives every row the ground distance; the ray clearing and the bottom band were needed (with ground clearing only, scatter stayed 3408 / 6216 at 105 / 120 s).
+
+**Tests.** Unit **629 passed, 6 skipped** (8 new: noisy facade → one line, outlier column dropped, base on sky dropped, thin wall wins against surface, depth-scale fallback, frame-0 scale seeding, stale wall cleared by seen ground, current wall protected by the margin, face ray clears free space). Browser E2E **75 passed**.
+
+### Known / possible issues (shipped on purpose; user rule: don't block)
+1. **Stale votes where nothing is seen:** cells the current frame neither sees as ground nor covers with a face ray keep old wall votes until they decay (120 s: a wedge behind the hand holding the cane).
+2. **Fewer wall cells at 105 s:** barrier-wall cells in the combined map are 194 (512 before). Most of the old ones were the stale cloud, but some real wall may be cleared too; not checked cell by cell.
+3. **Far false faces are more visible:** faces are now lines, so the DA2 far-range squash (O1) draws clearer false walls at 6–12 m.
+4. **Map cost +50%:** 10.8 ms/frame mean (was ~7).
+5. **Horizon off:** the `objectClearBottomM` band uses the horizon formula, an approximation when the run has the horizon switched off.

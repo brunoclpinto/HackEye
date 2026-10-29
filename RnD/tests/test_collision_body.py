@@ -190,6 +190,18 @@ def test_plane_anchor_recovers_scale_pitch_and_freezes(projection):
 
 
 @pytest.mark.parametrize("projection", ["rectilinear", "fisheye"])
+def test_first_frames_carry_the_depth_scale_of_their_own_plane_fit(projection):
+    """v26.2.5: the anchor itself is usable from the 3rd valid frame, but frames 0-1 report the scale of their own fit (the world map reads
+    it; without it the first facade was placed by the horizon alone)."""
+    doc, _ = plane_run(plane_doc(8, projection), static_frames(8), projection)
+    egs = [f["ego"] for f in doc["frames"]]
+    assert egs[0]["depthAnchor"] is None and egs[1]["depthAnchor"] is None          # the anchor and everything else is unchanged
+    for e in egs[:2]:
+        assert e["depthScale"] == pytest.approx(1 / 2.2, rel=0.08)
+    assert egs[2]["depthScale"] == pytest.approx(egs[0]["depthScale"], rel=0.08)
+
+
+@pytest.mark.parametrize("projection", ["rectilinear", "fisheye"])
 def test_wall_clutter_is_rejected_as_outliers(projection):
     frames = static_frames(10)
     clean, _ = plane_run(plane_doc(10, projection, noise=0.0), frames, projection)

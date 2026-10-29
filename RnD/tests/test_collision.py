@@ -1014,7 +1014,7 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames", "coast"}
-    assert doc["version"] == "v26.2.4" == ev["version"]
+    assert doc["version"] == "v26.2.5" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM",
                                   "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM", "objectDistance", "useHorizon"}      # v26.2.3: the object distance / horizon switch
     assert (doc["gridW"], doc["gridH"]) == (W, H)

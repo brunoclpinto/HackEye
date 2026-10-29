@@ -3068,6 +3068,7 @@ class _StaticMap:
 
     def update(self, i: int, frame: dict, dmap, grid: np.ndarray) -> None:
         """Fuse frame i (pose, observation, votes, snapshot) and index the object-base points of its image."""
+        frame = self.wm.resolve_frame(frame)        # v26.2.5: no depth scale yet -> the last known one
         _, self.classes, self.conf, self.ms = self.wm.step(i, frame, dmap)
         self.frame_i = i
         self.stationary = bool((frame.get("ego") or {}).get("stationary"))
@@ -3681,6 +3682,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         turned = ego.update_heading(heading, t, config["pathChange"], dt)
 
         depth_scale_out = None if depth_maps is None or ds is None else _r(ds * a_now, 4) if relative else ds
+        if depth_scale_out is None and depth_maps is not None and plane and anchor.fit is not None and anchor.fit.height_units > 0:
+            # v26.2.5: the plane anchor is usable from ``initialAnchorMinFrames`` valid fits; until then the frame's own fit seeds the scale
+            # the world map reads (frames 0-1 had none, so the map placed the first facade by the horizon alone). Nothing else reads it.
+            depth_scale_out = _r(settings.camera_height_m / anchor.fit.height_units * level, 4) if level else None
         corridor_out = None
         if smap is not None:
             # v26.2.1: the map of this frame (causal), fed with the same ego values the hazards.json stores, so that the offline

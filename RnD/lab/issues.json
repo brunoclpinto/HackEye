@@ -1,6 +1,6 @@
 {
   "_about": "Issue catalogue shown in the Lab's Open issues panel (CONTRACTS 9.5). Maintained by Claude alongside plans/v26.2.md; the user's close/reopen/comments live in LAB_DIR/issues-state.json. Keep ids stable.",
-  "updatedAt": "2026-10-27",
+  "updatedAt": "2026-10-29",
   "groups": [
     {"id": "open", "title": "Open issues"},
     {"id": "decision", "title": "Needs your decision"},
@@ -22,6 +22,10 @@
      "details": ["ground-contact / ground+depth lose ~12 ✓, mostly at step thresholds tuned on raw depth."]},
     {"id": "O6", "group": "open", "title": "Snap and coasting side effects",
      "details": ["A pole in front of a facade can be pulled to a nearer wall corner.", "Coasting can announce a returning vehicle one frame early."]},
+    {"id": "O7", "group": "open", "title": "World map: stale wall votes where nothing is seen (v26.2.5)",
+     "details": ["Cells the current frame neither sees as ground nor covers with a face ray keep old wall votes until they decay (Chest-0004 120 s: a wedge behind the hand)."]},
+    {"id": "O8", "group": "open", "title": "World map: clearing may remove some real wall (v26.2.5)",
+     "details": ["At 105 s barrier-wall cells dropped 512 → 194; most were the stale cloud, not checked cell by cell.", "Far false faces from the depth squash (O1) are now drawn as clearer lines."]},
 
     {"id": "5", "group": "decision", "title": "Beeps near people",
      "details": ["A person within 5 steps with unknown motion beeps, even 2–3 steps beside the path (`unknownMotionBeepSteps`, `movingLaneHalfWidthM`; v26.1.12).", "A receding person we catch up on gets no beeps; you ticked those at 43.2 s."]},
@@ -51,6 +55,8 @@
      "details": ["Only after the Lab logic matures (user, 2026-10-17). The mobile depth model path also belongs here."]},
     {"id": "17", "group": "hold", "title": "HackEye-Models curation and retrain",
      "details": ["Curate frames with the X model, then retrain the app model (720p/l is the candidate)."]},
+    {"id": "18", "group": "hold", "title": "Device calibration profiles",
+     "details": ["Per device + lens mode + mount: lens intrinsics (checkerboard clip), mount height/tilt, raw-depth → metres correction curve (chalk marks 2–20 m).", "Gives a correct scale from frame 0 and attacks the far-depth squash (O1); per-frame scale still refines on top.", "Apple app: ARKit motion tracking gives metric scale per frame (no LiDAR needed)."]},
 
     {"id": "1", "group": "decision", "title": "The 10.9 s building",
      "details": ["Now handled by the map; the timing is tracked under O3."],

@@ -20,7 +20,7 @@ APPROACH = dict(moving=True, approaching=True, closing=1.5)
 
 
 def test_the_proximity_numbers():
-    assert CONFIG["version"] == "v26.2.4"                    # (the follow-up kept v26.1.13)
+    assert CONFIG["version"] == "v26.2.5"                    # (the follow-up kept v26.1.13)
     assert ROLES["proximitySteps"] == 5 and ROLES["proximityLateralM"] == 2.6
     p, snd = TONES["proximity"], TONES["sounds"]
     assert snd["proximity"]["pitchHz"] == 440 and snd["collision-center"]["pitchHz"] == 880
