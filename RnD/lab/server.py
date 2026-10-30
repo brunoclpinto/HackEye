@@ -340,11 +340,10 @@ def rerun_collision(run_id: str) -> dict:
         raise HTTPException(409, f"Run is {run['status']}, not done")
     _collision()
     result = analysis.collision_pass(run_id)
-    if (analysis.run_dir(run_id) / "worldmap.npz").exists():     # v26.2.3: a built map would be stale (object distance / horizon switch): rebuild it
-        try:
-            analysis.worldmap_pass(run_id)
-        except Exception as exc:  # noqa: BLE001 - the collision result stands
-            analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
+    try:      # v26.2.6: the map is always rebuilt after a collision re-run (object distance / horizon switch change it)
+        analysis.worldmap_pass(run_id)
+    except Exception as exc:  # noqa: BLE001 - the collision result stands
+        analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
     return {"version": result["version"], "elapsedSeconds": result["elapsedSeconds"],
             "hazards": f"/api/runs/{run_id}/hazards.json", "events": f"/api/runs/{run_id}/events.json"}
 

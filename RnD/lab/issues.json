@@ -1,6 +1,6 @@
 {
   "_about": "Issue catalogue shown in the Lab's Open issues panel (CONTRACTS 9.5). Maintained by Claude alongside plans/v26.2.md; the user's close/reopen/comments live in LAB_DIR/issues-state.json. Keep ids stable.",
-  "updatedAt": "2026-10-29",
+  "updatedAt": "2026-10-30",
   "groups": [
     {"id": "open", "title": "Open issues"},
     {"id": "decision", "title": "Needs your decision"},
@@ -26,6 +26,8 @@
      "details": ["Cells the current frame neither sees as ground nor covers with a face ray keep old wall votes until they decay (Chest-0004 120 s: a wedge behind the hand)."]},
     {"id": "O8", "group": "open", "title": "World map: clearing may remove some real wall (v26.2.5)",
      "details": ["At 105 s barrier-wall cells dropped 512 → 194; most were the stale cloud, not checked cell by cell.", "Far false faces from the depth squash (O1) are now drawn as clearer lines."]},
+    {"id": "O9", "group": "open", "title": "World map: small objects missing from the object layer (v26.2.6)",
+     "details": ["Chest-0004 0 s: the sidewalk-obstacle item at 1.6 m ahead / 0.6 m right has no object cells on the map (empty / sidewalk there).", "Since v26.2.6 a click on its marker reads it, but the map cells and the collision rules that read the map still miss it."]},
 
     {"id": "5", "group": "decision", "title": "Beeps near people",
      "details": ["A person within 5 steps with unknown motion beeps, even 2–3 steps beside the path (`unknownMotionBeepSteps`, `movingLaneHalfWidthM`; v26.1.12).", "A receding person we catch up on gets no beeps; you ticked those at 43.2 s."]},

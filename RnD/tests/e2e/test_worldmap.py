@@ -1,5 +1,7 @@
-"""World map panel (v26.2 step 1 spike, CONTRACTS 8.1 / 9): build on the session's own run, snapshot request 200, the canvas draws."""
+"""World map panel (v26.2 step 1 spike, CONTRACTS 8.1 / 9): the map exists on the session's own run (built with it, v26.2.6), snapshot request 200, the canvas draws."""
 import re
+
+import pytest
 from conftest import BASE, annotations, api, open_lab, seek
 from test_lab import _session_run  # noqa: F401  (the session-analysed run; autouse here too so -k worldmap works alone)
 import test_lab
@@ -18,12 +20,8 @@ def test_world_map_panel_builds_and_draws(page):
     open_lab(page, rec, t=13, run=run)
     page.wait_for_selector("#wmCanvas:visible")   # always visible since v26.2.0 (no collapsed panel)
     meta = api(f"/api/runs/{run}/worldmap")
-    if not meta["exists"]:
-        page.wait_for_selector("#wmBuild:visible")
-        page.click("#wmBuild")
-        page.wait_for_function("() => document.querySelector('#wmInfo').textContent.includes('Built in')")
-        assert not page.is_visible("#wmBuild")
-    assert api(f"/api/runs/{run}/worldmap")["exists"]
+    assert meta["exists"], "v26.2.6: the map is built with the run, no click needed"
+    assert page.query_selector("#wmBuild") is None and page.query_selector("#wmRules") is None      # the button and the toggle are gone
     seek(page, 13)
     page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
     page.wait_for_timeout(500)
@@ -90,9 +88,7 @@ def test_click_readout_mapped_and_unmapped_cell(page):
     rec = api(f"/api/runs/{run}")["request"]["recording"]
     open_lab(page, rec, t=13, run=run)
     page.wait_for_selector("#wmCanvas:visible")
-    if not api(f"/api/runs/{run}/worldmap")["exists"]:
-        page.click("#wmBuild")
-        page.wait_for_function("() => document.querySelector('#wmInfo').textContent.includes('Built in')")
+    assert api(f"/api/runs/{run}/worldmap")["exists"]
     seek(page, 13)
     page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
     cv, bx = page.evaluate(BOX, "#wmCanvas"), page.evaluate(BOX, "#wmCell")
@@ -116,12 +112,52 @@ def test_click_readout_mapped_and_unmapped_cell(page):
     txt = page.inner_text("#wmCell")
     assert f"col {mapped[0]} row {mapped[1]}" in txt and "m ahead" in txt and "steps" in txt and "Object:" in txt and "Item:" in txt, txt
     assert "Region: none observed" not in txt
+    assert "Beyond 20 m" not in txt, txt                           # v26.2.6: only the cell's own lines
     seek(page, 13.5)                                              # the selection stays across frames
     page.wait_for_timeout(600)
     assert f"col {mapped[0]} row {mapped[1]}" in page.inner_text("#wmCell")
     if unmapped:
         _click_cell(page, *unmapped)
         page.wait_for_function("() => document.querySelector('#wmCell').textContent === 'unmapped'")
+    assert not page.errors, page.errors
+
+
+def test_click_on_an_item_marker_reads_that_item(page):
+    """v26.2.6: a click on a drawn (non-building) item marker snaps to its cell and names the item on the Object line."""
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    massive = re.compile(r"\b(building|bridge|tunnel)\b", re.I)
+    pick = None
+    for a in range(int(rq["start"]), int(rq["end"]), 30):
+        doc = api(f"/api/runs/{run}/hazards?from={a}&to={a + 30}")
+        for f in doc["frames"]:
+            hs = [h for h in f.get("hazards", []) if h.get("distanceM") is not None and h.get("lateralM") is not None]
+            for h in hs:
+                if massive.search(h.get("className") or "") or not (3 < h["distanceM"] < 15 and abs(h["lateralM"]) < 6):
+                    continue
+                if any(o is not h and not massive.search(o.get("className") or "") and abs(o["distanceM"] - h["distanceM"]) < 1.5
+                       and abs(o["lateralM"] - h["lateralM"]) < 1.5 for o in hs):
+                    continue                                       # keep the nearest-marker rule out of the test
+                pick = (f, h)
+                break
+            if pick:
+                break
+        if pick:
+            break
+    if not pick:
+        pytest.skip("no isolated non-building item inside the map in the run")
+    f, h = pick
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(600)
+    col, row = 100 + h["lateralM"] / 0.1, 200 - h["distanceM"] / 0.1
+    _click_cell(page, int(col), int(row))
+    page.wait_for_function("() => /Object: /.test(document.querySelector('#wmCell').textContent)")
+    obj = next(l for l in page.inner_text("#wmCell").splitlines() if l.startswith("Object:"))
+    assert (h.get("className") or "item") in obj and f"track {h.get('trackId', '?')}" in obj, obj
+    assert "Beyond 20 m" not in page.inner_text("#wmCell")
     assert not page.errors, page.errors
 
 

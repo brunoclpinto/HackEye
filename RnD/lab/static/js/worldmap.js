@@ -11,6 +11,7 @@ const SIZE = 200, ORIGIN_COL = 100, ORIGIN_ROW = 200, CELL_M = 0.1;
 const UNKNOWN = 255;
 const ITEM_NEAR_M = 0.3;     // an item whose position lies within this of the cell is listed with it
 const CORRIDOR_HALF_M = 0.6, CORRIDOR_STEPS = 10, RING_EVERY = 5, DEFAULT_STEP_M = 0.7;
+const HIT_MIN_CSS_PX = 8;    // v26.2.6: a click hits an item marker within its drawn radius, at least this many CSS px
 const MAX_FETCH_HZ = 6, CACHE = 24, STALE_S = 1.0;
 
 /** Quarter-hour clock index / spoken text, same rules as collision.py clock_quarter / clock_text (bearing 0 = 12, + = right). */
@@ -23,6 +24,27 @@ function clockText(q) {
   return min === 0 ? `${hour}` : `${hour}:${String(min).padStart(2, "0")}`;
 }
 
+/** v26.2.6: massive structures get no marker (their cells and wall lines show them); a click on their cells still reads them. */
+export function isMassive(h) { return /\b(building|bridge|tunnel)\b/i.test(h?.className ?? ""); }
+
+/** The text naming one item: class, role, track, distance source and marks. */
+export function itemLine(h) {
+  const tags = [];
+  if (h.insideSolid) tags.push(h.solidCorrected ? "inside solid (snapped)" : "inside solid");
+  if (h.coasting) tags.push("coasting");
+  if (h.ghost) tags.push("ghost");
+  return `${h.className ?? h.label ?? "item"} · role ${h.role ?? "none"} · track ${h.trackId ?? "?"} · distance source ${h.distanceSource ?? h.source ?? "?"}` +
+    (tags.length ? ` · ${tags.join(", ")}` : "");
+}
+
+/** The marker as drawn, in canvas px (W = canvas width): centre, drawn radius and the radius a click counts as a hit. */
+export function markerOf(h, W, minHitPx = 0) {
+  const s = W / SIZE, mover = h.group === "moving";
+  const r = Math.max(3, W / 70) * (mover ? 1.5 : 1);
+  const drawn = h.role === "danger" ? r * 2 : mover ? r * 1.2 : r;      // the danger ring / diamond tip is part of the marker
+  return { x: (ORIGIN_COL + 0.5) * s + (h.lateralM / CELL_M) * s, y: (ORIGIN_ROW + 0.5) * s - (h.distanceM / CELL_M) * s, r, drawn, hit: Math.max(drawn, minHitPx) };
+}
+
 /** Hazards items of a frame whose position (map / snapped / coasting position, the raw depth position, or the image measurement)
  *  lies within ITEM_NEAR_M of the cell (`ahead`, `right` in metres). Returns one description line per item. */
 export function itemsNear(frame, ahead, right) {
@@ -33,12 +55,7 @@ export function itemsNear(frame, ahead, right) {
     if (h.solidCorrected && Number.isFinite(h.rawDistanceM) && h.distanceM > 0) pts.push([h.rawDistanceM, h.lateralM * h.rawDistanceM / h.distanceM]);
     if (Number.isFinite(h.imageDistanceM) && Number.isFinite(h.imageLateralM)) pts.push([h.imageDistanceM, h.imageLateralM]);
     if (!pts.some(([f, r]) => Math.hypot(f - ahead, r - right) <= ITEM_NEAR_M)) continue;
-    const tags = [];
-    if (h.insideSolid) tags.push(h.solidCorrected ? "inside solid (snapped)" : "inside solid");
-    if (h.coasting) tags.push("coasting");
-    if (h.ghost) tags.push("ghost");
-    out.push(`${h.className ?? h.label ?? "item"} · role ${h.role ?? "none"} · track ${h.trackId ?? "?"} · distance source ${h.distanceSource ?? h.source ?? "?"}` +
-      (tags.length ? ` · ${tags.join(", ")}` : ""));
+    out.push(itemLine(h));
   }
   return out;
 }
@@ -54,25 +71,32 @@ export class WorldMapPanel {
     this.reset();
     // The canvas follows the layout (CSS size x devicePixelRatio): repaint when its box changes.
     new ResizeObserver(() => { this.sig = ""; this.paintIfNeeded(); }).observe(this.canvas);
-    $("#wmBuild").addEventListener("click", () => this.build());
-    try { this.showRules = localStorage.getItem("wmRules") === "1"; } catch { this.showRules = false; }
-    $("#wmRules").checked = this.showRules;
-    $("#wmRules").addEventListener("change", (e) => {
-      this.showRules = e.target.checked;
-      try { localStorage.setItem("wmRules", this.showRules ? "1" : "0"); } catch { /* per-viewer convenience only */ }
-      this.sig = ""; this.paintIfNeeded();
-    });
     this.canvas.addEventListener("click", (e) => this.select(e));
     this.paint();
   }
 
-  /** Click / tap: select the map cell under the pointer (the marker stays until another click) and read it out. */
+  /** The drawn item markers of a frame (massive structures have none). */
+  markers(frame) {
+    return (frame?.hazards ?? []).filter((h) => Number.isFinite(h.distanceM) && Number.isFinite(h.lateralM) && !isMassive(h));
+  }
+
+  /** Click / tap: an item marker under the pointer wins (selection snaps to its cell); else select the map cell under the pointer.
+   *  The marker stays until another click. */
   select(e) {
     const r = this.canvas.getBoundingClientRect();
     if (!r.width) return;
-    const col = Math.min(SIZE - 1, Math.max(0, Math.floor((e.clientX - r.left) / r.width * SIZE)));
-    const row = Math.min(SIZE - 1, Math.max(0, Math.floor((e.clientY - r.top) / r.height * SIZE)));
+    const px = this.canvas.width / r.width;                       // canvas px per CSS px (devicePixelRatio and layout scale)
+    const cx = (e.clientX - r.left) * px, cy = (e.clientY - r.top) * px;
+    let best = null, bestD = Infinity;
+    for (const h of this.markers(this.currentHazardFrame())) {
+      const m = markerOf(h, this.canvas.width, HIT_MIN_CSS_PX * px), d = Math.hypot(m.x - cx, m.y - cy);
+      if (d <= m.hit && d < bestD) { best = { h, m }; bestD = d; }
+    }
+    const at = best ? [best.m.x, best.m.y] : [cx, cy], cell = this.canvas.width / SIZE;
+    const col = Math.min(SIZE - 1, Math.max(0, Math.floor(at[0] / cell)));
+    const row = Math.min(SIZE - 1, Math.max(0, Math.floor(at[1] / cell)));
     this.sel = { col, row };
+    this.selItem = best ? { trackId: best.h.trackId ?? null, className: best.h.className, h: best.h } : null;
     this.cellData = null; this.cellKey = "";
     this.sig = ""; this.refreshCell(); this.paintIfNeeded();
   }
@@ -98,7 +122,27 @@ export class WorldMapPanel {
     const ahead = (ORIGIN_ROW - row) * CELL_M, right = (col - ORIGIN_COL) * CELL_M;
     const d = this.cellData;
     if (!d) return this.k >= 0 && this.meta?.exists && this.cellKey ? "…" : "no snapshot at this time";
-    const items = itemsNear(this.currentHazardFrame(), ahead, right);
+    const frame = this.currentHazardFrame();
+    const items = itemsNear(frame, ahead, right);
+    // v26.2.6: the item named on the Object line: the clicked one (followed by track id across frames), else the nearest drawn marker covering the cell
+    let hit = null;
+    if (this.selItem) {
+      hit = this.selItem.trackId !== null
+        ? (frame?.hazards ?? []).find((h) => h.trackId === this.selItem.trackId && h.className === this.selItem.className && !isMassive(h))
+        : (frame?.hazards ?? []).find((h) => h === this.selItem.h);
+    }
+    const W = this.canvas.width, s = W / SIZE, cx = (col + 0.5) * s, cy = (row + 0.5) * s;
+    if (hit) {      // a followed item that moved away from the selected cell is no longer "at" it
+      const m = markerOf(hit, W, HIT_MIN_CSS_PX * W / (this.canvas.clientWidth || W));
+      if (!Number.isFinite(m.x) || Math.hypot(m.x - cx, m.y - cy) > m.hit + s) hit = null;
+    }
+    if (!hit) {
+      let bestD = Infinity;
+      for (const h of this.markers(frame)) {
+        const m = markerOf(h, W), d = Math.hypot(m.x - cx, m.y - cy);
+        if (d <= m.drawn && d < bestD) { hit = h; bestD = d; }
+      }
+    }
     const style = this.getStyle();
     const name = (id) => style?.info?.classes?.find?.((c) => c.id === id)?.name ?? `class ${id}`;
     const level = (id) => {
@@ -108,16 +152,14 @@ export class WorldMapPanel {
     };
     const surface = d.layers ? d.surface : d.combined;      // maps built before v26.2.4 have one class per cell
     const obj = d.layers ? d.object : null;
-    if (surface === null && obj === null && !items.length) return "unmapped";
+    if (surface === null && obj === null && !items.length && !hit) return "unmapped";
     const dist = Math.hypot(ahead, right), bearing = Math.atan2(right, ahead) * 180 / Math.PI;
     const step = this.stepM || DEFAULT_STEP_M;
     const lines = [`${clockText(clockQuarter(bearing))} · ${(dist / step).toFixed(1)} steps · ${ahead.toFixed(1)} m ahead · ${Math.abs(right).toFixed(1)} m ${right < 0 ? "left" : "right"} · cell col ${col} row ${row}`,
       `Region: ${surface === null ? "none observed" : name(surface) + level(surface)}`,
-      `Object: ${obj === null ? "none" : name(obj) + level(obj)}`];
+      `Object: ${hit ? itemLine(hit) + (obj === null ? "" : ` · map: ${name(obj)}${level(obj)}`) : obj === null ? "none" : name(obj) + level(obj)}`];
     for (const it of items) lines.push(`Item: ${it}`);
     if (!items.length) lines.push("Item: none");
-    const far = (this.currentHazardFrame()?.hazards ?? []).filter((h) => h.distanceM > ORIGIN_ROW * CELL_M || Math.abs(h.lateralM) > 10);
-    if (far.length) lines.push(`Beyond 20 m (low trust, outside the 20 x 20 m work area): ${far.map((h) => `${h.className} ${h.distanceM.toFixed(0)} m`).join(", ")}`);
     return lines.join("\n");
   }
 
@@ -141,8 +183,7 @@ export class WorldMapPanel {
     this.sig = "";
     this.lastFetch = 0;
     this.timer = null;
-    this.building = false;
-    this.buildNote = "";
+    this.selItem = null;       // v26.2.6: the item marker the selection was snapped to (followed by track id)
   }
 
   /** Switch run (or null). */
@@ -172,36 +213,13 @@ export class WorldMapPanel {
     this.update(this.lastT);
   }
 
-  async build() {
-    const id = this.run?.id;
-    if (!id || this.building) return;
-    this.building = true; this.buildNote = ""; this.render();
-    const token = this.token;
-    try {
-      const r = await api(`/api/runs/${id}/worldmap`, { method: "POST" });
-      if (token !== this.token) return;
-      this.buildNote = `Built in ${r.elapsedSeconds?.toFixed?.(1) ?? r.elapsedSeconds} s (${r.frames} frames, ${r.msMean?.toFixed?.(1) ?? r.msMean} ms/frame mean, p95 ${r.msP95?.toFixed?.(1) ?? r.msP95}).`;
-    } catch (e) {
-      if (token !== this.token) return;
-      this.buildNote = `Build failed: ${e.message}`;
-    }
-    this.building = false;
-    this.cache.clear();
-    await this.loadMeta();
-  }
-
   render() {
     const m = this.meta, has = !!this.run;
-    const btn = $("#wmBuild");
-    btn.hidden = !has || !m || m.exists;
-    btn.disabled = this.building;
-    btn.textContent = this.building ? "Building…" : "Build map";
     const parts = [];
     if (!has) parts.push("Open an analysed run to see its world map.");
     else if (!m) parts.push("Checking…");
     else if (m.exists) parts.push(`${m.frames} frames · ${m.msMean} ms/frame mean, p95 ${m.msP95} ms`);
-    else parts.push(m.error ? "World map unavailable for this run." : "This run has no world map yet.");
-    if (this.buildNote) parts.push(this.buildNote);
+    else parts.push(m.error ? "World map unavailable for this run." : "This run has no world map.");
     $("#wmInfo").textContent = parts.join(" · ");
   }
 
@@ -266,7 +284,7 @@ export class WorldMapPanel {
   paintIfNeeded() {
     const f = this.currentHazardFrame();
     const grid = this.k >= 0 ? this.cache.get(this.k) : null;
-    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}|${this.showRules ? 1 : 0}`;
+    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}`;
     if (sig === this.sig) return;
     this.sig = sig;
     this.paint(grid, f);
@@ -351,8 +369,8 @@ export class WorldMapPanel {
     const hw = CORRIDOR_HALF_M / CELL_M * s, len = CORRIDOR_STEPS * stepPx;
     ctx.fillStyle = "rgba(255,45,45,0.12)"; ctx.fillRect(ux - hw, uy - len, 2 * hw, len);
     ctx.strokeStyle = "rgba(255,120,120,0.9)"; ctx.lineWidth = 1.5; ctx.strokeRect(ux - hw, uy - len, 2 * hw, len);
-    // v26.2.2: the face / edge test of the walls the map judges (toggle): fitted wall lines, face and edge cells
-    if (frame && this.showRules) {
+    // v26.2.2: the face / edge test of the walls the map judges (always drawn since v26.2.6): fitted wall lines, face and edge cells
+    if (frame) {
       const cellPx = Math.max(2, s);
       for (const [side, ln] of Object.entries(frame.faceEdgeLines ?? {})) {
         if (!ln) continue;
@@ -370,7 +388,7 @@ export class WorldMapPanel {
     }
     // hazards: ahead = distanceM, right = lateralM
     if (frame) {
-      const hs = (frame.hazards ?? []).filter((h) => Number.isFinite(h.distanceM) && Number.isFinite(h.lateralM));
+      const hs = this.markers(frame);       // v26.2.6: no dot for building / bridge / tunnel items
       const drawOne = (h) => {
         const x = ux + (h.lateralM / CELL_M) * s, y = uy - (h.distanceM / CELL_M) * s;
         if (x < -4 || y < -4 || x > W + 4 || y > W + 4) return;

@@ -831,7 +831,16 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
         collision_pass(run_id)
     except Exception as exc:  # noqa: BLE001 - inference results are still usable
         _log(f"run {run_id}: collision pass failed: {exc!r}")
+    _build_worldmap(run_id)
     _finish(run_id, status="done", progress=1.0)
+
+
+def _build_worldmap(run_id: str) -> None:
+    """v26.2.6: the world map is built with the run, after the collision pass. A failure is logged; the run is still done."""
+    try:
+        worldmap_pass(run_id)
+    except Exception as exc:  # noqa: BLE001 - the run is usable without a map
+        _log(f"run {run_id}: worldmap pass failed: {exc!r}")
 
 
 # --------------------------------------------------------------------------

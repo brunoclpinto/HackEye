@@ -36,11 +36,9 @@
     <input id="seekBar" type="range" min="0" max="1" step="0.01" value="0" aria-label="Seek">
     </div>
     <section id="secWorldmap" class="worldmap" aria-label="World map">
-      <canvas id="wmCanvas" class="wm-canvas" width="400" height="400" aria-label="World map around the user" title="Bird's-eye, heading-up, forward only: you are the white marker at the bottom edge, ahead is up (20 m). Rings every 5 steps, red box = the 0.6 m corridor to 10 steps; dots are the frame's items (diamond = mover, big ring = danger). Click a cell to read it in the box below."></canvas>
+      <canvas id="wmCanvas" class="wm-canvas" width="400" height="400" aria-label="World map around the user" title="Bird's-eye, heading-up, forward only: you are the white marker at the bottom edge, ahead is up (20 m). Rings every 5 steps, red box = the 0.6 m corridor to 10 steps; dots are the frame's items (diamond = mover, big ring = danger); yellow lines, magenta and cyan cells show the walls the map judges. Click a cell or a dot to read it in the box below."></canvas>
       <pre id="wmCell" class="wm-cell mono" aria-live="polite">Click the map to read a cell.</pre>
       <div class="wm-bar">
-        <button type="button" id="wmBuild" hidden>Build map</button>
-        <label class="wm-toggle" title="Draw the fitted wall lines (yellow), the face cells (magenta) and edge cells (cyan) of the walls the map judges, and the predicted mover dots (hollow diamonds: a mover that left the image, coasting on its last velocity)."><input type="checkbox" id="wmRules"> wall lines</label>
         <span id="wmInfo" class="hint" aria-live="polite"></span>
         <span id="wmStatus" class="hint mono"></span>
       </div>

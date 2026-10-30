@@ -1086,3 +1086,23 @@ At 0 s the right facade is a continuous line; at 105 s the walls are thin lines 
 3. **Far false faces are more visible:** faces are now lines, so the DA2 far-range squash (O1) draws clearer false walls at 6–12 m.
 4. **Map cost +50%:** 10.8 ms/frame mean (was ~7).
 5. **Horizon off:** the `objectClearBottomM` band uses the horizon formula, an approximation when the run has the horizon switched off.
+
+## v26.2.6 — world map built with the run, wall lines always on, cleaner readout, selectable items (plan [`plans/v26.2.6.md`](plans/v26.2.6.md); user note in the Lab Notes box 2026-10-30; Lab version bumped and wiped: run `5fda5626e808` removed; collision + worldmap output unchanged)
+
+**Why.** The user's note on run `5fda5626e808` (Chest-center-0004, v26.2.5): build the map when collision detection finishes and drop the Build button; wall lines always on; the "Beyond 20 m (low trust, …)" line in the click readout showed for almost any cell, even right in front of the user, and said more than was asked; the object at 12:30 / 1.5 m ahead / 0.5 m right should be selectable, but a click read the sidewalk under it; no white circle for buildings (cells and wall lines are enough). No speech reviews were exported, so there were no fixtures to save.
+
+**Diagnosis (Opus).** The job ran only the collision pass; the map came from `POST /worldmap` (the button). The "Beyond 20 m" line listed every hazard of the frame past 20 m / ±10 m, whatever the cell. At 0 s the obstacle is a danger item at 1.58 m / 0.58 m right, drawn as a dot, but the map's object layer is empty there (cells 105,183–185 = none, 104,185 = sidewalk), so the readout led with "Region: flat sidewalk · Object: none".
+
+**What was built (Sonnet worker, Opus review).**
+- `_run_job` runs `worldmap_pass` after `collision_pass`, before the run is done (a failure is logged; the run still finishes). `POST /collision` always rebuilds the map. `POST /worldmap` stays as an API; `#wmBuild` is gone.
+- `#wmRules` and its localStorage key are gone: the wall lines, face and edge cells are always drawn.
+- The readout's "Beyond 20 m" line is removed.
+- A click within an item marker's drawn radius (at least 8 CSS px, danger ring included; nearest wins) selects the item and snaps the selection to its cell. `Object:` names the item (class · role · track · distance source), plus `map: <class>` when the cell has one; it follows the item by track id while it stays on the cell. Without a hit: the map's object class, else the nearest marker covering the cell, else "none".
+- Items of class building, structure bridge and structure tunnel get no marker (dot, ring, snap line, cross). Their cells still read them on a click.
+
+**Tests.** Unit **632 passed, 6 skipped** (3 new in `tests/test_worldmap_job.py`: re-run builds a missing map, re-run survives a failing map pass, the job helper builds / swallows failures). Browser E2E **76 passed** (map present without a click, no Build / wall-lines controls, no "Beyond 20 m", a click on an item marker names it).
+
+### Known / possible issues (shipped on purpose; user rule: don't block)
+1. **Small objects missing from the object layer (O9):** the 0 s sidewalk-obstacle has no object cells on the map. Its marker is now clickable, but the map cells and the rules that read the map still miss it.
+2. **Longer jobs:** a run finishes after its map is built (~11 ms/frame, about 30 s for a 454 s run at 6 fps).
+3. **Buildings with role danger** show no marker any more; the danger is visible only through the wall cells and lines (and speech).
