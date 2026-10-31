@@ -271,7 +271,7 @@ def test_long_run_uses_windowed_hazards_and_gzip(page):
     assert any(f >= far - 100 for f in froms), (far, wins)      # a window centred near the far playhead was fetched
     for u in wins:
         assert page.responses[u].get("content-encoding") == "gzip", (u, page.responses[u])
-    ev_url = next(u for u in page.responses if u.endswith("/events.json"))
+    ev_url = next(u for u in page.responses if "/events.json" in u)
     assert page.responses[ev_url].get("content-encoding") == "gzip"
 
 
@@ -322,7 +322,7 @@ def inject_beeps(page):
         doc["events"] = [e for e in doc["events"] if e.get("trackId") != BEEP_TRACK] + [beeps] + tones
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def beep_snapshot():
@@ -447,7 +447,7 @@ def inject_both_sounds(page):
                          + [beeps, soft] + tones + soft_tones)
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def test_two_distinct_sounds_are_scheduled_and_the_review_panel_shows_the_kind(page):
@@ -499,7 +499,7 @@ def inject_crosswalk_tones(page, in_t=CW_IN_T, out_t=CW_OUT_T):
         doc["events"] = [e for e in doc["events"] if not str(e.get("kind", "")).startswith("crosswalk")] + [enter, exit_] + eps
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def test_crosswalk_tones_are_scheduled_deeper_and_shown_in_the_review_panel(page):
@@ -1713,7 +1713,7 @@ def inject_kind_episodes(page):
         doc["events"] = [e for e in doc["events"] if not (e["type"] in ("tone", "beeps") and 29 <= e["t"] <= 40)] + eps + tones
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def test_the_review_panel_shows_the_collision_sectors_and_each_plays_its_pitch(page, sounds_guard):

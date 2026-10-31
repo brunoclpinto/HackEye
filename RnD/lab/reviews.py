@@ -2,8 +2,8 @@
 
 Reviews belong to the *recording*, not to a run: what should be spoken at a
 given recording time stays true across re-analysis and new collision
-versions. Each verdict snapshots the notification (speech phrase or beeps episode) it judged plus the run and
-collision version it came from; `added` annotations are phrases the system
+versions. Each verdict snapshots the notification (speech phrase or beeps episode) it judged plus the run,
+collision run (`collisionId`, v26.2.8: verdicts are per collision run) and collision version it came from; `added` annotations are phrases the system
 missed. One JSON file per recording (`LAB_DIR/reviews/<recId>.json`), written
 atomically. A process-wide lock serialises read-modify-write (the endpoints
 run in a threadpool); files are small, so one lock is enough.
@@ -83,7 +83,7 @@ def _sorted(annotations: list[dict]) -> list[dict]:
 
 def match_key(ann: dict) -> tuple:
     ev = ann["event"]
-    return (ann.get("runId"), ann.get("collisionVersion"), round(float(ev["t"]), 3), ev["text"])
+    return (ann.get("runId"), ann.get("collisionId") or "c1", ann.get("collisionVersion"), round(float(ev["t"]), 3), ev["text"])
 
 
 # --------------------------------------------------------------------------
@@ -206,7 +206,16 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
 
     if run is not None:
         ann["runId"] = run["id"]
-        ann["collisionVersion"] = body.get("collisionVersion") or run.get("collisionVersion")
+        cid = body.get("collisionId")
+        if cid is None:
+            cid = (run.get("collisions") or [None])[-1]
+        if cid is not None and cid not in (run.get("collisions") or []):
+            raise ReviewError(404, f"Unknown collision run: {cid}")
+        if cid is not None:
+            ann["collisionId"] = cid
+        from lab import collisions
+        cdoc = collisions.read_doc(run["id"], cid) if cid else None
+        ann["collisionVersion"] = body.get("collisionVersion") or (cdoc or {}).get("collisionVersion") or run.get("collisionVersion")
         if kind == "verdict":
             ann["analysisVersion"] = run.get("analysisVersion")
             ann["modelName"] = run.get("modelName")
@@ -271,6 +280,13 @@ def delete(rec_id: str, ann_id: str) -> None:
     _log(f"{rec_id}: - {ann_id}")
 
 
+def count_for_collision(rec_id: str, run_id: str, cid: str) -> int:
+    """Reviews (verdicts and added notes) made against collision run `cid` of `run_id`; one without a collisionId counts for c1."""
+    with _lock:
+        anns = _load(rec_id)["annotations"]
+    return sum(1 for a in anns if a.get("runId") == run_id and (a.get("collisionId") or "c1") == cid)
+
+
 def recordings_with_reviews() -> list[str]:
     d = LAB_DIR / "reviews"
     return sorted(p.stem for p in d.glob("*.json")) if d.is_dir() else []
@@ -283,12 +299,18 @@ def recordings_with_reviews() -> list[str]:
 class _RunData:
     """hazards.json / events.json of one run, loaded once per export."""
 
-    def __init__(self, run_id: str):
+    def __init__(self, run_id: str, cid: str | None):
+        self.settings: dict | None = None
         self.frames: list[dict] = []
         self.frame_ts: list[float] = []
         self.speech: list[dict] = []
         self.beeps: list[dict] = []
-        base = analysis.run_dir(run_id)
+        from lab import collisions
+        base = collisions.collision_dir(run_id, cid) if cid else analysis.run_dir(run_id)
+        doc = collisions.read_doc(run_id, cid) if cid else None
+        if doc:
+            self.settings = {"collisionId": cid, "settings": doc.get("settings"), "resolved": doc.get("resolved"),
+                             "overrides": doc.get("overrides") or {}}
         try:
             self.frames = json.loads((base / "hazards.json").read_text()).get("frames", [])
             self.frame_ts = [f["t"] for f in self.frames]
@@ -318,7 +340,7 @@ class _RunData:
 
 
 def export(rec_ids: list[str]) -> dict:
-    cache: dict[str, _RunData] = {}
+    cache: dict[tuple, _RunData] = {}
     out = []
     for rec_id in rec_ids:
         with _lock:
@@ -330,8 +352,13 @@ def export(rec_ids: list[str]) -> dict:
             run_id = a.get("runId")
             ctx = None
             if run_id:
-                data = cache.get(run_id) or cache.setdefault(run_id, _RunData(run_id))
+                cid = a.get("collisionId") or "c1"
+                key = (run_id, cid)
+                data = cache.get(key) or cache.setdefault(key, _RunData(run_id, cid))
                 ctx = data.context(a["t"])
-            enriched.append({**a, "context": ctx})
+                extra = {"collisionId": cid, **(data.settings or {})}
+            else:
+                extra = {}
+            enriched.append({**a, **extra, "context": ctx})
         out.append({"recording": rec_id, "summary": summary, "annotations": enriched})
     return {"exportedAt": _now(), "recordings": out}

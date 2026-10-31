@@ -93,8 +93,8 @@ export class Reviews {
   setRoles(roles) { this.roles = roles; this.render(); }
 
   // ------------------------------------------------------------ keys
-  _evKey(ev) { return `${this.run.id}|${this.run.collisionVersion ?? null}|${t3(ev.t)}|${ev.text}`; }
-  _annKey(a) { return `${a.runId}|${a.collisionVersion ?? null}|${t3(a.event.t)}|${a.event.text}`; }
+  _evKey(ev) { return `${this.run.id}|${this.run.collisionId ?? "c1"}|${this.run.collisionVersion ?? null}|${t3(ev.t)}|${ev.text}`; }
+  _annKey(a) { return `${a.runId}|${a.collisionId ?? "c1"}|${a.collisionVersion ?? null}|${t3(a.event.t)}|${a.event.text}`; }
   _reindex() {
     this.vmap = new Map();
     for (const a of this.anns) if (a.kind === "verdict" && a.runId) this.vmap.set(this._annKey(a), a);
@@ -188,7 +188,7 @@ export class Reviews {
       const del = el("button", "rv-icon", "🗑"); del.type = "button"; del.title = "Delete";
       del.addEventListener("click", () => this._delete(a, "Delete this verdict from another run/version?"));
       top.append(del);
-      li.append(top, el("div", "rv-sub", `run ${a.runId} · collision ${a.collisionVersion ?? "?"}${a.note ? " · " + a.note : ""}`));
+      li.append(top, el("div", "rv-sub", `run ${a.runId} · ${a.collisionId ?? "c1"} · collision ${a.collisionVersion ?? "?"}${a.note ? " · " + a.note : ""}`));
       return li;
     }));
   }
@@ -395,13 +395,13 @@ export class Reviews {
     const draft = this.drafts.get(rk) ?? "";
     this.drafts.delete(rk);
     const a = { id: `tmp-${Math.random().toString(16).slice(2)}`, kind: "verdict", verdict, note: draft, t: ev.t, event: snapshot,
-      runId: run.id, collisionVersion: run.collisionVersion ?? null };
+      runId: run.id, collisionId: run.collisionId ?? undefined, collisionVersion: run.collisionVersion ?? null };
     this.anns.push(a); this._reindex();
     this._refreshRow(rk);
     this._send(async () => {
       if (a.dead) return;
       try {
-        const res = await api(this._base(), { method: "POST", body: { kind: "verdict", verdict, note: draft, t: ev.t, event: snapshot, runId: run.id, collisionVersion: run.collisionVersion ?? undefined } });
+        const res = await api(this._base(), { method: "POST", body: { kind: "verdict", verdict, note: draft, t: ev.t, event: snapshot, runId: run.id, collisionId: run.collisionId ?? undefined, collisionVersion: run.collisionVersion ?? undefined } });
         const localNote = a.note, localVerdict = a.verdict;
         Object.assign(a, res);
         a.verdict = localVerdict; a.note = localNote;
@@ -538,7 +538,7 @@ export class Reviews {
       if (!(tEnd > t) || tEnd > this.rec.duration) { toast("End must be after the start and within the recording."); return; }
       body.tEnd = tEnd;
     }
-    if (this.run) { body.runId = this.run.id; body.collisionVersion = this.run.collisionVersion ?? undefined; }
+    if (this.run) { body.runId = this.run.id; body.collisionId = this.run.collisionId ?? undefined; body.collisionVersion = this.run.collisionVersion ?? undefined; }
     const btn = $("#rvAddSubmit"); btn.disabled = true;
     try {
       const a = await api(this._base(), { method: "POST", body });

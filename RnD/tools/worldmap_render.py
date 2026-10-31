@@ -46,7 +46,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     rd = analysis.run_dir(run_id)
     doc = json.loads((rd / "run.json").read_text())
-    with np.load(rd / "worldmap.npz") as z:
+    cd = rd / "collisions" / (doc.get("collisions") or ["c1"])[-1]       # v26.2.8: the latest collision run
+    with np.load(cd / "worldmap.npz") as z:
         wm = {k: z[k] for k in z.files}
     with np.load(rd / "grids.npz") as z:
         grids, gt = z["grids"], z["t"]

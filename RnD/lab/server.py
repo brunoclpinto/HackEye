@@ -22,12 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
-from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
+from fastapi import Body, FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from lab import analysis, display, issues, notes, recordings, reviews, sounds, versioning  # noqa: E402
+from lab import analysis, collisions, display, issues, notes, recordings, reviews, sounds, versioning  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -333,19 +333,70 @@ def get_run(run_id: str) -> dict:
     return _run(run_id)
 
 
+def _coll_call(fn, *args):
+    try:
+        return fn(*args)
+    except collisions.CollisionError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
+def _cid(run: dict, collision: str | None) -> str:
+    """The collision run an endpoint reads: the named one (404 when unknown) or the run's latest (404 when it has none)."""
+    return _coll_call(collisions.resolve, run, collision)
+
+
 @app.post("/api/runs/{run_id}/collision")
-def rerun_collision(run_id: str) -> dict:
+def rerun_collision(run_id: str, body: dict | None = Body(default=None)) -> dict:
+    """A NEW collision run (v26.2.8): next id, current recording settings, optional config ``overrides``; its world map is built too."""
     run = _run(run_id)
     if run["status"] != "done":
         raise HTTPException(409, f"Run is {run['status']}, not done")
     _collision()
-    result = analysis.collision_pass(run_id)
+    body = body or {}
+    label = body.get("label", "")
+    if not isinstance(label, str) or len(label) > collisions.MAX_LABEL:
+        raise HTTPException(422, f"label must be a string of at most {collisions.MAX_LABEL} characters")
+    doc = _coll_call(analysis.collision_pass, run_id, body.get("overrides"), label)
     try:      # v26.2.6: the map is always rebuilt after a collision re-run (object distance / horizon switch change it)
-        analysis.worldmap_pass(run_id)
+        analysis.worldmap_pass(run_id, doc["id"])
     except Exception as exc:  # noqa: BLE001 - the collision result stands
         analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
-    return {"version": result["version"], "elapsedSeconds": result["elapsedSeconds"],
-            "hazards": f"/api/runs/{run_id}/hazards.json", "events": f"/api/runs/{run_id}/events.json"}
+    doc = collisions.read_doc(run_id, doc["id"]) or doc
+    q = f"?collision={doc['id']}"
+    return {**doc, "version": doc["collisionVersion"],
+            "hazards": f"/api/runs/{run_id}/hazards.json{q}", "events": f"/api/runs/{run_id}/events.json{q}"}
+
+
+@app.get("/api/runs/{run_id}/collisions")
+def list_collisions(run_id: str) -> list[dict]:
+    _run(run_id)
+    return collisions.list_docs(run_id)
+
+
+@app.get("/api/runs/{run_id}/collisions/compare")
+def compare_collisions(run_id: str, a: str = Query(), b: str = Query()) -> dict:
+    _run(run_id)
+    return _coll_call(collisions.compare, run_id, a, b)
+
+
+@app.patch("/api/runs/{run_id}/collisions/{cid}")
+def patch_collision(run_id: str, cid: str, body: dict) -> dict:
+    run = _run(run_id)
+    _cid(run, cid)
+    return _coll_call(collisions.set_label, run_id, cid, body.get("label"))
+
+
+@app.delete("/api/runs/{run_id}/collisions/{cid}")
+def delete_collision(run_id: str, cid: str) -> dict:
+    run = _run(run_id)
+    _cid(run, cid)
+    count = reviews.count_for_collision(run["request"]["recording"], run_id, cid)
+    _coll_call(collisions.delete, run_id, cid, count)
+    with _hz_lock:
+        _hz_cache.pop((run_id, cid), None)
+    with _wm_lock:
+        _wm_cache.pop((run_id, cid), None)
+    return {"deleted": cid, "collisions": collisions.ids(_run(run_id))}
 
 
 # --- world map (v26.2 step 1 spike; CONTRACTS 8.1) ---------------------------------------------------------------
@@ -354,79 +405,85 @@ def rerun_collision(run_id: str) -> dict:
 # Built from stored files only (pure numpy, synchronous like the collision pass; never the GPU queue).
 
 _WM_CACHE_RUNS = 1
-_wm_cache: "OrderedDict[str, tuple]" = OrderedDict()      # run_id -> (mtime_ns, arrays)
+_wm_cache: "OrderedDict[tuple, tuple]" = OrderedDict()      # (run_id, cid) -> (mtime_ns, arrays)
 _wm_lock = threading.Lock()
 
 
-def _run_worldmap(run_id: str) -> dict:
+def _run_worldmap(run_id: str, collision: str | None = None) -> dict:
     run = _run(run_id)
     if run["status"] != "done":
         raise HTTPException(409, f"Run is {run['status']}, not done")
-    path = analysis.run_dir(run_id) / "worldmap.npz"
+    cid = _cid(run, collision)
+    key = (run_id, cid)
+    path = collisions.collision_dir(run_id, cid) / "worldmap.npz"
     try:
         mtime = path.stat().st_mtime_ns
     except FileNotFoundError:
         raise HTTPException(404, "worldmap.npz not available (POST /api/runs/{id}/worldmap builds it)") from None
     with _wm_lock:
-        ent = _wm_cache.get(run_id)
+        ent = _wm_cache.get(key)
         if ent is None or ent[0] != mtime:
             with np.load(path) as z:
                 ent = (mtime, {k: z[k] for k in z.files})
-            _wm_cache[run_id] = ent
-        _wm_cache.move_to_end(run_id)
+            _wm_cache[key] = ent
+        _wm_cache.move_to_end(key)
         while len(_wm_cache) > _WM_CACHE_RUNS:
             _wm_cache.popitem(last=False)
         return ent[1]
 
 
 @app.post("/api/runs/{run_id}/worldmap")
-def build_worldmap(run_id: str) -> dict:
+def build_worldmap(run_id: str, collision: str | None = None) -> dict:
     run = _run(run_id)
     if run["status"] != "done":
         raise HTTPException(409, f"Run is {run['status']}, not done")
     _collision()
+    cid = _cid(run, collision)
     try:
-        result = analysis.worldmap_pass(run_id)
+        result = analysis.worldmap_pass(run_id, cid)
     except FileNotFoundError as exc:
         raise HTTPException(404, f"{exc} not available (a worldmap needs grids.npz and hazards.json)") from None
-    return {**result, "worldmap": f"/api/runs/{run_id}/worldmap"}
+    return {**result, "worldmap": f"/api/runs/{run_id}/worldmap?collision={cid}"}
 
 
 @app.get("/api/runs/{run_id}/worldmap")
-def get_worldmap(run_id: str) -> dict:
-    _run(run_id)
-    path = analysis.run_dir(run_id) / "worldmap.npz"
+def get_worldmap(run_id: str, collision: str | None = None) -> dict:
+    run = _run(run_id)
+    if not collisions.ids(run):
+        return {"exists": False}
+    cid = _cid(run, collision)
+    path = collisions.collision_dir(run_id, cid) / "worldmap.npz"
     if not path.exists():
         return {"exists": False}
-    wm = _run_worldmap(run_id)
+    wm = _run_worldmap(run_id, cid)
     n, h, w = wm["classes"].shape
     ms = wm["ms"]
     # v26.2.7: the class ids of the wall faces and of the surfaces, for the Lab's wall line (the border between a face and a surface cell)
     import worldmap
     names = list(_run(run_id).get("classNames") or [])
-    wcfg = worldmap.load_config()
+    wcfg = collisions.apply_overrides(worldmap.load_config(), (collisions.read_doc(run_id, cid) or {}).get("overrides") or {}, "worldmap")
     kinds = worldmap.class_kinds(wcfg, names)
     face_ids = [i for i, n_ in enumerate(names) if n_ in wcfg.get("faceClasses", ())]
     surface_ids = [i for i in range(len(names)) if kinds[i] == worldmap.KIND_SURFACE]
-    return {"exists": True, "frames": int(n), "cellM": float(wm["cellM"]), "origin": [int(v) for v in wm["origin"]],
+    return {"exists": True, "collision": cid, "frames": int(n), "cellM": float(wm["cellM"]), "origin": [int(v) for v in wm["origin"]],
             "width": int(w), "height": int(h), "msMean": round(float(ms.mean()), 2),
             "msP95": round(float(np.percentile(ms, 95)), 2), "faceClassIds": face_ids, "surfaceClassIds": surface_ids,
             "builtAt": str(path.stat().st_mtime_ns)}      # v26.2.7: the Lab adds it as ?v= to the cached PNG / pose URLs
 
 
 @app.get("/api/runs/{run_id}/worldmap/pose.json")
-def get_worldmap_pose(run_id: str) -> dict:
-    wm = _run_worldmap(run_id)
+def get_worldmap_pose(run_id: str, collision: str | None = None) -> dict:
+    wm = _run_worldmap(run_id, collision)
     return {"t": [round(float(v), 4) for v in wm["t"]],
             "pose": [[round(float(a), 3) for a in p] for p in wm["pose"]]}
 
 
 @app.get("/api/runs/{run_id}/worldmap/cell")
-def get_worldmap_cell(run_id: str, i: int = Query(), col: int = Query(), row: int = Query()) -> dict:
+def get_worldmap_cell(run_id: str, i: int = Query(), col: int = Query(), row: int = Query(), collision: str | None = None) -> dict:
     """One map cell of snapshot ``i`` (v26.2.4, the Lab's click readout): the surface and the object layer on their own, the combined class
     the collision rules read, their confidences, and the cell's place (metres ahead / right of the user). A layer is ``null`` where nothing was
     observed (255 in the file). Maps built before v26.2.4 have no layers: ``layers`` is false and ``surface`` / ``object`` are null."""
-    wm = _run_worldmap(run_id)
+    wm = _run_worldmap(run_id, collision)
     n, h, w = wm["classes"].shape
     if i < 0 or i >= n:
         raise HTTPException(404, "No such frame")
@@ -447,11 +504,11 @@ def get_worldmap_cell(run_id: str, i: int = Query(), col: int = Query(), row: in
 
 
 @app.get("/api/runs/{run_id}/worldmap/{index}.png")
-def get_worldmap_png(run_id: str, index: int, alpha: str = "binary") -> Response:
+def get_worldmap_png(run_id: str, index: int, alpha: str = "binary", collision: str | None = None) -> Response:
     """Snapshot of frame ``index``. Default: RGBA, R = G = B = class id (as classes.png, read the red channel), alpha 255
     where the cell is known and 0 where unknown. ``alpha=conf``: alpha = confidence (0..255; browsers premultiply, so
     the class id is only exact where alpha is 255). ``alpha=gray``: single-channel classes (255 = unknown)."""
-    wm = _run_worldmap(run_id)
+    wm = _run_worldmap(run_id, collision)
     if index < 0 or index >= len(wm["classes"]):
         raise HTTPException(404, "No such frame")
     cls = np.ascontiguousarray(wm["classes"][index], dtype=np.uint8)
@@ -474,28 +531,30 @@ def get_worldmap_png(run_id: str, index: int, alpha: str = "binary") -> Response
 MAX_WINDOW_S = 600.0
 FRAME_GAP_S = 1.0       # /frame: still "inside the run" up to this long after the last analysed frame
 _HZ_CACHE_RUNS = 2
-_hz_cache: "OrderedDict[str, dict]" = OrderedDict()
+_hz_cache: "OrderedDict[tuple, dict]" = OrderedDict()      # (run_id, cid) -> parsed hazards.json
 _hz_lock = threading.Lock()
 
 
-def _hazards_doc(run_id: str) -> dict:
+def _hazards_doc(run_id: str, collision: str | None = None) -> dict:
     run = _run(run_id)
     if run["status"] != "done":
         raise HTTPException(409, f"Run is {run['status']}, not done")
-    path = analysis.run_dir(run_id) / "hazards.json"
+    cid = _cid(run, collision)
+    key = (run_id, cid)
+    path = collisions.collision_dir(run_id, cid) / "hazards.json"
     try:
         st = path.stat()
     except FileNotFoundError:
         raise HTTPException(404, "hazards.json not available (collision pass has not run)") from None
     sig = (st.st_mtime_ns, st.st_size)
     with _hz_lock:  # one parse at a time: concurrent first requests share the work
-        ent = _hz_cache.get(run_id)
+        ent = _hz_cache.get(key)
         if ent is None or ent["sig"] != sig:
             doc = json.loads(path.read_text())
             frames = doc.pop("frames", [])
             ent = {"sig": sig, "head": doc, "frames": frames, "times": [f["t"] for f in frames]}
-            _hz_cache[run_id] = ent
-        _hz_cache.move_to_end(run_id)
+            _hz_cache[key] = ent
+        _hz_cache.move_to_end(key)
         while len(_hz_cache) > _HZ_CACHE_RUNS:
             _hz_cache.popitem(last=False)
         return ent
@@ -507,12 +566,13 @@ def _json(obj: dict) -> Response:
 
 
 @app.get("/api/runs/{run_id}/hazards")
-def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: float = Query(alias="to")) -> Response:
+def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: float = Query(alias="to"),
+                       collision: str | None = None) -> Response:
     if not (math.isfinite(t_from) and math.isfinite(t_to)) or t_to < t_from:
         raise HTTPException(422, "from and to must be finite numbers with to >= from")
     if t_to - t_from > MAX_WINDOW_S:
         raise HTTPException(422, f"window is at most {MAX_WINDOW_S:g} s")
-    ent = _hazards_doc(run_id)
+    ent = _hazards_doc(run_id, collision)
     times = ent["times"]
     lo, hi = bisect.bisect_left(times, t_from), bisect.bisect_right(times, t_to)
     head = ent["head"]
@@ -523,8 +583,8 @@ def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: f
 
 
 @app.get("/api/runs/{run_id}/frame")
-def get_hazards_frame(run_id: str, t: float = Query()) -> Response:
-    ent = _hazards_doc(run_id)
+def get_hazards_frame(run_id: str, t: float = Query(), collision: str | None = None) -> Response:
+    ent = _hazards_doc(run_id, collision)
     times = ent["times"]
     i = bisect.bisect_right(times, t) - 1 if math.isfinite(t) else -1
     if i < 0 or (i == len(times) - 1 and t > times[i] + FRAME_GAP_S):
@@ -533,11 +593,11 @@ def get_hazards_frame(run_id: str, t: float = Query()) -> Response:
 
 
 @app.get("/api/runs/{run_id}/{name}.json")
-def get_run_file(run_id: str, name: str) -> FileResponse:
-    _run(run_id)
+def get_run_file(run_id: str, name: str, collision: str | None = None) -> FileResponse:
+    run = _run(run_id)
     if name not in ("hazards", "events"):
         raise HTTPException(404, "Not found")
-    path = analysis.run_dir(run_id) / f"{name}.json"
+    path = collisions.collision_dir(run_id, _cid(run, collision)) / f"{name}.json"
     if not path.exists():
         raise HTTPException(404, f"{name}.json not available (collision pass has not run)")
     return FileResponse(path, media_type="application/json", headers={"Cache-Control": "no-cache"})

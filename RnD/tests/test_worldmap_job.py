@@ -25,28 +25,28 @@ def run_dir(monkeypatch, tmp_path):
 
 
 def test_collision_rerun_builds_a_map_when_none_existed(run_dir):
-    assert not (run_dir / "worldmap.npz").exists()
+    assert not (run_dir / "collisions").exists()
     r = TestClient(server.app).post(f"/api/runs/{RUN}/collision")
     assert r.status_code == 200, r.text
-    assert (run_dir / "worldmap.npz").exists()
+    assert (run_dir / "collisions" / "c1" / "worldmap.npz").exists()
 
 
 def test_collision_rerun_survives_a_failing_map(run_dir, monkeypatch):
-    def boom(run_id):
+    def boom(run_id, cid=None):
         raise RuntimeError("no map")
     monkeypatch.setattr(analysis, "worldmap_pass", boom)
     assert TestClient(server.app).post(f"/api/runs/{RUN}/collision").status_code == 200
 
 
 def test_job_helper_builds_the_map_and_swallows_a_failure(run_dir, monkeypatch):
-    analysis.collision_pass(RUN)
-    analysis._build_worldmap(RUN)
-    assert (run_dir / "worldmap.npz").exists()
+    cdoc = analysis.collision_pass(RUN)
+    analysis._build_worldmap(RUN, cdoc["id"])
+    assert (run_dir / "collisions" / "c1" / "worldmap.npz").exists()
 
-    def boom(run_id):
+    def boom(run_id, cid=None):
         raise RuntimeError("no map")
     monkeypatch.setattr(analysis, "worldmap_pass", boom)
-    analysis._build_worldmap(RUN)          # logged, not raised
+    analysis._build_worldmap(RUN, "c1")          # logged, not raised
 
 
 def test_worldmap_meta_built_at_changes_when_the_map_is_rebuilt(run_dir):
@@ -58,7 +58,7 @@ def test_worldmap_meta_built_at_changes_when_the_map_is_rebuilt(run_dir):
     first = client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"]
     assert first.isdigit()
     assert client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"] == first
-    npz = run_dir / "worldmap.npz"
+    npz = run_dir / "collisions" / "c1" / "worldmap.npz"
     st = npz.stat()
     os.utime(npz, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))      # a rebuild leaves a newer mtime
     assert client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"] != first

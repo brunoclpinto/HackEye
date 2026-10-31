@@ -12,6 +12,11 @@
   <h1>HackEye Lab</h1>
   <span id="verBadge" class="muted ver"></span>
   <span id="runBadge" class="muted"></span>
+  <div id="collBar" class="collbar" hidden>
+    <label class="inline">Collision run <select id="collSel" aria-label="Collision run"></select></label>
+    <input id="collLabel" maxlength="60" placeholder="label (optional)" aria-label="Collision run label" autocomplete="off">
+    <button type="button" id="collDel" title="Delete this collision run (not the only one, not one with reviews)">Delete</button>
+  </div>
 </header>
 
 <div class="layout">
@@ -108,6 +113,10 @@
             <option value="true">On</option><option value="false">Off</option></select></label>
         </div>
         <p class="hint">Empty = preset / estimated from the footage.</p>
+        <label>Config overrides (this re-run only)
+          <input id="collOverrides" class="mono" spellcheck="false" autocomplete="off" placeholder='{"collision": {"distance.itemLens": "off"}}'
+            title="Dotted keys of collision.json / worldmap.json, e.g. {&quot;collision&quot;: {&quot;distance.itemLens&quot;: &quot;off&quot;}, &quot;worldmap&quot;: {&quot;gapCloseM&quot;: 0}}. Empty = none."></label>
+        <p id="collOvErr" class="hint err" role="alert" hidden></p>
         <button type="button" id="rerunBtn" disabled>Re-run collision</button>
         <p id="rerunInfo" class="hint"></p>
       </div>
@@ -206,6 +215,16 @@
           <button type="button" id="clsDiscC" class="link" hidden>Discard</button>
         </div>
       </div>
+    </details>
+
+    <details id="secCompare" class="compare">
+      <summary>Compare collision runs</summary>
+      <div class="cmp-pick">
+        <label class="inline">A <select id="cmpA" aria-label="Collision run A"></select></label>
+        <label class="inline">B <select id="cmpB" aria-label="Collision run B"></select></label>
+      </div>
+      <p id="cmpMsg" class="hint"></p>
+      <div id="cmpOut"></div>
     </details>
 
     <canvas id="timeline" aria-label="Run timeline"></canvas>

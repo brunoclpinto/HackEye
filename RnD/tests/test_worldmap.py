@@ -181,8 +181,10 @@ def test_worldmap_endpoints(tmp_path, monkeypatch):
     np.savez(d / "grids.npz", grids=wm.grids, t=wm.times, index=np.arange(wm.n, dtype=np.int32))
     hazards = {"settings": {"hfovDeg": HFOV, "cameraHeightM": CAM_H, "lateralOffsetM": 0.0}, "projection": "rectilinear",
                "distanceSource": "ground", "frames": [{"t": float(t), "horizonY": HORIZON, "ego": f["ego"]} for t, f in zip(wm.times, wm.frames)]}
-    (d / "hazards.json").write_text(json.dumps(hazards))
-    (d / "run.json").write_text(json.dumps({"id": run, "request": {"recording": "x"}, "status": "done", "classNames": NAMES}))
+    (d / "collisions" / "c1").mkdir(parents=True)
+    (d / "collisions" / "c1" / "hazards.json").write_text(json.dumps(hazards))
+    (d / "run.json").write_text(json.dumps({"id": run, "request": {"recording": "x"}, "status": "done", "classNames": NAMES,
+                                            "collisions": ["c1"], "collisionSeq": 1}))
     c = TestClient(server.app)
     assert c.get(f"/api/runs/{run}/worldmap").json() == {"exists": False}
     assert c.get(f"/api/runs/{run}/worldmap/0.png").status_code == 404
@@ -206,11 +208,11 @@ def test_worldmap_endpoints(tmp_path, monkeypatch):
     assert c.get(f"/api/runs/{run}/worldmap/cell?i=5&col=100&row=199").json()["aheadM"] == 0.1
     assert c.get(f"/api/runs/{run}/worldmap/cell?i=5&col=100&row=200").status_code == 422
     assert c.get(f"/api/runs/{run}/worldmap/cell?i={wm.n}&col=1&row=1").status_code == 404
-    with np.load(d / "worldmap.npz") as z:
+    with np.load(d / "collisions" / "c1" / "worldmap.npz") as z:
         assert z["surface"].shape == z["object"].shape == z["classes"].shape and list(z["origin"]) == [100, 200]
     pose = c.get(f"/api/runs/{run}/worldmap/pose.json").json()
     assert len(pose["pose"]) == wm.n and pose["pose"][-1][1] > 1.0
-    (d / "hazards.json").unlink()
+    (d / "collisions" / "c1" / "hazards.json").unlink()
     assert c.post(f"/api/runs/{run}/worldmap").status_code == 404
 
 

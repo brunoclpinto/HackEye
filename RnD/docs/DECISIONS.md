@@ -1146,3 +1146,22 @@ The remaining gap rays at 30 / 120 / 200 s are runs of 17–129 unknown cells: a
 ### v26.2.7 follow-up — world map cache busting (no version bump)
 **Why.** The user re-ran collision on the new `5fda5626e808` and saw the old map. The run id is deterministic, so the snapshot URLs were the same as the wiped pre-v26.2.7 run's, and the PNGs are served with `max-age=86400`: the browser kept the old tiles. The stored map was the new one (gap rays at 0 / 1 / 3 s: 3 / 5 / 4).
 **Fix (Sonnet worker, Opus review).** `GET /worldmap` adds `builtAt` (the npz mtime in ns). The panel appends `?v=<builtAt>` to the snapshot PNGs, `pose.json` and `/worldmap/cell` (the server ignores it). `mask.png` / `classes.png` / `depth/{i}.png` are left as they are: a re-run never rewrites them, and new content means a new run id. Remaining risk: a wipe that re-creates the same id after a pipeline change without an `ANALYSIS_VERSION` bump. Unit 652 passed / 6 skipped; world map E2E 8 passed.
+
+## v26.2.8 — collision re-runs with their own ids, kept side by side, compared A / B (plan [`plans/v26.2.8.md`](plans/v26.2.8.md); user request 2026-10-31; choices by the user: switch + A/B diff, always a new id, reviews per re-run, bump with wipe; Lab version bumped and wiped: run `5fda5626e808` removed; collision + worldmap output unchanged)
+
+**Why.** The user: "i also need run id for collision re-runs, cause i will be comparing behaviours and results between multiple configurations". A re-run overwrote the run's only collision result. No reviews were pending, so there were no fixtures to save.
+
+**What was built (Sonnet worker, Opus review).**
+- **Collision runs** `c1`, `c2`, …: sequential per analysis run, never reused (`collisionSeq`; a deleted or failed id stays burnt; a forced re-analysis starts again at `c1`). Every re-run makes a new id, even with identical settings. Each lives in `runs/<runId>/collisions/<cid>/` (`hazards.json`, `events.json`, `worldmap.npz`, `collision.json` with the stored settings, the resolved settings, the overrides, a label and counts). The analysis job makes `c1`.
+- **Config overrides:** `POST /collision` takes `{"overrides": {"collision": {...}, "worldmap": {...}}}`, dotted keys that must exist and keep their JSON type (422 otherwise). They are applied to in-memory copies for that pass only; the worldmap overrides reach the collision pass's online map (`run_collision(..., worldmap_config=)`) and `worldmap_pass`.
+- **API:** every collision-reading endpoint takes `collision=<cid>` (missing = the latest); caches are keyed by (run, cid). New: `GET /collisions`, `PATCH` / `DELETE /collisions/{cid}` (409 for the only one or a reviewed one), `GET /collisions/compare?a=&b=` (differing settings / resolved / overrides keys, counts, and speech + beeps as same / changed / only A / only B, matched within 1.0 s, nearest first).
+- **Reviews:** verdicts store `collisionId` and show under their collision run; the export carries `collisionId` with that run's settings, resolved settings and overrides. Added notes (`added` annotations) stay per recording (worker deviation: keeps the audio preview and counts stable).
+- **Lab:** `#collBar` after the run badge (`#collSel` `c<n> · label or the settings that differ from c1 · HH:MM`, `#collLabel`, `#collDel`), kept per run in localStorage; **Config overrides** `#collOverrides` in the Collision settings box (Re-run selects the new id); a collapsed **Compare** section `#secCompare` above the timeline (A / B selects, settings table, counts, changed / only A / only B lists that seek on click).
+- **Opus fix in review:** the compare panel rendered once per pending request (re-run, select and label save each asked), tripling its rows; only the latest request renders now.
+
+**Tests.** Unit **664 passed, 6 skipped** (12 new in `tests/test_collision_runs.py`). Browser E2E **81 passed** (4 new in `tests/e2e/test_collision_runs.py`; the compare test passed after the fix above, together with the world map tests; the other 69 passed in the full run before it).
+
+### Known / possible issues (shipped on purpose; user rule: don't block)
+1. **Disk:** each collision run stores its own hazards.json (~28 MB) and worldmap.npz (~53 MB) for a 454 s run, so ~80 MB per re-run; delete the ones you no longer need.
+2. **Added notes are shared** by every collision run of a recording (only verdicts are per collision run).
+3. **Overrides are free text JSON:** only existence and type are checked, not the value range.

@@ -21,7 +21,7 @@ h1 { font-size: 16px; margin: 0; }
 .ver { font-size: 11px; }
 h2 { font-size: 14px; margin: 16px 0 6px; }
 
-.top { display: flex; gap: 12px; align-items: baseline; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.top { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); align-items: start;
   grid-template-areas: "viewer viewer" "sidebar main" "review review"; }
 #viewer { grid-area: viewer; }
@@ -273,3 +273,25 @@ button.link[hidden] { display: none; }
 .iss-lines li { overflow-wrap: anywhere; }
 .iss-detail code { background: var(--panel); border-radius: 3px; padding: 0 3px; }
 .iss-detail .rv-note { display: block; width: 100%; margin-top: 4px; }
+
+/* Collision runs (v26.2.8): the selector next to the run badge, the compare section */
+.collbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+.collbar select { max-width: 100%; min-width: 0; }
+.collbar label { display: flex; gap: 6px; align-items: center; min-width: 0; font-size: 12px; color: var(--muted); }
+.collbar input { width: 12em; max-width: 100%; }
+.collbar[hidden] { display: none; }
+.hint.err { color: var(--imminent); }
+#collOverrides { width: 100%; min-width: 0; box-sizing: border-box; font-size: 12px; }
+@media (max-width: 899px) { .collbar { flex: 1 1 100%; } .collbar label { flex: 1 1 100%; } .collbar select { flex: 1; } #collOverrides { font-size: 16px; } }
+.compare .cmp-pick { display: flex; flex-wrap: wrap; gap: 8px; }
+.compare .cmp-pick label { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.compare .cmp-pick select { min-width: 0; max-width: 100%; }
+.cmp-scroll { overflow-x: auto; max-width: 100%; }
+.cmp-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.cmp-table th, .cmp-table td { text-align: left; padding: 2px 8px 2px 0; vertical-align: top; overflow-wrap: anywhere; }
+.cmp-list { list-style: none; padding: 0; margin: 4px 0; }
+.cmp-list button { display: flex; gap: 8px; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--border);
+  border-radius: 0; padding: 3px 2px; min-height: 32px; font-size: 12px; align-items: baseline; }
+.cmp-list .cmp-t { flex: none; color: var(--muted); }
+.cmp-list .cmp-x { min-width: 0; overflow-wrap: anywhere; }
+.cmp-sub { margin: 6px 0 2px; font-weight: 600; font-size: 12px; }

@@ -125,7 +125,7 @@ export class WorldMapPanel {
     const sel = this.sel;
     if (!sel || !this.run || !this.meta?.exists) { this.renderCell(); return; }
     if (this.k < 0) { this.cellData = null; this.cellKey = ""; this.renderCell(); return; }
-    const key = `${this.run.id}|${this.meta.builtAt ?? ""}|${this.k}|${sel.col}|${sel.row}`;
+    const key = `${this.run.id}|${this.run.collisionId ?? ""}|${this.meta.builtAt ?? ""}|${this.k}|${sel.col}|${sel.row}`;
     if (key === this.cellKey) { this.renderCell(); return; }
     this.cellKey = key;
     const token = this.token;
@@ -217,14 +217,17 @@ export class WorldMapPanel {
 
   /** Cache-busting query from the map's build time (`builtAt`): the PNGs are cached for a day and a re-run rebuilds the map under the same URL. */
   vq(sep, meta = this.meta) {
-    return meta?.builtAt ? `${sep}v=${encodeURIComponent(meta.builtAt)}` : "";
+    const p = [];
+    if (this.run?.collisionId) p.push(`collision=${encodeURIComponent(this.run.collisionId)}`);   // v26.2.8: the collision run's map
+    if (meta?.builtAt) p.push(`v=${encodeURIComponent(meta.builtAt)}`);
+    return p.length ? sep + p.join("&") : "";
   }
 
   async loadMeta() {
     const id = this.run?.id, token = this.token;
     if (!id) return;
     try {
-      const meta = await api(`/api/runs/${id}/worldmap`, { quiet: true });
+      const meta = await api(`/api/runs/${id}/worldmap${this.vq('?', null)}`, { quiet: true });
       if (token !== this.token) return;
       this.meta = meta;
       if (meta.exists) {

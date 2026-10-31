@@ -3038,9 +3038,9 @@ class _StaticMap:
     (``ghost``): its cells are looked up again at the dead-reckoned position until they are passed or decayed."""
 
     def __init__(self, wmod, grids, times, class_names, config: dict, settings, lat_off: float, projection: str, source: str,
-                 lane_half: float, step_len: float, obj_mode: str = "depth"):
+                 lane_half: float, step_len: float, obj_mode: str = "depth", wcfg: dict | None = None):
         roles = config["roles"]
-        wcfg = wmod.load_config()
+        wcfg = wcfg if wcfg is not None else wmod.load_config()
         wsettings = {"hfovDeg": settings.hfov_deg, "cameraHeightM": settings.camera_height_m, "lateralOffsetM": lat_off,
                      "projection": projection, "distanceSource": source, "objectDistance": obj_mode,
                      "useHorizon": bool(getattr(settings, "use_horizon", True))}
@@ -3350,7 +3350,7 @@ def _motion_series(motion: dict | None, hfov_deg: float, ego_cfg: dict):
 
 
 def run_collision(grids, times, class_names, config, settings, motion=None, depth=None,
-                  window=None, sounds=None) -> tuple[dict, dict]:
+                  window=None, sounds=None, worldmap_config=None) -> tuple[dict, dict]:
     """Per-frame hazards and the speech/tone event list. ``motion`` = {"t","dx","dy"} arrays or None.
 
     ``sounds`` (v26.1.16): the Lab's sound profile ({"kinds": {...}, "speechRate"}, see ``resolve_sounds``) or None = the defaults of
@@ -3435,7 +3435,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         gd_geo = groundfuse.Geometry(gh, gw, settings.hfov_deg, projection, settings.camera_height_m)
         corrector = groundfuse.Corrector(gd_cfg, gd_geo)
         hsig = groundfuse.HorizonSigma(gd_cfg, gh)
-        surf_lut = worldmap.class_kinds(worldmap.load_config(), list(class_names)) == worldmap.KIND_SURFACE
+        surf_lut = worldmap.class_kinds(worldmap_config if worldmap_config is not None else worldmap.load_config(), list(class_names)) == worldmap.KIND_SURFACE
     if depth is not None and len(depth["t"]):
         depth_t = np.asarray(depth["t"], dtype=float)
         depth_maps = depth["depth"]
@@ -3458,7 +3458,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     smap = None                                # v26.2.1: the online world map the static rules read (roles.staticSource "map")
     if roles.get("staticSource", "image") == "map" and n:
         import worldmap
-        smap = _StaticMap(worldmap, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode)
+        smap = _StaticMap(worldmap, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode, wcfg=worldmap_config)
     map_ms: list[float] = []
     under_rows = int(config["surfaces"].get("passUnderRows", 6))
     under_gone_s = float(config["surfaces"].get("passUnderGoneSeconds", 1.5))

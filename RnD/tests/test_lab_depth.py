@@ -238,7 +238,7 @@ def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth
         n = len(g["t"])
         times = g["t"]
     assert n == 15 and passes == [RUN]
-    assert (d / "hazards.json").exists()      # the real collision pass accepted depth=... and the new settings
+    assert (d / "collisions" / "c1" / "hazards.json").exists()      # the real collision pass accepted depth=... and the new settings
     if use_depth:
         with np.load(d / "depth.npz") as z:
             assert z["depth"].shape == (n, 68, 120) and z["depth"].dtype == np.float16
@@ -281,7 +281,7 @@ def test_collision_pass_passes_the_anchor_mode(fake, monkeypatch, variant, units
              units=np.array(units), **extra)
     seen = {}
 
-    def fake_run(grids, times, names, config, settings, motion=None, depth=None, sounds=None):
+    def fake_run(grids, times, names, config, settings, motion=None, depth=None, sounds=None, worldmap_config=None):
         seen.update(depth=depth, source=settings.distance_source)
         return {"frames": []}, {"events": []}
     monkeypatch.setattr(collision, "run_collision", fake_run)

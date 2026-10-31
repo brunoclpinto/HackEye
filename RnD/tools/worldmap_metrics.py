@@ -138,7 +138,7 @@ def main() -> None:
     names = doc["classNames"]
     with np.load(rd / "grids.npz") as z:
         grids, times = z["grids"], z["t"]
-    hazards = json.loads((rd / "hazards.json").read_text())
+    hazards = json.loads((rd / "collisions" / (doc.get("collisions") or ["c1"])[-1] / "hazards.json").read_text())      # v26.2.8: the latest collision run
     depth = None
     if (rd / "depth.npz").exists():
         with np.load(rd / "depth.npz") as z:

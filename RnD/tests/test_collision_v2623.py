@@ -355,5 +355,5 @@ def test_collision_pass_passes_the_two_settings_on(fake, monkeypatch):
     monkeypatch.setattr(col, "run_collision", spy)
     analysis.collision_pass("0123456789ab")
     assert (seen["s"].object_distance, seen["s"].use_horizon) == ("ground-contact", False)
-    hz = json.loads((d / "hazards.json").read_text())
+    hz = json.loads((d / "collisions" / "c1" / "hazards.json").read_text())
     assert (hz["settings"]["objectDistance"], hz["settings"]["useHorizon"]) == ("ground-contact", False)
