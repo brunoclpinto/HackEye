@@ -22,7 +22,7 @@ ROLES = CONFIG["roles"]
 
 
 def test_version_and_config_are_unchanged_in_the_numbers_that_matter():
-    assert CONFIG["version"] == "v26.2.5"
+    assert CONFIG["version"] == "v26.2.7"
     assert ROLES["egoMedianSeconds"] == 3.0 and CONFIG["speech"]["peopleMotionWaitSeconds"] == 1.5
     assert CONFIG["speech"]["priorityMinGapSeconds"] == 1.0
 

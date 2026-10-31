@@ -401,9 +401,16 @@ def get_worldmap(run_id: str) -> dict:
     wm = _run_worldmap(run_id)
     n, h, w = wm["classes"].shape
     ms = wm["ms"]
+    # v26.2.7: the class ids of the wall faces and of the surfaces, for the Lab's wall line (the border between a face and a surface cell)
+    import worldmap
+    names = list(_run(run_id).get("classNames") or [])
+    wcfg = worldmap.load_config()
+    kinds = worldmap.class_kinds(wcfg, names)
+    face_ids = [i for i, n_ in enumerate(names) if n_ in wcfg.get("faceClasses", ())]
+    surface_ids = [i for i in range(len(names)) if kinds[i] == worldmap.KIND_SURFACE]
     return {"exists": True, "frames": int(n), "cellM": float(wm["cellM"]), "origin": [int(v) for v in wm["origin"]],
             "width": int(w), "height": int(h), "msMean": round(float(ms.mean()), 2),
-            "msP95": round(float(np.percentile(ms, 95)), 2)}
+            "msP95": round(float(np.percentile(ms, 95)), 2), "faceClassIds": face_ids, "surfaceClassIds": surface_ids}
 
 
 @app.get("/api/runs/{run_id}/worldmap/pose.json")

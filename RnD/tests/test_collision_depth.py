@@ -220,8 +220,12 @@ def test_depth_lateral_follows_the_depth_distance():
     gd, _ = col.run_collision(*args, SETTINGS, None, depth_doc(10, 20.0))
     dd, _ = col.run_collision(*args, with_source("depth"), None, depth_doc(10, 20.0))
     a, b = last(gd), last(dd)
-    assert b["distanceM"] == 20.0 and b["lateralM"] == pytest.approx(a["lateralM"] * 20.0 / a["distanceM"], rel=0.02)
-    assert b["bearingDeg"] == a["bearingDeg"]
+    assert b["distanceM"] == 20.0 and b["bearingDeg"] == a["bearingDeg"]
+    # v26.2.7: the lateral is the lens ray of the base pixel at the depth distance (these settings are a fisheye): it grows linearly with the
+    # distance (same ray), and is narrower than the pinhole value the ground mode rescales (a pinhole lateral is ~45 % too wide off axis)
+    half, _ = col.run_collision(*args, with_source("depth"), None, depth_doc(10, 10.0))
+    assert b["lateralM"] == pytest.approx(2.0 * last(half)["lateralM"], rel=0.01)
+    assert 0.5 * a["lateralM"] * 20.0 / a["distanceM"] < b["lateralM"] < 0.9 * a["lateralM"] * 20.0 / a["distanceM"]
 
 
 def test_ground_mode_with_depth_is_identical_to_without_apart_from_depth_m():

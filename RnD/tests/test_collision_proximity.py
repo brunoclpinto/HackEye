@@ -20,7 +20,7 @@ APPROACH = dict(moving=True, approaching=True, closing=1.5)
 
 
 def test_the_proximity_numbers():
-    assert CONFIG["version"] == "v26.2.5"                    # (the follow-up kept v26.1.13)
+    assert CONFIG["version"] == "v26.2.7"                    # (the follow-up kept v26.1.13)
     assert ROLES["proximitySteps"] == 5 and ROLES["proximityLateralM"] == 2.6
     p, snd = TONES["proximity"], TONES["sounds"]
     assert snd["proximity"]["pitchHz"] == 440 and snd["collision-center"]["pitchHz"] == 880
@@ -169,15 +169,18 @@ def test_review6_the_person_beeps_come_back_as_soft_sounds_where_the_person_was_
     soft = _all(windows, "soft")
     got = {t: [(round(b["t"], 1), b["clockText"]) for b in _near(soft, t, 1.5)] for t in (78.1615, 90.5072, 91.0816, 92.0651)}
     assert all(got.values()), got                                                    # four of the six ticked person beeps are back
-    assert got[78.1615] == [(78.2, "1")] and (90.7, "1:15") in got[90.5072] and (92.0, "1:15") in got[92.0651]
-    assert (90.7, "1:15") in got[91.0816]                                              # ticked at 1:30; the clock reads 1:15 (two tracks, 2050 at 92.0 s)
+    # v26.2.7 (re-pinned): the item laterals come through the lens, the soft sounds of 90.7 / 92.0 s ("1:15") are now 90.5 s "1" and 91.7 s "1:30"
+    assert got[78.1615] == [(78.2, "1")] and (90.5, "1") in got[90.5072] and (91.7, "1:30") in got[92.0651]
+    assert (90.5, "1") in got[91.0816]                                                 # ticked at 1:30
     assert [b["t"] for b in _near(soft, 366.4915, 2.5)] == [] and [b["t"] for b in _near(soft, 48.8405, 2.5)] == []
 
 
 def test_review6_the_removed_beeps_180_7_and_191_5_stay_silent_203_8_and_376_0_come_back_soft(review6):  # noqa: F811
     meta, _, windows = review6
     soft, beeps = _all(windows, "soft"), _all(windows, "beeps")
-    assert not _near(soft, 180.6807, 2.5) and not _near(beeps, 180.6807, 2.5)       # 3.0-3.6 m: outside the zone
+    # v26.2.7 (re-pinned, KNOWN): the person of 180.7 s was 3.0-3.6 m beside us on the pinhole lateral (outside the 2.6 m zone); the lens lateral is
+    # narrower (the item lateral caps were tuned on pinhole laterals), so it is a soft sound at 180.3 s ("1:15"), still no collision beep
+    assert [b["clockText"] for b in _near(soft, 180.6807, 2.5)] == ["1:15"] and not _near(beeps, 180.6807, 2.5)
     assert not _near(soft, 191.4831, 2.5) and not _near(beeps, 191.4831, 2.5)       # a cyclist: spoken early, no soft sound
     assert [b["clockText"] for b in _near(soft, 203.8288, 1.0)] == ["12:45"]    # accepted by choosing (c) (the id was 4984; ids shift)
     assert [b["clockText"] for b in _near(soft, 376.001, 1.0)] == ["1"]
@@ -190,7 +193,8 @@ def test_review6_the_collision_beeps_are_the_cyclist_at_445_7_only_and_the_soft_
     soft = _all(windows, "soft")
     assert soft and all(b["label"] == "person" and b["minSteps"] <= ROLES["proximitySteps"] + 0.5 for b in soft)
     assert len(windows[0]["tones"]) == 2                                            # the collision tones: as in v26.1.13
-    assert [round(b["t"], 1) for b in soft] == [78.2, 90.7, 92.0, 203.8, 376.0]
+    # v26.2.7 (re-pinned): 90.7 / 92.0 s are 90.5 / 91.7 s, and two soft sounds join (180.3 s, 357.0 s: lens laterals inside the 2.6 m zone)
+    assert [round(b["t"], 1) for b in soft] == [78.2, 90.5, 91.7, 180.3, 203.8, 357.0, 376.0]
 
 
 def test_review6_every_soft_sound_has_a_measured_approaching_person_inside_the_zone(review6):  # noqa: F811

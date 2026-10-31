@@ -94,11 +94,17 @@ class Corrector:
         return old + a * (new - old)
 
     def update(self, t: float, region_mask: np.ndarray | None, dmap: np.ndarray | None, scale: float, horizon: float,
-               sigma_rows: float) -> dict | None:
-        """Fit this frame, smooth, and return the report (rounded; None while there is no ``ref``)."""
+               sigma_rows: float, extra: tuple | None = None) -> dict | None:
+        """Fit this frame, smooth, and return the report (rounded; None while there is no ``ref``).
+
+        ``extra`` (v26.2.7) = (depth m, lens ground z m) of wall bases that stand on a surface (``worldmap.face_contact_samples``): they join
+        the RANGE BINS only (never ``ref``, which stays the walking region's near field), each counting ``wallSampleWeight`` towards
+        ``minBinSamples``, with the weighted median in a bin. The curve then reaches the walls' range, past where the walking region ends.
+        The report gets ``"wallSamples": n`` when n > 0."""
         cfg = self.cfg
         dt = 0.0 if self.prev_t is None else max(0.0, t - self.prev_t)
         self.prev_t = t
+        n_wall = 0
         a = 1.0 if self.tau <= 0 else 1.0 - math.exp(-dt / self.tau)
         if region_mask is not None and dmap is not None and scale and scale > 0:
             rr, cc = np.nonzero(region_mask)
@@ -125,12 +131,26 @@ class Corrector:
                     else:
                         self.ref = (self._ema(self.ref[0], math.log(q_now), a), t)
                 if q_now is not None:
+                    wts = None
+                    if extra is not None and len(extra[0]):
+                        ev_, eg_ = np.asarray(extra[0], dtype=np.float64), np.asarray(extra[1], dtype=np.float64)
+                        okw = np.isfinite(ev_) & (ev_ > 0) & np.isfinite(eg_) & (eg_ > 0) & (eg_ <= float(cfg["fuseMaxM"]))
+                        ev_, eg_ = ev_[okw], eg_[okw]
+                        n_wall = int(ev_.size)
+                        if n_wall:
+                            v = np.concatenate([v, ev_])
+                            ratio = np.concatenate([ratio, ev_ / eg_])
+                            wts = np.concatenate([np.ones(v.size - n_wall), np.full(n_wall, float(cfg.get("wallSampleWeight", 5)))])
                     idx = np.digitize(v, self.edges)
                     for b in np.unique(idx):
                         sel = idx == b
-                        if int(sel.sum()) < int(cfg["minBinSamples"]):
+                        if (float(wts[sel].sum()) if wts is not None else int(sel.sum())) < int(cfg["minBinSamples"]):
                             continue
-                        ld, lr = math.log(float(np.median(v[sel]))), math.log(max(1e-3, float(np.median(ratio[sel])) / q_now))
+                        if wts is None:
+                            m_v, m_r = float(np.median(v[sel])), float(np.median(ratio[sel]))
+                        else:
+                            m_v, m_r = _wmedian(v[sel], wts[sel]), _wmedian(ratio[sel], wts[sel])
+                        ld, lr = math.log(m_v), math.log(max(1e-3, m_r / q_now))
                         old = self.bins.get(int(b))
                         if old is None or t - old[2] > self.hold or a >= 1.0:
                             self.bins[int(b)] = [ld, lr, t]
@@ -146,7 +166,17 @@ class Corrector:
         for d, r in pts:                                               # the squash only grows with range
             lowest = min(lowest, r)
             curve.append([round(d, 2), round(max(float(cfg["rhoMin"]), lowest), 3)])
-        return {"ref": round(math.exp(self.ref[0]), 3), "sigmaRows": round(float(sigma_rows), 2), "curve": curve}
+        rep = {"ref": round(math.exp(self.ref[0]), 3), "sigmaRows": round(float(sigma_rows), 2), "curve": curve}
+        if n_wall:
+            rep["wallSamples"] = n_wall
+        return rep
+
+
+def _wmedian(x: np.ndarray, w: np.ndarray) -> float:
+    """The weighted median: the first sorted value whose cumulative weight reaches half of the total."""
+    o = np.argsort(x, kind="stable")
+    c = np.cumsum(w[o])
+    return float(x[o][int(np.searchsorted(c, 0.5 * c[-1]))])
 
 
 def _prior_interp(d: np.ndarray, cfg: dict) -> np.ndarray:
@@ -189,13 +219,18 @@ class Geometry:
         self.f_pin = (gw / 2.0) / math.tan(math.radians(self.hfov) / 2.0)
 
 
-def ground_z(geo: Geometry, row_b, col_c, horizon: float):
-    """z-depth (m, along the optical axis) of the ground point seen at grid position (``row_b`` row coordinate, ``col_c`` column coordinate,
-    both float, pixel centres at +0.5), for a flat floor ``cam_h`` below the camera and the horizon at ``horizon`` (fraction of the height;
-    it fixes the pitch: the ray of the horizon row on the centre column is level). nan above the horizon."""
+def _pitch(geo: Geometry, horizon: float) -> float:
+    """The camera pitch (rad, + = looking down) the horizon row implies: the ray of the horizon row on the centre column is level."""
+    off = geo.gh / 2.0 - horizon * geo.gh
+    return off / geo.f_eq if geo.fisheye else math.atan(off / geo.f_pin)
+
+
+def ray_dir(geo: Geometry, row_b, col_c):
+    """(xn, yn): the normalised camera ray (x right, y down, z = 1 along the optical axis) of grid position (``row_b`` row coordinate,
+    ``col_c`` column coordinate, floats, pixel centres at +0.5): the equidistant fisheye's or the pinhole's. nan where a fisheye ray points
+    (almost) sideways or backwards."""
     row_b, col_c = np.broadcast_arrays(np.asarray(row_b, dtype=np.float64), np.asarray(col_c, dtype=np.float64))
     px, py = col_c - geo.gw / 2.0, row_b - geo.gh / 2.0
-    off = geo.gh / 2.0 - horizon * geo.gh
     if geo.fisheye:
         r = np.hypot(px, py)
         theta = r / geo.f_eq
@@ -203,15 +238,62 @@ def ground_z(geo: Geometry, row_b, col_c, horizon: float):
         with np.errstate(divide="ignore", invalid="ignore"):
             k = np.where(r > 0, np.tan(theta) / np.maximum(r, 1e-12), 1.0 / geo.f_eq)
         xn, yn = k * px, k * py
-        phi = off / geo.f_eq
         ok = ct > 1e-3
-    else:
-        xn, yn = px / geo.f_pin, py / geo.f_pin
-        phi = math.atan(off / geo.f_pin)
-        ok = np.ones(px.shape, dtype=bool)
+        return np.where(ok, xn, np.nan), np.where(ok, yn, np.nan)
+    return px / geo.f_pin, py / geo.f_pin
+
+
+def ground_z(geo: Geometry, row_b, col_c, horizon: float, cam_h: float | None = None):
+    """z-depth (m, along the optical axis) of the ground point seen at grid position (``row_b`` row coordinate, ``col_c`` column coordinate,
+    both float, pixel centres at +0.5), for a flat floor ``cam_h`` (default ``geo.cam_h``) below the camera and the horizon at ``horizon``
+    (fraction of the height; it fixes the pitch: the ray of the horizon row on the centre column is level). nan above the horizon."""
+    xn, yn = ray_dir(geo, row_b, col_c)
+    phi = _pitch(geo, horizon)
+    h = geo.cam_h if cam_h is None else float(cam_h)
     down = yn * math.cos(phi) + math.sin(phi)
     with np.errstate(divide="ignore", invalid="ignore"):
-        return np.where(ok & (down > 1e-4), geo.cam_h / down, np.nan)
+        return np.where(down > 1e-4, h / down, np.nan)
+
+
+def ground_point(geo: Geometry, row_b, col_c, horizon: float, cam_h: float | None = None):
+    """v26.2.7: the floor point seen at grid position (``row_b``, ``col_c``): (forward m, right m) in the level frame of the camera (the
+    horizon's pitch removed; camera axis, no body offset). forward = z (cos phi - yn sin phi), right = xn z. nan above the horizon. This is
+    the ONE lens ground geometry of the map's surfaces, the object bases and the items (the collision pass's old pinhole formulas are
+    1.2 - 1.8 times off on the 118 deg fisheye)."""
+    xn, yn = ray_dir(geo, row_b, col_c)
+    z = ground_z(geo, row_b, col_c, horizon, cam_h)
+    phi = _pitch(geo, horizon)
+    return z * (math.cos(phi) - yn * math.sin(phi)), xn * z
+
+
+def ground_pixel(geo: Geometry, fwd, right, horizon: float, cam_h: float | None = None):
+    """v26.2.7: the exact inverse of ``ground_point``: the float grid position (row coordinate, column coordinate) that sees the floor point
+    (``fwd`` m forward, ``right`` m right). nan where the point is not in front of the camera."""
+    fwd, right = np.broadcast_arrays(np.asarray(fwd, dtype=np.float64), np.asarray(right, dtype=np.float64))
+    phi = _pitch(geo, horizon)
+    h = geo.cam_h if cam_h is None else float(cam_h)
+    cp, sp = math.cos(phi), math.sin(phi)
+    z = fwd * cp + h * sp
+    y = h * cp - fwd * sp
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ok = z > 1e-6
+        xn, yn = np.where(ok, right / z, np.nan), np.where(ok, y / z, np.nan)
+        if geo.fisheye:
+            rho = np.hypot(xn, yn)
+            r = np.arctan(rho) * geo.f_eq
+            k = np.where(rho > 0, r / np.maximum(rho, 1e-12), geo.f_eq)
+            px, py = k * xn, k * yn
+        else:
+            px, py = xn * geo.f_pin, yn * geo.f_pin
+    return py + geo.gh / 2.0, px + geo.gw / 2.0
+
+
+def lateral_at(geo: Geometry, row_b, col_c, fwd, horizon: float):
+    """v26.2.7: the right offset (m, camera axis) of the pixel's ray at the forward distance ``fwd``: xn fwd / (cos phi - yn sin phi)."""
+    xn, yn = ray_dir(geo, row_b, col_c)
+    phi = _pitch(geo, horizon)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return xn * np.asarray(fwd, dtype=np.float64) / (math.cos(phi) - yn * math.sin(phi))
 
 
 def ground_m(geo: Geometry, row_b, col_c, horizon: float, rep: dict | None, sigma_rows: float | None = None):

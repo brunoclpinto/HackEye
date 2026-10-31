@@ -60,6 +60,25 @@ export function itemsNear(frame, ahead, right) {
   return out;
 }
 
+/** v26.2.7: the wall line. Segments (in cell units, [x1, y1, x2, y2]) on every border between a cell of a face class (`faceIds`: building, wall...)
+ *  and a 4-neighbour cell of a surface class (`surfIds`) of the snapshot `grid` (Uint8Array SIZE x SIZE, 255 = unknown). */
+export function wallEdgeSegments(grid, faceIds, surfIds, size = SIZE) {
+  const face = new Uint8Array(256), surf = new Uint8Array(256), segs = [];
+  for (const i of faceIds ?? []) face[i] = 1;
+  for (const i of surfIds ?? []) surf[i] = 1;
+  if (!(faceIds?.length && surfIds?.length)) return segs;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (!face[grid[r * size + c]]) continue;
+      if (c + 1 < size && surf[grid[r * size + c + 1]]) segs.push([c + 1, r, c + 1, r + 1]);
+      if (c > 0 && surf[grid[r * size + c - 1]]) segs.push([c, r, c, r + 1]);
+      if (r + 1 < size && surf[grid[(r + 1) * size + c]]) segs.push([c, r + 1, c + 1, r + 1]);
+      if (r > 0 && surf[grid[(r - 1) * size + c]]) segs.push([c, r, c + 1, r]);
+    }
+  }
+  return segs;
+}
+
 export class WorldMapPanel {
   /** `getStyle` = () => MaskStyle | null; `getFrames` = () => windowed hazards frames; `isPlaying` = () => bool. */
   constructor({ getStyle, getFrames, isPlaying }) {
@@ -115,7 +134,7 @@ export class WorldMapPanel {
       .catch(() => { if (token === this.token && key === this.cellKey) { this.cellData = null; this.renderCell(); } });
   }
 
-  /** The text of the box under the map: the selected cell at the current frame. A never-observed cell (no surface, no object, no item) reads only "unmapped". */
+  /** The text of the box under the map: the selected cell at the current frame. A never-observed cell (no surface, no object, no item) reads its coordinate line and "unmapped" (v26.2.7). */
   cellText() {
     if (!this.sel) return "Click the map to read a cell.";
     const { col, row } = this.sel;
@@ -152,10 +171,11 @@ export class WorldMapPanel {
     };
     const surface = d.layers ? d.surface : d.combined;      // maps built before v26.2.4 have one class per cell
     const obj = d.layers ? d.object : null;
-    if (surface === null && obj === null && !items.length && !hit) return "unmapped";
     const dist = Math.hypot(ahead, right), bearing = Math.atan2(right, ahead) * 180 / Math.PI;
     const step = this.stepM || DEFAULT_STEP_M;
-    const lines = [`${clockText(clockQuarter(bearing))} · ${(dist / step).toFixed(1)} steps · ${ahead.toFixed(1)} m ahead · ${Math.abs(right).toFixed(1)} m ${right < 0 ? "left" : "right"} · cell col ${col} row ${row}`,
+    const where = `${clockText(clockQuarter(bearing))} · ${(dist / step).toFixed(1)} steps · ${ahead.toFixed(1)} m ahead · ${Math.abs(right).toFixed(1)} m ${right < 0 ? "left" : "right"} · cell col ${col} row ${row}`;
+    if (surface === null && obj === null && !items.length && !hit) return `${where}\nunmapped`;       // v26.2.7: an unmapped cell has its coordinates too
+    const lines = [where,
       `Region: ${surface === null ? "none observed" : name(surface) + level(surface)}`,
       `Object: ${hit ? itemLine(hit) + (obj === null ? "" : ` · map: ${name(obj)}${level(obj)}`) : obj === null ? "none" : name(obj) + level(obj)}`];
     for (const it of items) lines.push(`Item: ${it}`);
@@ -369,14 +389,17 @@ export class WorldMapPanel {
     const hw = CORRIDOR_HALF_M / CELL_M * s, len = CORRIDOR_STEPS * stepPx;
     ctx.fillStyle = "rgba(255,45,45,0.12)"; ctx.fillRect(ux - hw, uy - len, 2 * hw, len);
     ctx.strokeStyle = "rgba(255,120,120,0.9)"; ctx.lineWidth = 1.5; ctx.strokeRect(ux - hw, uy - len, 2 * hw, len);
-    // v26.2.2: the face / edge test of the walls the map judges (always drawn since v26.2.6): fitted wall lines, face and edge cells
+    // v26.2.7: the wall line = the building's edge: every border between a face-class cell and a surface cell of the snapshot shown
+    const segs = grid ? wallEdgeSegments(grid, this.meta?.faceClassIds, this.meta?.surfaceClassIds) : [];
+    this.canvas.dataset.wallEdges = String(segs.length);
+    if (segs.length) {
+      ctx.strokeStyle = "rgba(255,230,0,0.95)"; ctx.lineWidth = 2; ctx.beginPath();
+      for (const [x1, y1, x2, y2] of segs) { ctx.moveTo(x1 * s, y1 * s); ctx.lineTo(x2 * s, y2 * s); }
+      ctx.stroke();
+    }
+    // v26.2.2: the face / edge test of the walls the map judges (always drawn since v26.2.6): face and edge cells (the fitted lines are not drawn since v26.2.7)
     if (frame) {
       const cellPx = Math.max(2, s);
-      for (const [side, ln] of Object.entries(frame.faceEdgeLines ?? {})) {
-        if (!ln) continue;
-        ctx.strokeStyle = "rgba(255,230,0,0.95)"; ctx.lineWidth = 2; ctx.beginPath();
-        ctx.moveTo(ux + (ln.a / CELL_M) * s, uy); ctx.lineTo(ux + ((ln.a + ln.b * 8) / CELL_M) * s, uy - (8 / CELL_M) * s); ctx.stroke();
-      }
       for (const h of frame.hazards ?? []) {
         const fe = h.faceEdge;
         if (!fe) continue;

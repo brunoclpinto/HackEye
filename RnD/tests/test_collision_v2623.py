@@ -19,7 +19,7 @@ from lab import analysis, recordings, server
 from tests.test_collision_regression import FIXTURES
 from tests.test_orientation import GOLDEN_CHEST0004_REVIEW7
 
-GOLDEN_V2622 = "7cac303fe7b9e9e9e99624f61dda8ab5f2c382f2a7f3b49dbe11b28677b1cd29"      # v26.2.5 re-pin (was 3d5d983c...): the map now sees the walls as continuous faces (events: review7 window 0 speech: building 13.50 "12 in 8" instead of "11:45 in 8", beeps 15.67 "12" instead of 15.33 "12:15") and frame 0-1 carry a depth scale; before: the v26.2.2 collision output; re-pinned v26.2.4: same events, 2 of 120 frames differ in item values at the 20 m snapshot edge (was e356b6ec...) of chest0004_review7
+GOLDEN_V2622 = "9e901793cabf339098eee0da3ddb78b0c94df2daf9697c0f7fbd5c2969c47093"      # v26.2.7 re-pin (was 7cac303f...): item laterals through the lens (narrower), faces at the ground contact of their base row, buildings hide the surfaces behind them, seams closed; speech/beep changes on chest0004_review7 (default depth mode): 1.33 "person at 12 in 10" (was 2.0 "12:15 in 10"), new 2.84 "building at 12:15 in 7", 13.0 "building at 12:15 in 5" (was 13.5 "12 in 8"), the 6.17 "building at 1:30 in 2" is gone, collision beeps 4.5 c12, 6.67 r1, 13.66 c12, 15.33 c12, 16.58 r1, 17.53 c12 (were 6.01, 15.67, 17.67 c12; 18.03 r1 stays as 18.02). Older: v26.2.5 re-pin (was 3d5d983c...): the map now sees the walls as continuous faces (events: review7 window 0 speech: building 13.50 "12 in 8" instead of "11:45 in 8", beeps 15.67 "12" instead of 15.33 "12:15") and frame 0-1 carry a depth scale; before: the v26.2.2 collision output; re-pinned v26.2.4: same events, 2 of 120 frames differ in item values at the 20 m snapshot edge (was e356b6ec...) of chest0004_review7
 GH, GW, HFOV, CAM_H, HORIZON = 135, 240, 118.0, 1.3, 0.45
 F_PX = col.focal_px(GW, HFOV)
 GEO = groundfuse.Geometry(GH, GW, HFOV, "fisheye", CAM_H)
@@ -31,7 +31,7 @@ REP = {"ref": 1.45, "sigmaRows": 0.6, "curve": [[5.0, 1.0], [12.0, 1.0]]}
 
 def test_config_and_defaults():
     cfg = col.load_config()
-    assert cfg["version"] == "v26.2.5" == worldmap.load_config()["version"]
+    assert cfg["version"] == "v26.2.7" == worldmap.load_config()["version"]
     d = cfg["distance"]
     assert d["objectDistance"] == "depth" and d["useHorizon"] is True      # measured worse than depth on the user's ticks (DECISIONS v26.2.3)
     assert set(d["groundDepth"]) >= {"minRowsBelowHorizon", "binEdgesM", "emaSeconds", "holdSeconds", "extrapolate", "priorCurve", "depthRelErr",
@@ -211,7 +211,7 @@ def test_depth_reproduces_v2622_byte_for_byte_and_horizon_off_keeps_the_depth_di
                 continue
             tot += 1
             same += b["distanceM"] == h["distanceM"] and b.get("depthM") == h.get("depthM")
-    assert tot > 200 and same / tot > 0.97
+    assert tot > 200 and same / tot > 0.95                 # v26.2.7: 96.6 % (was > 0.97): the horizon-off map is built through the depth map, the default one through the lens ground, so the walls they judge differ a little more
     for k in ("depth", "off"):
         assert not any("depthCorrection" in f for f in outputs[k][0]["frames"])
         assert not any("distanceSource" in h for f in outputs[k][0]["frames"] for h in f["hazards"])
@@ -225,7 +225,8 @@ def test_ground_depth_records_the_curve_and_the_source_of_every_distance(outputs
     with_curve = [f for f in doc["frames"] if "depthCorrection" in f]
     assert len(with_curve) > 0.5 * len(doc["frames"])
     rep = with_curve[-1]["depthCorrection"]
-    assert set(rep) == {"ref", "sigmaRows", "curve"} and 0.5 < rep["ref"] < 2.2 and rep["curve"] and len(rep["curve"][0]) == 2
+    assert set(rep) - {"wallSamples"} == {"ref", "sigmaRows", "curve"} and 0.5 < rep["ref"] < 2.2 and rep["curve"] and len(rep["curve"][0]) == 2
+    assert any(f["depthCorrection"].get("wallSamples", 0) > 0 for f in with_curve)         # v26.2.7: wall bases on a surface joined the range bins
     items = [h for f in doc["frames"] for h in f["hazards"] if "distanceSource" in h]
     assert items and {h["distanceSource"] for h in items} <= {"depth", "ground", "fused"}
     assert any(h["distanceSource"] == "fused" for h in items)

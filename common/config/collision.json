@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.5",
+  "version": "v26.2.7",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -124,13 +124,13 @@
                "depthLevelRange": [0.3, 5.0], "depthLevelMinSamples": 30, "anchorMinCells": 150, "anchorEmaSeconds": 0.4, "anchorHoldSeconds": 2.0, "anchorHorizon": "fixed", "depthRayModel": "lens",
                "initialAnchorFrames": 6, "initialAnchorMinFrames": 3, "recalibrateOnPathChange": false,
                "depthLevelPrior": "ground",
-               "objectDistance": "depth", "useHorizon": true,
+               "objectDistance": "depth", "useHorizon": true, "itemLens": "depth",
                "groundDepth": {"minRowsBelowHorizon": 4.0, "binEdgesM": [1, 3, 5, 7, 9, 11, 12, 13, 14, 15, 16, 17, 18, 20, 24, 30],
                                "minBinSamples": 25, "refGroundM": [2.0, 8.0], "refMinSamples": 80, "emaSeconds": 1.0, "holdSeconds": 2.0,
                                "extrapolate": "prior",
                                "priorCurve": [[5.8, 1.0], [12.7, 0.876], [14.4, 0.71], [15.1, 0.58], [16.0, 0.44], [17.6, 0.27]],
                                "rhoMin": 0.2, "maxCorrectedM": 45.0, "depthRelErr": 0.12, "rowSigma": 0.5, "sanityFactor": 0.7,
-                               "fuseMaxM": 40.0, "horizonWindowSeconds": 3.0, "fuse": true, "gate": true}, "levelModeByAnchor": {"plane": "none", "initial": "freeze", "per-frame": "continuous", "none": "continuous"}},
+                               "fuseMaxM": 40.0, "horizonWindowSeconds": 3.0, "fuse": true, "gate": true, "wallSampleWeight": 5}, "levelModeByAnchor": {"plane": "none", "initial": "freeze", "per-frame": "continuous", "none": "continuous"}},
   "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
                "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2,
                "motionMinRowsBelowHorizon": 8, "motionMinSeconds": 0.75, "peopleMotionMinSeconds": 0.45, "contactEma": 0.5,

@@ -748,6 +748,7 @@ class _FrameGeo:
     region_dilated: np.ndarray                # (H, W)
     floor_below: np.ndarray                   # (H, W) True where the pixel below is walking region
     lateral_offset_m: float = 0.0             # walking axis relative to the camera axis (+ = right), see _walking_axis_offset_m
+    lens: "groundfuse.Geometry | None" = None  # v26.2.7: the lens ground geometry of a fisheye run (None = the pinhole formulas, exact there)
 
 
 def _walking_axis_offset_m(settings: "CollisionSettings", heading_deg: float | None = None) -> float:
@@ -763,7 +764,7 @@ def _walking_axis_offset_m(settings: "CollisionSettings", heading_deg: float | N
 
 def _frame_geometry(gh: int, gw: int, horizon: float, camera_height_m: float, f: float, hfov_deg: float,
                     lane_half_m: float, region: Region | None, margin_px: int,
-                    projection: str = "rectilinear", lateral_offset_m: float = 0.0) -> _FrameGeo:
+                    projection: str = "rectilinear", lateral_offset_m: float = 0.0, lens_ground: bool = True) -> _FrameGeo:
     rows_bottom = (np.arange(gh) + 1.0) / gh
     below = rows_bottom > horizon + 1e-9
     # half width of the lane in px at each row = lane_half * f / distance
@@ -783,8 +784,29 @@ def _frame_geometry(gh: int, gw: int, horizon: float, camera_height_m: float, f:
     floor = np.zeros((gh, gw), dtype=bool)
     if region is not None:
         floor[:-1] = region.mask[1:]
+    # v26.2.7: the lens ground geometry of a fisheye run with depth distances. (Ground-distance runs keep the pinhole formulas: their gait
+    # scale k, fitted on pinhole closings, already absorbs the lens factor; correcting the distance as well would apply it twice.)
+    lens = groundfuse.Geometry(gh, gw, hfov_deg, projection, camera_height_m) if (projection == "fisheye" and lens_ground) else None
     return _FrameGeo(gh, gw, f, horizon, camera_height_m, hfov_deg, projection, below, lane, lane & dil, dil, floor,
-                     lateral_offset_m)
+                     lateral_offset_m, lens)
+
+
+def _ground_dist(geo: _FrameGeo, y_norm: float, col: float) -> float | None:
+    """Forward distance (m) of the floor point seen at the bottom edge ``y_norm`` (fraction of the grid height) of image column ``col``;
+    None at or above the horizon. v26.2.7: on a fisheye run through the lens (``groundfuse.ground_point``, 1.2 - 1.8 times the old pinhole
+    value on the 118 deg lens); on a rectilinear run the pinhole formula (exact there, unchanged)."""
+    if geo.lens is None:
+        return ground_distance_m(y_norm, geo.horizon, geo.camera_height_m, geo.gh, geo.f)
+    fwd = float(groundfuse.ground_point(geo.lens, y_norm * geo.gh, col + 0.5, geo.horizon)[0])
+    return fwd if math.isfinite(fwd) and fwd > 0.0 else None
+
+
+def _lateral_of(geo: _FrameGeo, row: float, col: float, dist: float) -> float:
+    """Camera-axis lateral (m, + right) of the pixel ``col`` at forward distance ``dist``; ``row`` = its bottom edge (row coordinate).
+    v26.2.7: through the lens on a fisheye run, the pinhole formula on a rectilinear one."""
+    if geo.lens is None:
+        return lateral_m((col + 0.5) / geo.gw, dist, geo.gw, geo.f)
+    return float(groundfuse.lateral_at(geo.lens, row, col + 0.5, dist, geo.horizon))
 
 
 @dataclass
@@ -933,7 +955,7 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                     on_row = cc[rr == rr.max()]
                     col = int((on_row.min() + on_row.max()) // 2)
                 contact_y = (row + 1) / gh
-                dist = ground_distance_m(contact_y, geo.horizon, geo.camera_height_m, gh, geo.f)
+                dist = _ground_dist(geo, contact_y, col)
                 if dist is None or dist > max_range:
                     continue
                 inreg = geo.region_dilated[rr, cc]
@@ -944,8 +966,8 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                 base = geo.floor_below[rr, cc]
                 along = False
                 if base.any():
-                    d_far = ground_distance_m((rr[base].min() + 1) / gh, geo.horizon, geo.camera_height_m, gh, geo.f)
-                    d_near = ground_distance_m((rr[base].max() + 1) / gh, geo.horizon, geo.camera_height_m, gh, geo.f)
+                    d_far = _ground_dist(geo, (rr[base].min() + 1) / gh, col)
+                    d_near = _ground_dist(geo, (rr[base].max() + 1) / gh, col)
                     along = bool(d_far and d_near and d_near / d_far < config["roles"]["alongPathRatio"])
                 lane_row = geo.lane[row]
                 cover = 0.0
@@ -956,7 +978,7 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict) 
                 main = _Item(
                     group=group, class_name=ids.names[cid],
                     bbox=[cc.min() / gw, rr.min() / gh, (cc.max() + 1) / gw, (rr.max() + 1) / gh],
-                    contact_y=contact_y, distance_m=dist, lateral_m=lateral_m(x, dist, gw, geo.f) + geo.lateral_offset_m,
+                    contact_y=contact_y, distance_m=dist, lateral_m=_lateral_of(geo, row + 1.0, col, dist) + geo.lateral_offset_m,
                     bearing=bearing, clock=clock_from_bearing(bearing),
                     clock_q=(cq := clock_quarter(bearing)), clock_text=clock_text(cq), pan=_pan_from_bearing(bearing),
                     area_frac=rr.size / (gh * gw), clipped=bool(rr.max() == gh - 1),
@@ -1000,14 +1022,14 @@ def _lane_part_item(main: _Item, rr: np.ndarray, cc: np.ndarray, geo: _FrameGeo,
     centre = float(lane_cols.mean()) if lane_cols.size else gw / 2.0 - 0.5
     col = int(on_row[np.argmin(np.abs(on_row - centre))])
     contact_y = (row + 1) / gh
-    dist = ground_distance_m(contact_y, geo.horizon, geo.camera_height_m, gh, geo.f)
+    dist = _ground_dist(geo, contact_y, col)
     if dist is None or dist > config["geometry"]["maxRangeM"]:
         return None
     x = (col + 0.5) / gw
     bearing = bearing_deg(x, geo.hfov_deg, geo.projection)
     return replace(
         main, contact_y=contact_y, contact_y_raw=contact_y, distance_m=dist,
-        lateral_m=lateral_m(x, dist, gw, geo.f) + geo.lateral_offset_m,
+        lateral_m=_lateral_of(geo, row + 1.0, col, dist) + geo.lateral_offset_m,
         bearing=bearing, clock=clock_from_bearing(bearing), clock_q=(cq := clock_quarter(bearing)), clock_text=clock_text(cq),
         pan=_pan_from_bearing(bearing), clipped=bool(row == gh - 1), touches=True, lane_hit=True, along_path=False,
         lane_cover=float(np.count_nonzero(sel & (rr == row))) / float(max(1, lane_cols.size)), lane_part=True, lane_part_weak=not flat,
@@ -3398,6 +3420,13 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     anchor_rows = float(trk["motionMinRowsBelowHorizon"])
     # v26.2.3: ground ray + depth (distance.objectDistance / useHorizon); active for depth distances with the horizon on
     gd_cfg = groundfuse.settings(dist_cfg)
+    # v26.2.7 (distance.itemLens): "depth" (default) = an item with a depth distance takes its lateral from the lens ray at that distance (the
+    # ground-distance fallback, tuned with the gait scale k on the pinhole formulas, stays as it was); "all" = also the ground distance of every
+    # contact row through the lens (then k must not absorb the lens factor any more: experiment); "off" = pinhole laterals
+    item_lens_mode = str(dist_cfg.get("itemLens", "depth"))
+    lens_all = item_lens_mode == "all" and source == "depth"
+    item_lens = (groundfuse.Geometry(gh, gw, settings.hfov_deg, projection, settings.camera_height_m)
+                 if projection == "fisheye" and item_lens_mode in ("depth", "all") else None)
     obj_mode = groundfuse.resolved_mode(getattr(settings, "object_distance", "depth"), getattr(settings, "use_horizon", True))
     gd_on = source == "depth" and depth is not None and obj_mode != "depth"
     corrector = hsig = surf_lut = None
@@ -3511,7 +3540,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         # 3. items
         k = scale.value                            # gait scale from the frames so far: metres are real-world
         geo = _frame_geometry(gh, gw, horizon, settings.camera_height_m * k, f, settings.hfov_deg, lane_half,
-                              region, roles["boundaryMarginPx"], projection, lat_off)
+                              region, roles["boundaryMarginPx"], projection, lat_off, lens_all)
         items = detect_items(grid, ids, geo, config)
         dmap = None
         if depth_maps is not None:
@@ -3570,7 +3599,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             else:
                 a_c = trk.get("contactEma", 0.5)
                 tr.contact_s = it.contact_y if tr.contact_s is None else a_c * it.contact_y + (1 - a_c) * tr.contact_s
-                d_s = ground_distance_m(tr.contact_s, horizon, settings.camera_height_m * k, gh, f)
+                d_s = _ground_dist(geo, tr.contact_s, it.base_col)
                 if d_s is not None and it.distance_m > 0:
                     it.lateral_m = (it.lateral_m - lat_off) * (d_s / it.distance_m) + lat_off
                     it.distance_m = d_s
@@ -3618,7 +3647,11 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         if gd_on:
             sig_rows = hsig.update(t, horizon)
             sc_total = None if (dmap is None or ds is None) else (ds * a_now if relative else ds)
-            dc_rep = corrector.update(t, None if region is None else region.mask, dmap, sc_total or 0.0, horizon, sig_rows)
+            # v26.2.7: the walls' bases that stand on a surface calibrate the depth curve where the walking region does not reach
+            walls = None
+            if smap is not None and dmap is not None and sc_total and float(gd_cfg.get("wallSampleWeight", 0)) > 0:
+                walls = worldmap.face_contact_samples(smap.ob, grid, dmap, sc_total, horizon)
+            dc_rep = corrector.update(t, None if region is None else region.mask, dmap, sc_total or 0.0, horizon, sig_rows, extra=walls)
         for it in items:
             if it.depth_raw is None or ds is None:
                 continue
@@ -3629,7 +3662,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 if dc_rep is not None:                 # v26.2.3: range-corrected depth fused with the ground ray of a base on a surface
                     d_use = _ground_depth_distance(it, tr, grid, surf_lut, horizon, gd_geo, gh, dc_rep, gd_cfg, obj_mode)
                 # metric now: no ground scale. Lateral keeps its bearing at the new distance.
-                if it.distance_m > 0:
+                if item_lens is not None and it.base_col >= 0:           # v26.2.7: the lens ray of the base pixel at the new distance
+                    y_l = tr.contact_s if tr.contact_s is not None else it.contact_y
+                    it.lateral_m = float(groundfuse.lateral_at(item_lens, y_l * gh, it.base_col + 0.5, d_use, horizon)) + lat_off
+                elif it.distance_m > 0:
                     it.lateral_m = (it.lateral_m - lat_off) * (d_use / it.distance_m) + lat_off
                 it.distance_m, it.from_depth = d_use, True
                 raw_c = _depth_closing(tr.dhist, t, trk.get("peopleMotionMinSeconds", trk["motionMinSeconds"])

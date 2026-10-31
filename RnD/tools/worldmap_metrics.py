@@ -1,6 +1,11 @@
 """World-map spike metrics (v26.2 step 1): cost, wall straightness, re-observation spread, drift proxy, extrusion.
 
-    python tools/worldmap_metrics.py <runId> [--wall-t0 10 --wall-t1 16] [--lateral-model collision|lens] [--json out.json]
+    python tools/worldmap_metrics.py <runId> [--wall-t0 10 --wall-t1 16] [--lateral-model collision|lens|geometry] [--json out.json]
+                                              [--rays 0,1,3,10,...]
+
+``--rays`` (v26.2.7): the ray scan of the stored snapshots at those times: building cells, *gap* rays (a ray from the user whose first face
+cell is preceded by unknown cells that follow a surface cell: the seam between a sidewalk and a building) and *through* rays (surface cells
+within 30 cells after the first face run: the street seen through a building). Needs a map built by this code (``worldmap.build``).
 
 Rebuilds the map in memory from the run's stored files (it does not write anything into the run).
 """
@@ -22,6 +27,38 @@ from lab import analysis  # noqa: E402
 
 WALL_CLASSES = ("building", "barrier wall")
 THIN = ("pole", "traffic-light", "traffic-light pedestrians", "traffic-sign", "sign")
+
+
+def ray_scan(classes: np.ndarray, face_lut: np.ndarray, kind: np.ndarray, size: int = 200, oc: int = 100, orow: int = 200,
+             half_deg: float = 80.0, step_deg: float = 0.5) -> dict:
+    """Rays from the user (every ``step_deg`` over +-``half_deg``) over one snapshot: {"gap", "through", "faceCells"} (see the module doc)."""
+    gaps = thru = 0
+    for a in np.radians(np.arange(-half_deg, half_deg + 1e-9, step_deg)):
+        seq: list[tuple[int, int]] = []
+        for k in range(1, 300):
+            ri, ci = int(orow - k * 0.5 * math.cos(a)), int(oc + k * 0.5 * math.sin(a))
+            if ri < 0 or ci < 0 or ci >= size or ri >= size:
+                break
+            if seq and seq[-1] == (ri, ci):
+                continue
+            seq.append((ri, ci))
+        vals = [int(classes[r, c]) for r, c in seq]
+        first = next((j for j, v in enumerate(vals) if v != worldmap.UNKNOWN and face_lut[v]), None)
+        if first is None:
+            continue
+        j, n = first - 1, 0
+        while j >= 0 and vals[j] == worldmap.UNKNOWN:
+            n += 1
+            j -= 1
+        if n > 0 and j >= 0 and kind[vals[j]] == worldmap.KIND_SURFACE:
+            gaps += 1
+        j = first
+        while j < len(vals) and vals[j] != worldmap.UNKNOWN and face_lut[vals[j]]:
+            j += 1
+        if any(v != worldmap.UNKNOWN and kind[v] == worldmap.KIND_SURFACE for v in vals[j:j + 30]):
+            thru += 1
+    cells = int(((classes != worldmap.UNKNOWN) & face_lut[np.minimum(classes, 255)]).sum())
+    return {"gap": gaps, "through": thru, "faceCells": cells}
 
 
 def tls_rms(pts: np.ndarray) -> tuple[float, float]:
@@ -92,6 +129,7 @@ def main() -> None:
     ap.add_argument("--wall-t0", type=float, default=10.0)
     ap.add_argument("--wall-t1", type=float, default=16.0)
     ap.add_argument("--lateral-model", default=None)
+    ap.add_argument("--rays", default=None, help="comma-separated times (s): the ray scan of the stored snapshots there")
     ap.add_argument("--set", action="append", default=[], help="config override key=value (json value)")
     ap.add_argument("--json", default=None)
     a = ap.parse_args()
@@ -166,6 +204,15 @@ def main() -> None:
     step = np.hypot(np.diff(pose[:, 0]), np.diff(pose[:, 1]))
     res["pose"] = {"pathLengthM": round(float(step.sum()), 1), "endXY": [round(float(pose[-1, 0]), 1), round(float(pose[-1, 1]), 1)],
                    "maxStepM": round(float(step.max()), 2), "maxSpeedMps": round(float((step / np.maximum(np.diff(times), 1e-6)).max()), 2)}
+    if a.rays:
+        face_lut = np.zeros(256, dtype=bool)
+        for cid, n_ in enumerate(names):
+            if n_ in cfg.get("faceClasses", ()):
+                face_lut[cid] = True
+        res["rays"] = {}
+        for tt in (float(x) for x in a.rays.split(",")):
+            i = int(np.argmin(np.abs(times - tt)))
+            res["rays"][f"{tt:g}"] = ray_scan(out["classes"][i], face_lut, kinds, cfg["snapshot"]["size"], oc, orow)
     print(json.dumps(res, indent=1))
     if a.json:
         Path(a.json).write_text(json.dumps(res, indent=1))

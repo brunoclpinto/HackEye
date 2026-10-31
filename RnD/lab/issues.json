@@ -1,6 +1,6 @@
 {
   "_about": "Issue catalogue shown in the Lab's Open issues panel (CONTRACTS 9.5). Maintained by Claude alongside plans/v26.2.md; the user's close/reopen/comments live in LAB_DIR/issues-state.json. Keep ids stable.",
-  "updatedAt": "2026-10-30",
+  "updatedAt": "2026-10-31",
   "groups": [
     {"id": "open", "title": "Open issues"},
     {"id": "decision", "title": "Needs your decision"},
@@ -28,6 +28,13 @@
      "details": ["At 105 s barrier-wall cells dropped 512 → 194; most were the stale cloud, not checked cell by cell.", "Far false faces from the depth squash (O1) are now drawn as clearer lines."]},
     {"id": "O9", "group": "open", "title": "World map: small objects missing from the object layer (v26.2.6)",
      "details": ["Chest-0004 0 s: the sidewalk-obstacle item at 1.6 m ahead / 0.6 m right has no object cells on the map (empty / sidewalk there).", "Since v26.2.6 a click on its marker reads it, but the map cells and the collision rules that read the map still miss it."]},
+
+    {"id": "O10", "group": "open", "title": "Speech: role side limits tuned on the old pinhole lateral (v26.2.7)",
+     "details": ["Item side positions now go through the fisheye lens; the side limits in metres (context 2.5, proximity 2.6, people 2.75, thin notice 2.5, beeps 0.9) were tuned on the old, too-wide values.", "Fixture ticks reproduced 47 → 39; review 6 132.34 / 179.5 said again, 180.3 proximity sound; review 8 27.3 s 'person standing at 11:30 in 8'; review 4 384.0 dropped. A uniform rescale only reaches 41: needs a per-rule retune. `distance.itemLens: off` = old behaviour for A/B."]},
+    {"id": "O11", "group": "open", "title": "World map: buildings said nearer at their ground contact (v26.2.7)",
+     "details": ["Facades sit where the sidewalk ends, ~1 m nearer than depth read them (review 7 13.0 s 'building at 12:15 in 5', was 'at 12 in 8').", "Wall-base depth / ground reaches 1.7 at 105 s and 1.3 at 120 s on Chest-0004: which one is right is not verified."]},
+    {"id": "O12", "group": "open", "title": "World map: some sidewalk still behind buildings (v26.2.7)",
+     "details": ["Thin one- or two-cell building slivers inside open sidewalk early in a run; real sidewalk under bridges.", "Unseen areas deeper than 0.5 m between ground and a building stay unknown on purpose (only seams are closed)."]},
 
     {"id": "5", "group": "decision", "title": "Beeps near people",
      "details": ["A person within 5 steps with unknown motion beeps, even 2–3 steps beside the path (`unknownMotionBeepSteps`, `movingLaneHalfWidthM`; v26.1.12).", "A receding person we catch up on gets no beeps; you ticked those at 43.2 s."]},

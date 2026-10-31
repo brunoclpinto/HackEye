@@ -107,7 +107,12 @@ class Observer:
         self.gd = gd_cfg if gd_cfg is not None else groundfuse.settings({})
         self.geo = groundfuse.Geometry(gh, gw, self.hfov, "fisheye" if self.fisheye else "rectilinear", self.cam_h)
         self.f_px = focal_px(gw, self.hfov)
-        self.lens = cfg.get("lateralModel", "collision") == "lens"
+        model = cfg.get("lateralModel", "collision")
+        self.lens = model == "lens"
+        # v26.2.7: "geometry" = the lens ground geometry (groundfuse.ground_point / ground_pixel / lateral_at) for the map's surfaces, the object
+        # bases and the laterals; only on a fisheye run with depth distances (on a rectilinear one the collision pass's pinhole formulas are exact
+        # and stay; with ground distances the gait scale already absorbs the lens factor, see collision._frame_geometry)
+        self.geometry = model == "geometry" and self.fisheye and self.depth_source
         self.range_w = float(cfg["rangeWeightM"])
         self.max_range = float(cfg["maxRangeM"])
         self.min_fwd = float(cfg["minForwardM"])
@@ -129,6 +134,39 @@ class Observer:
         self.join_frac = float(cfg.get("faceJoinFrac", 0.2))
         self.join_cols = max(1, int(cfg.get("faceJoinCols", 2)))
         self.thick_m = float(cfg.get("faceThicknessM", 0.3))
+        # v26.2.7: faces at the ground contact of their base row, occluded faces scaled by the ratio, buildings that hide what is behind them
+        self.face_ground = self.geometry and bool(cfg.get("faceGroundContact", False))
+        self.face_scale_occ = bool(cfg.get("faceScaleOccluded", False))
+        self.ratio_min = int(cfg.get("faceRatioMinBases", 10))
+        self.ratio_clamp = tuple(float(x) for x in cfg.get("faceRatioClamp", (0.6, 1.5)))
+        self.occ_lut = np.zeros(256, dtype=bool)
+        for cid, name in enumerate(class_names or []):
+            if cid < 256 and name in cfg.get("occluderClasses", ()):
+                self.occ_lut[cid] = True
+        self.hidden_factor = float(cfg.get("surfaceHiddenFactor", 1.0))
+        self.ray_hidden = None
+        bin_deg = float(cfg.get("hiddenBinDeg", 0.5))
+        self.hid_bin_deg = bin_deg
+        self.hid_nb = int(math.ceil(180.0 / bin_deg))
+        self.cell_range = np.hypot(self.fwd, self.right)
+        self.cell_bin = np.clip(np.floor((np.degrees(np.arctan2(self.right, self.fwd)) + 90.0) / bin_deg).astype(np.int64), 0, self.hid_nb - 1)
+        # v26.2.7: gap closing in the snapshot: the cells k = 1..K along the line to the user / away from the user (flat indices; size*size = off grid)
+        self.gap_k = int(round(float(cfg.get("gapCloseM", 0.0)) / self.cell))
+        self.gap_tab = None
+        if self.gap_k > 0:
+            ri, ci = np.mgrid[0:self.size, 0:self.size]
+            vr, vc = (self.orow - ri).astype(np.float64), (self.oc - ci).astype(np.float64)
+            nrm = np.maximum(np.hypot(vr, vc), 1e-9)
+            tabs = []
+            for sign in (1.0, -1.0):
+                idx = []
+                for k in range(1, self.gap_k + 1):
+                    r2 = np.rint(ri + sign * k * vr / nrm).astype(np.int64)
+                    c2 = np.rint(ci + sign * k * vc / nrm).astype(np.int64)
+                    inside = (r2 >= 0) & (r2 < self.size) & (c2 >= 0) & (c2 < self.size)
+                    idx.append(np.where(inside, r2 * self.size + c2, self.size * self.size).ravel())
+                tabs.append(np.stack(idx))
+            self.gap_tab = tuple(tabs)                       # (toward the user, away from the user), each (K, size * size)
 
     # -- helpers ----------------------------------------------------------------------------------------------
     def _lateral(self, x: np.ndarray, d: np.ndarray) -> np.ndarray:
@@ -143,13 +181,8 @@ class Observer:
             return 1.0
         return float(frame.get("scale") or 1.0)
 
-    def object_bases(self, grid: np.ndarray, frame: dict, dmap: np.ndarray | None, kgrid: np.ndarray | None = None):
-        """The ground base of every vertical run of an object class: (rows, cols, forward distance m, lateral m in body
-        coordinates) of the image pixels that are projected into the map. The collision rules (v26.2.1) read the same points to
-        place an item's footprint on the map."""
-        gh, gw = self.gh, self.gw
-        cam_h = self.cam_h * self.ground_scale(frame)
-        kgrid = self.kind[grid] if kgrid is None else kgrid
+    def _bases(self, grid: np.ndarray, kgrid: np.ndarray):
+        """(rows, cols, below_surface mask of the image) of the lowest pixel of every vertical run of an object class (not on the sky)."""
         cls = grid
         is_obj = kgrid == KIND_OBJECT
         below_same = np.zeros_like(is_obj)
@@ -162,13 +195,51 @@ class Observer:
             below_sky[:-1] = cls[1:] == self.sky_id
             base &= ~below_sky                         # v26.2.5: an object base standing on the sky is not a ground contact
         rr, cc = np.nonzero(base)
+        return rr, cc, below_surface
+
+    def face_contact_samples(self, grid: np.ndarray, dmap: np.ndarray | None, depth_scale: float | None, horizon: float):
+        """v26.2.7: (depth m, lens ground z m) of the face-class bases that stand on a surface: a wall base is a ground point seen at the
+        wall's own range, a free calibration of the depth where the walking region does not reach. Same base / contact rules and the same
+        bottom-``faceDepthRows`` median depth as ``object_bases``; the depth is scaled, never range-corrected; the ground z is the camera-axis
+        depth of the floor point of the base row (``groundfuse.ground_z``, the quantity the depth map holds) for the setting's camera height.
+        Only bases at least ``minRowsBelowHorizon`` rows below the horizon and with a ground z up to ``fuseMaxM``."""
+        z = np.zeros(0)
+        if dmap is None or not depth_scale or not self.face_lut.any():
+            return z, z
+        kgrid = self.kind[grid]
+        rr, cc, below_surface = self._bases(grid, kgrid)
+        if not rr.size:
+            return z, z
+        gh = self.gh
+        keep = self.face_lut[grid[rr, cc]] & below_surface[rr, cc] & (rr < gh - 1) & ((rr + 1.0) / gh > horizon + 1e-6)
+        rr, cc = rr[keep], cc[keep]
+        if not rr.size:
+            return z, z
+        v = float(depth_scale) * self._run_depth(grid, dmap, rr, cc)
+        g = groundfuse.ground_z(self.geo, rr + 1.0, cc + 0.5, horizon)
+        with np.errstate(invalid="ignore"):
+            ok = (np.isfinite(v) & (v > 0) & np.isfinite(g) & (g > 0) & ((rr + 1.0) - horizon * gh >= float(self.gd["minRowsBelowHorizon"]))
+                  & (g <= float(self.gd["fuseMaxM"])))
+        return v[ok], g[ok]
+
+    def object_bases(self, grid: np.ndarray, frame: dict, dmap: np.ndarray | None, kgrid: np.ndarray | None = None):
+        """The ground base of every vertical run of an object class: (rows, cols, forward distance m, lateral m in body
+        coordinates) of the image pixels that are projected into the map. The collision rules (v26.2.1) read the same points to
+        place an item's footprint on the map."""
+        gh, gw = self.gh, self.gw
+        cam_h = self.cam_h * self.ground_scale(frame)
+        kgrid = self.kind[grid] if kgrid is None else kgrid
+        rr, cc, below_surface = self._bases(grid, kgrid)
         empty = (rr[:0], cc[:0], np.zeros(0), np.zeros(0))
         if not rr.size:
             return empty
         horizon = float(frame["horizon"])
         y_b = (rr + 1.0) / gh
         contact = below_surface[rr, cc] & (y_b > horizon + 1e-6) & (rr < gh - 1)          # stands on the ground
-        ground = cam_h * self.f_px / (np.maximum(y_b - horizon, 1e-6) * gh)
+        if self.geometry:        # v26.2.7: the ground point of the base row through the lens (forward m); nan above the horizon
+            ground = groundfuse.ground_point(self.geo, rr + 1.0, cc + 0.5, horizon, cam_h)[0]
+        else:
+            ground = cam_h * self.f_px / (np.maximum(y_b - horizon, 1e-6) * gh)
         has_depth = dmap is not None and bool(frame.get("depthScale"))
         if not self.use_horizon and not has_depth:
             return empty                                # horizon off: depth is the only distance
@@ -182,6 +253,8 @@ class Observer:
                 g_m, sg_m = groundfuse.ground_m(self.geo, y_b * gh, cc + 0.5, horizon, rep_, float(rep_["sigmaRows"]))
                 fused, _ = groundfuse.resolve(np.where(good, dist, 1.0), g_m, sg_m, (y_b - horizon) * gh, contact, rep_, self.gd, self.object_mode)
                 dist = np.where(contact, fused, dist)
+            if self.face_ground and self.use_horizon:
+                dist = self._face_ground(grid[rr, cc], dist, good, contact, ground, (y_b - horizon) * gh)
         else:                                           # ground distance of the base row; needs the ground below it
             good = contact
             dist = np.where(good, ground, 0.0)
@@ -195,8 +268,35 @@ class Observer:
             rr, cc, dist = rr[keep], cc[keep], dist[keep]
             if not rr.size:
                 return empty
-        lat_b = self._lateral((cc + 0.5) / gw, dist) + self.lat_off
+        if self.geometry:
+            lat_b = groundfuse.lateral_at(self.geo, rr + 1.0, cc + 0.5, dist, horizon) + self.lat_off
+        else:
+            lat_b = self._lateral((cc + 0.5) / gw, dist) + self.lat_off
         return rr, cc, dist, lat_b
+
+    def _face_ground(self, cls: np.ndarray, dist: np.ndarray, good: np.ndarray, contact: np.ndarray, ground: np.ndarray,
+                     rows_below: np.ndarray) -> np.ndarray:
+        """v26.2.7 (``faceGroundContact``): a face-class base that stands on a surface takes the lens ground distance of its base row, the
+        geometry the surface projection uses, so that the sidewalk and the building edge meet in one cell. With ``faceScaleOccluded`` the
+        class's other bases (its facade above a car, a pole, a sign...) follow: ratio = median(ground / depth) over its contact bases
+        (at least ``faceRatioMinBases``, clamped to ``faceRatioClamp``), applied to their depth."""
+        face = self.face_lut[cls]
+        if not face.any():
+            return dist
+        with np.errstate(invalid="ignore"):
+            use = (face & contact & good & np.isfinite(ground) & (rows_below >= float(self.gd["minRowsBelowHorizon"]))
+                   & (ground >= self.min_fwd) & (ground <= self.max_range))
+        out = dist.copy()
+        if self.face_scale_occ:
+            for c in np.unique(cls[face]):
+                sel = face & (cls == c)
+                own = sel & use
+                if int(own.sum()) >= self.ratio_min:
+                    ratio = float(np.clip(np.median(ground[own] / dist[own]), self.ratio_clamp[0], self.ratio_clamp[1]))
+                    other = sel & ~use & good
+                    out[other] = dist[other] * ratio
+        out[use] = ground[use]
+        return out
 
     def _run_depth(self, grid: np.ndarray, dmap: np.ndarray, rr: np.ndarray, cc: np.ndarray) -> np.ndarray:
         """v26.2.5: the depth of every base = the median of the bottom ``faceDepthRows`` rows of its vertical run (same class, same
@@ -277,6 +377,30 @@ class Observer:
         b = a.copy(); b[:, 1:] |= a[:, :-1]; b[:, :-1] |= a[:, 1:]
         self.ray_clear = b
 
+    def _hidden_cells(self, cls: np.ndarray, dist: np.ndarray, lat_b: np.ndarray, obs: np.ndarray) -> None:
+        """v26.2.7 (``occluderClasses``): a building closes the view: the cells behind an occluder face point, from its range +
+        ``faceThicknessM`` outwards along its bearing, cannot be seen by this frame. Per ``hiddenBinDeg`` bearing bin the nearest occluder
+        range (gaps of up to two empty bins between occluder points are bridged: a facade is continuous); the cells this frame sees as surface
+        itself are not hidden (visible ground wins). Stored in ``self.ray_hidden`` (the fusion cuts the stored surface votes there)."""
+        if self.hidden_factor >= 1.0:
+            return
+        occ = self.occ_lut[cls]
+        if not occ.any():
+            return
+        d, l = dist[occ], lat_b[occ]
+        rng_ = np.hypot(d, l)
+        b = np.clip(np.floor((np.degrees(np.arctan2(l, d)) + 90.0) / self.hid_bin_deg).astype(np.int64), 0, self.hid_nb - 1)
+        r = np.full(self.hid_nb, np.inf)
+        np.minimum.at(r, b, rng_)
+        left, right = r.copy(), r.copy()
+        for sft in (1, 2):                                   # nearest occupied bin within two bins on each side
+            left[sft:] = np.where(np.isfinite(left[sft:]), left[sft:], r[:-sft])
+            right[:-sft] = np.where(np.isfinite(right[:-sft]), right[:-sft], r[sft:])
+        r = np.where(np.isfinite(r), r, np.where(np.isfinite(left) & np.isfinite(right), np.maximum(left, right), np.inf))
+        hidden = self.cell_range > (r + self.thick_m)[self.cell_bin]
+        hidden &= ~((self.kind[obs] == KIND_SURFACE) & (obs != UNKNOWN))
+        self.ray_hidden = hidden
+
     def _face_cells(self, grid, rr, cc, dist, lat_b):
         """v26.2.5: cells of the faces: adjacent image columns of the same face class whose distances differ by less than ``faceJoinFrac``
         are joined by a straight segment on the map, ``faceThicknessM`` thick, extended away from the user along the ray.
@@ -325,6 +449,7 @@ class Observer:
             self._ground_surfaces(obs, grid, kgrid, horizon, cam_h)
         # --- object bases ----------------------------------------------------------------------------------
         self.ray_clear = None
+        self.ray_hidden = None
         rr, cc, dist, lat_b = self.object_bases(grid, frame, dmap, kgrid)
         if rr.size:
             col = self.oc + np.rint(lat_b / self.cell).astype(np.int64)
@@ -346,6 +471,7 @@ class Observer:
             inside = (cx >= 0) & (cx < size) & (ry >= 0) & (ry < size)
             obs[ry[inside], cx[inside]] = vv[inside]
             self._face_rays(grid[rr, cc], dist, lat_b)
+            self._hidden_cells(grid[rr, cc], dist, lat_b, obs)
         w = np.where(obs != UNKNOWN, self.weight, 0.0).astype(np.float32)
         gain = float(self.cfg.get("objectVoteGain", 1.0))        # an object base is one thin line among many surface cells
         if gain != 1.0:
@@ -353,19 +479,26 @@ class Observer:
         return obs, w
 
     def _ground_surfaces(self, obs: np.ndarray, grid: np.ndarray, kgrid: np.ndarray, horizon: float, cam_h: float) -> None:
-        """Surfaces: inverse ground-plane sampling (each map cell -> the image pixel that sees it, through the horizon)."""
+        """Surfaces: inverse ground-plane sampling (each map cell -> the image pixel that sees it, through the horizon). v26.2.7
+        (``lateralModel`` "geometry", fisheye): through the lens (``groundfuse.ground_pixel``, the exact inverse of ``ground_point``)."""
         gh, gw = self.gh, self.gw
         fwd = self.fwd
         ok = (fwd >= self.min_fwd) & (fwd <= self.max_range)
         d = np.where(ok, fwd, 1.0)
-        y = horizon + cam_h * self.f_px / (d * gh)
         lat = self.right - self.lat_off
-        if self.lens:
-            x = 0.5 + np.arctan2(lat, d) / math.radians(self.hfov)
+        if self.geometry:
+            row_f, col_f = groundfuse.ground_pixel(self.geo, d, lat, horizon, cam_h)
+            ok &= np.isfinite(row_f) & np.isfinite(col_f)
+            ri = np.floor(np.where(ok, row_f, -1.0)).astype(np.int64)
+            ci = np.floor(np.where(ok, col_f, -1.0)).astype(np.int64)
         else:
-            x = 0.5 + lat * self.f_px / (d * gw)
-        ri = np.floor(y * gh).astype(np.int64)
-        ci = np.floor(x * gw).astype(np.int64)
+            y = horizon + cam_h * self.f_px / (d * gh)
+            if self.lens:
+                x = 0.5 + np.arctan2(lat, d) / math.radians(self.hfov)
+            else:
+                x = 0.5 + lat * self.f_px / (d * gw)
+            ri = np.floor(y * gh).astype(np.int64)
+            ci = np.floor(x * gw).astype(np.int64)
         ok &= (ri >= 0) & (ri < gh) & (ci >= 0) & (ci < gw)
         ri = np.clip(ri, 0, gh - 1)
         ci = np.clip(ci, 0, gw - 1)
@@ -505,6 +638,7 @@ class Fusion:
         inb = ok.copy()
         ok &= cls != UNKNOWN
         self._clear_stale_objects(obs, observer, row, col, ii, jj, inb, getattr(observer, 'last_horizon', None))
+        self._cut_hidden_surfaces(observer, row, col, ii, jj, inb)
         k = self.lut[cls]
         ok &= k >= 0
         if not ok.any():
@@ -536,11 +670,29 @@ class Fusion:
             clear |= observer.ray_clear
         clear &= ~near
         # an object whose base left the bottom of the image stands just nearer than the nearest visible ground: keep a band at the bottom edge
-        d_bottom = float(observer.cam_h) * observer.f_px / (max(1.0 - float(frame_horizon), 1e-6) * observer.gh) if frame_horizon is not None else 0.0
+        if frame_horizon is None:
+            d_bottom = 0.0
+        elif observer.geometry:           # v26.2.7: the forward distance of the last image row on the centre column, through the lens
+            d_bottom = float(groundfuse.ground_point(observer.geo, float(observer.gh), observer.gw / 2.0, float(frame_horizon), observer.cam_h)[0])
+            d_bottom = d_bottom if math.isfinite(d_bottom) else 0.0
+        else:
+            d_bottom = float(observer.cam_h) * observer.f_px / (max(1.0 - float(frame_horizon), 1e-6) * observer.gh)
         clear &= observer.fwd >= d_bottom + float(self.cfg.get("objectClearBottomM", 0.5))
         sel = ok & clear[row, col]
         if sel.any():
             for k in obj_layers:
+                self.votes[k, ii[sel], jj[sel]] *= np.float32(f)
+
+    def _cut_hidden_surfaces(self, observer, row, col, ii, jj, ok) -> None:
+        """v26.2.7: a world cell that maps to an ego cell hidden behind a building (``Observer.ray_hidden``) loses ``1 - surfaceHiddenFactor`` of
+        its stored SURFACE votes (a street cannot be seen through a facade); object votes are untouched. Mirrors ``_clear_stale_objects``."""
+        hid = getattr(observer, "ray_hidden", None)
+        f = float(self.cfg.get("surfaceHiddenFactor", 1.0))
+        if hid is None or f >= 1.0:
+            return
+        sel = ok & hid[row, col]
+        if sel.any():
+            for k in np.flatnonzero(self.is_surface):
                 self.votes[k, ii[sel], jj[sel]] *= np.float32(f)
 
     def _decay(self, t: float) -> float:
@@ -573,6 +725,11 @@ class Fusion:
                 o_share = np.take_along_axis(vo, o_top[None], 0)[0] / np.maximum(o_raw, 1e-12)
                 classes = np.where(o_win, self.classes[~self.is_surface][o_top], classes).astype(np.uint8)
                 conf = np.where(o_win, 255.0 * np.minimum(1.0, o_dec / self.full) * o_share, conf)
+        gap = self.close_gaps(classes, conf, observer) if observer.gap_tab is not None else None
+        if gap is not None:
+            classes, conf = classes.copy(), np.asarray(conf, dtype=np.float64).copy()
+            classes.ravel()[gap[0]] = gap[1]
+            conf.ravel()[gap[0]] = gap[2]
         if not layers:
             return classes, conf.astype(np.uint8)
         out = []
@@ -583,13 +740,43 @@ class Fusion:
             sub = v[sel]
             ok = inside & (sub.sum(axis=0) * decay > self.floor)
             out.append(np.where(ok, self.classes[sel][sub.argmax(axis=0)], UNKNOWN).astype(np.uint8))
+        if gap is not None:
+            out[1].ravel()[gap[0]] = gap[1]                               # the closed gap is a face in the object layer too
         return classes, conf.astype(np.uint8), out[0], out[1]
+
+    @staticmethod
+    def close_gaps(classes: np.ndarray, conf: np.ndarray, observer: Observer):
+        """v26.2.7 (``gapCloseM``): an unknown cell whose line toward the user meets a surface cell, and whose line away from the user meets a
+        face-class cell, both within ``gapCloseM``, is a seam between a sidewalk and a building: a ground and a wall do not have a gap between
+        them. Returns (flat cell indices, face classes, face confs) of the cells that take the nearest face cell's class and conf, or None."""
+        toward, away = observer.gap_tab
+        n = classes.size
+        flat = np.append(classes.ravel(), np.uint8(UNKNOWN))
+        cand = np.flatnonzero(flat[:n] == UNKNOWN)
+        if not cand.size:
+            return None
+        surf = (observer.kind[flat[toward[:, cand]]] == KIND_SURFACE).any(axis=0)
+        cand = cand[surf]
+        if not cand.size:
+            return None
+        is_face = observer.face_lut[flat[away[:, cand]]]
+        ok = is_face.any(axis=0)
+        if not ok.any():
+            return None
+        cand, is_face = cand[ok], is_face[:, ok]
+        src = away[is_face.argmax(axis=0), cand]                          # flat index of the nearest face cell
+        return cand, flat[src], np.append(np.asarray(conf).ravel(), 0)[src]
 
     def world_classes(self, t: float) -> tuple[np.ndarray, np.ndarray]:
         """Whole window: (classes uint8 [255 unknown], decayed total weight); for metrics."""
         total = self.votes.sum(axis=0) * np.float32(self._decay(t))
         cls = np.where(total > self.floor, self.classes[self.votes.argmax(axis=0)], UNKNOWN).astype(np.uint8)
         return cls, total
+
+
+def face_contact_samples(observer: Observer, grid: np.ndarray, dmap, depth_scale, horizon: float):
+    """v26.2.7: (depth m, lens ground z m) of the face-class bases that stand on a surface (see ``Observer.face_contact_samples``)."""
+    return observer.face_contact_samples(grid, dmap, depth_scale, horizon)
 
 
 def frames_from_hazards(hazards: dict) -> list[dict]:

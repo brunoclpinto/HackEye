@@ -118,7 +118,12 @@ def test_click_readout_mapped_and_unmapped_cell(page):
     assert f"col {mapped[0]} row {mapped[1]}" in page.inner_text("#wmCell")
     if unmapped:
         _click_cell(page, *unmapped)
-        page.wait_for_function("() => document.querySelector('#wmCell').textContent === 'unmapped'")
+        # v26.2.7: an unmapped cell has its coordinate line too, then the word "unmapped"
+        page.wait_for_function("() => /\\nunmapped$/.test(document.querySelector('#wmCell').textContent)")
+        txt = page.inner_text("#wmCell")
+        first = txt.split("\n")[0]
+        assert f"col {unmapped[0]} row {unmapped[1]}" in first and "m ahead" in first and "steps" in first and txt.split("\n")[-1] == "unmapped", txt
+        assert "Region:" not in txt
     assert not page.errors, page.errors
 
 
@@ -192,3 +197,26 @@ def test_autofill_populates_time_phrase_role_and_type_without_saving(page):
 def _parse(txt):
     m, s = txt.split(":")
     return int(m) * 60 + float(s)
+
+
+def test_map_meta_names_the_face_and_surface_classes_and_the_wall_line_sits_on_the_building_edge(page):
+    """v26.2.7: GET /worldmap carries faceClassIds / surfaceClassIds; the wall line is drawn on the face / surface cell borders of the snapshot
+    (the segment count is on the canvas as data-wall-edges), and the fitted faceEdgeLines are no longer drawn."""
+    run = test_lab.FULL_RUN
+    meta = api(f"/api/runs/{run}/worldmap")
+    names = api(f"/api/runs/{run}")["classNames"]
+    assert meta["exists"] and meta["faceClassIds"] and meta["surfaceClassIds"]
+    assert set(meta["faceClassIds"]) <= set(range(len(names))) and not set(meta["faceClassIds"]) & set(meta["surfaceClassIds"])
+    assert "building" in [names[i] for i in meta["faceClassIds"]] and "flat sidewalk" in [names[i] for i in meta["surfaceClassIds"]]
+    rec = api(f"/api/runs/{run}")["request"]["recording"]
+    open_lab(page, rec, t=13, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    counts = []
+    for t in (13, 16, 20, 30, 60):
+        seek(page, t)
+        page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+        page.wait_for_timeout(500)
+        counts.append(int(page.evaluate("() => document.querySelector('#wmCanvas').dataset.wallEdges || '-1'")))
+    assert all(c >= 0 for c in counts), counts                       # the attribute is set on every paint
+    assert max(counts) > 0, f"no building edge drawn at any of the probe times: {counts}"
+    assert not page.errors, page.errors

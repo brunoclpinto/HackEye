@@ -59,7 +59,7 @@ FPS = 10.0
 
 def test_config_keys():
     r = CONFIG["roles"]
-    assert CONFIG["version"] == "v26.2.5" and r["staticSource"] == "map"
+    assert CONFIG["version"] == "v26.2.7" and r["staticSource"] == "map"
     # v26.2.2: the building section gates (mapMinCells, mapCorridorMarginM, mapMinAgeSeconds, mapMinClosingMps) are gone: the map judges every wall-like
     # class with the face / edge test (tests/test_collision_v2622.py)
     assert "mapMinCells" not in r and "mapMinClosingMps" not in r and r["mapJudgedClasses"]
@@ -157,14 +157,18 @@ def test_review7_the_building_section_is_still_spoken_and_beeps(review7, review7
     # confirmed face), the clock reads 11:45 instead of 12 because the nearest FACE cell, not the nearest corridor cell, is the measurement
     # v26.2.5 (re-pinned): the facade is a continuous face line on the map, the clock reads 12 (the face line's nearest cell) instead of 11:45;
     # same time and steps (13.50, 8)
-    assert [(round(e["t"], 2), e["text"]) for e in sp] == [(13.5, "building at 12 in 8")]
+    # v26.2.7 (re-pinned, KNOWN): the facade stands at the ground contact of its base row (lens ground geometry), nearer than the depth read it:
+    # "building at 12:15 in 5" at 13.0 s (was 12 in 8 at 13.5 s); 2.84 s "building at 12:15 in 7" is new, see DECISIONS v26.2.7
+    assert [(round(e["t"], 2), e["text"]) for e in sp] == [(13.0, "building at 12:15 in 5")]
     beeps = [e for e in ev if e["type"] == "beeps" and e["kind"] == "collision-center" and "building" in e["text"] and 14.0 <= e["t"] <= 17.0]
     assert beeps and beeps[0]["minSteps"] <= 5               # 15.33 "center · building at 12:15 · 5→4 steps" (the clock moved with the measurement)
     # the wall is judged on the map: face cells in the corridor, its own image contact point kept for the Lab, no lane part item
     frames = review7[2][0]["doc"]["frames"]
     mp = [(f["t"], h) for f in frames for h in f["hazards"] if h["className"] == "building" and h.get("mapCells") and h["role"] == "danger"]
     assert mp and all(h["source"] == "map" and h["faceEdge"]["verdict"] == "face" and h["faceEdge"]["face"] >= CONFIG["roles"]["faceEdge"]["minFaceCells"] for _, h in mp)
-    assert min(t for t, h in mp) == pytest.approx(11.5, abs=0.2)             # v26.2.5: the facade line is on the map earlier (was 12.33)
+    # v26.2.5: the facade line is on the map earlier (was 12.33 s: 11.5 s). v26.2.7 (re-pinned): 2.67 s, the facade is at its ground contact (nearer)
+    # and its lateral comes through the lens (narrower: 12:15 = 0.3 m at 5 m, inside the 0.6 m corridor)
+    assert min(t for t, h in mp) == pytest.approx(2.7, abs=0.2)
     assert abs(mp[0][1]["lateralM"]) <= 0.6 and mp[0][1]["stepsTo"] <= CONFIG["roles"]["dangerSteps"]
     assert not any(h.get("lanePart") for f in frames for h in f["hazards"])
     assert all("corridor" in f for f in frames)
