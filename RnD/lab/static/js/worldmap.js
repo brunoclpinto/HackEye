@@ -125,11 +125,11 @@ export class WorldMapPanel {
     const sel = this.sel;
     if (!sel || !this.run || !this.meta?.exists) { this.renderCell(); return; }
     if (this.k < 0) { this.cellData = null; this.cellKey = ""; this.renderCell(); return; }
-    const key = `${this.run.id}|${this.k}|${sel.col}|${sel.row}`;
+    const key = `${this.run.id}|${this.meta.builtAt ?? ""}|${this.k}|${sel.col}|${sel.row}`;
     if (key === this.cellKey) { this.renderCell(); return; }
     this.cellKey = key;
     const token = this.token;
-    api(`/api/runs/${this.run.id}/worldmap/cell?i=${this.k}&col=${sel.col}&row=${sel.row}`, { quiet: true })
+    api(`/api/runs/${this.run.id}/worldmap/cell?i=${this.k}&col=${sel.col}&row=${sel.row}${this.vq('&')}`, { quiet: true })
       .then((d) => { if (token === this.token && key === this.cellKey) { this.cellData = d; this.renderCell(); } })
       .catch(() => { if (token === this.token && key === this.cellKey) { this.cellData = null; this.renderCell(); } });
   }
@@ -215,6 +215,11 @@ export class WorldMapPanel {
     await this.loadMeta();
   }
 
+  /** Cache-busting query from the map's build time (`builtAt`): the PNGs are cached for a day and a re-run rebuilds the map under the same URL. */
+  vq(sep, meta = this.meta) {
+    return meta?.builtAt ? `${sep}v=${encodeURIComponent(meta.builtAt)}` : "";
+  }
+
   async loadMeta() {
     const id = this.run?.id, token = this.token;
     if (!id) return;
@@ -223,7 +228,7 @@ export class WorldMapPanel {
       if (token !== this.token) return;
       this.meta = meta;
       if (meta.exists) {
-        const pose = await api(`/api/runs/${id}/worldmap/pose.json`, { quiet: true });
+        const pose = await api(`/api/runs/${id}/worldmap/pose.json${this.vq('?', meta)}`, { quiet: true });
         if (token !== this.token) return;
         this.poseT = pose.t ?? [];
       }
@@ -290,7 +295,7 @@ export class WorldMapPanel {
         resolve(grid);
       };
       img.onerror = () => reject(new Error(`worldmap/${k}.png`));
-      img.src = `/api/runs/${id}/worldmap/${k}.png`;
+      img.src = `/api/runs/${id}/worldmap/${k}.png${this.vq('?')}`;
     });
   }
 

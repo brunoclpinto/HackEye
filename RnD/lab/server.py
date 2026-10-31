@@ -410,7 +410,8 @@ def get_worldmap(run_id: str) -> dict:
     surface_ids = [i for i in range(len(names)) if kinds[i] == worldmap.KIND_SURFACE]
     return {"exists": True, "frames": int(n), "cellM": float(wm["cellM"]), "origin": [int(v) for v in wm["origin"]],
             "width": int(w), "height": int(h), "msMean": round(float(ms.mean()), 2),
-            "msP95": round(float(np.percentile(ms, 95)), 2), "faceClassIds": face_ids, "surfaceClassIds": surface_ids}
+            "msP95": round(float(np.percentile(ms, 95)), 2), "faceClassIds": face_ids, "surfaceClassIds": surface_ids,
+            "builtAt": str(path.stat().st_mtime_ns)}      # v26.2.7: the Lab adds it as ?v= to the cached PNG / pose URLs
 
 
 @app.get("/api/runs/{run_id}/worldmap/pose.json")

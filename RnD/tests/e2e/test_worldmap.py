@@ -25,8 +25,9 @@ def test_world_map_panel_builds_and_draws(page):
     seek(page, 13)
     page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
     page.wait_for_timeout(500)
-    snaps = [u for u, _ in page.requests if f"/api/runs/{run}/worldmap/" in u and u.endswith(".png")]
+    snaps = [u for u, _ in page.requests if f"/api/runs/{run}/worldmap/" in u and u.split("?")[0].endswith(".png")]
     assert snaps, "no snapshot requested"
+    assert f"v={meta['builtAt']}" in snaps[-1], "v26.2.7: the snapshot URL carries the map's builtAt (defeats the browser cache after a re-run)"
     assert page.evaluate("async (u) => (await fetch(u)).status", snaps[-1].replace(BASE, "")) == 200
     assert page.evaluate(DRAWN) > 0.05, "the canvas is (nearly) empty"
     assert not page.is_visible("#wmReadout") if page.query_selector("#wmReadout") else True      # v26.2.4: the hover readout is gone

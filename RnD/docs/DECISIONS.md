@@ -1142,3 +1142,7 @@ The remaining gap rays at 30 / 120 / 200 s are runs of 17–129 unknown cells: a
 3. **(O12) Through rays left:** thin building slivers inside open sidewalk early in a run, and real sidewalk under bridges. Unseen areas between a surface and a building more than 0.5 m deep stay unknown on purpose.
 4. **Map cost +35 %:** 14.4–15.2 ms/frame mean (was 10.8).
 5. **Still pinhole:** ground-distance items (`itemLens: "depth"`), the image lane geometry and `_closing_mps`.
+
+### v26.2.7 follow-up — world map cache busting (no version bump)
+**Why.** The user re-ran collision on the new `5fda5626e808` and saw the old map. The run id is deterministic, so the snapshot URLs were the same as the wiped pre-v26.2.7 run's, and the PNGs are served with `max-age=86400`: the browser kept the old tiles. The stored map was the new one (gap rays at 0 / 1 / 3 s: 3 / 5 / 4).
+**Fix (Sonnet worker, Opus review).** `GET /worldmap` adds `builtAt` (the npz mtime in ns). The panel appends `?v=<builtAt>` to the snapshot PNGs, `pose.json` and `/worldmap/cell` (the server ignores it). `mask.png` / `classes.png` / `depth/{i}.png` are left as they are: a re-run never rewrites them, and new content means a new run id. Remaining risk: a wipe that re-creates the same id after a pipeline change without an `ANALYSIS_VERSION` bump. Unit 652 passed / 6 skipped; world map E2E 8 passed.

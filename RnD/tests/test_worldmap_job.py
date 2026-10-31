@@ -47,3 +47,18 @@ def test_job_helper_builds_the_map_and_swallows_a_failure(run_dir, monkeypatch):
         raise RuntimeError("no map")
     monkeypatch.setattr(analysis, "worldmap_pass", boom)
     analysis._build_worldmap(RUN)          # logged, not raised
+
+
+def test_worldmap_meta_built_at_changes_when_the_map_is_rebuilt(run_dir):
+    """v26.2.7: builtAt (worldmap.npz mtime) is the Lab's cache-busting ?v= for the day-cached snapshot PNGs."""
+    import os
+    client = TestClient(server.app)
+    assert client.get(f"/api/runs/{RUN}/worldmap").json() == {"exists": False}
+    assert client.post(f"/api/runs/{RUN}/collision").status_code == 200
+    first = client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"]
+    assert first.isdigit()
+    assert client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"] == first
+    npz = run_dir / "worldmap.npz"
+    st = npz.stat()
+    os.utime(npz, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))      # a rebuild leaves a newer mtime
+    assert client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"] != first
