@@ -34,6 +34,7 @@ CONFIG = col.load_config()
 # v26.2.3: the default object distance is "ground+depth"; the tests that pin v26.1.x / v26.2.0-2 numbers run on the plain depth distance
 # (= v26.2.2), tests/test_collision_v2623.py pins the new default.
 CONFIG["distance"]["objectDistance"] = "depth"
+CONFIG["personSplit"]["enabled"] = False         # v26.2.10: the tests that pin earlier versions see one item per person component (tests/test_collision_v26210.py: the split)
 SETTINGS = col.resolve_settings(CONFIG, "chest", HFOV, None, None)
 
 
@@ -1014,7 +1015,7 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames", "coast", "worldTracksSettings"}
-    assert doc["version"] == "v26.2.9" == ev["version"]
+    assert doc["version"] == "v26.2.10" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM",
                                   "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM", "objectDistance", "useHorizon"}      # v26.2.3: the object distance / horizon switch
     assert (doc["gridW"], doc["gridH"]) == (W, H)

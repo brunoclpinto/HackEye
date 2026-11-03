@@ -6,7 +6,7 @@ import urllib.request
 
 import pytest
 
-from conftest import BASE, DEFAULT_LONG_REC, HOOKS, LONG_REC, SHORT_REC, annotations, api, audio_log, clock, open_lab, seek
+from conftest import BASE, DEFAULT_LONG_REC, HOOKS, LONG_REC, SHORT_REC, annotations, api, audio_log, clock, collision_job, open_lab, seek
 
 
 import os
@@ -1748,4 +1748,4 @@ def test_apply_timing_rescores_the_open_run_with_the_new_intervals(page, sounds_
     kinds = {e["kind"] for e in ev if e["type"] in ("tone", "beeps")}
     assert kinds <= set(KINDS), kinds
     api("/api/sounds", "DELETE")
-    api(f"/api/runs/{FULL_RUN}/collision", "POST")                                                                    # back to the default intervals
+    collision_job(FULL_RUN)                                                                                           # back to the default intervals

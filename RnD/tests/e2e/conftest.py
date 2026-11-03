@@ -62,6 +62,19 @@ def api(path, method="GET", body=None):
         raise AssertionError(f"{method} {path} -> {e.code} {e.read()[:200]!r}") from None
 
 
+def collision_job(run, body=None, timeout=300):
+    """POST a collision re-run (a background job since v26.2.10) and wait until it leaves `running`; returns its final collision doc."""
+    import time
+    doc = api(f"/api/runs/{run}/collision", "POST", body if body is not None else {})
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        doc = next(c for c in api(f"/api/runs/{run}/collisions") if c["id"] == doc["id"])
+        if doc["status"] != "running":
+            return doc
+        time.sleep(0.5)
+    raise AssertionError(f"collision job {doc['id']} did not finish")
+
+
 def clock(sec, decimals=0):
     """The Lab's time format (floor): 87.671 -> 1:27, 3.4 -> 0:03.4."""
     f = 10 ** decimals

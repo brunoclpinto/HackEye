@@ -1,6 +1,6 @@
 {
   "_about": "Issue catalogue shown in the Lab's Open issues panel (CONTRACTS 9.5). Maintained by Claude alongside plans/v26.2.md; the user's close/reopen/comments live in LAB_DIR/issues-state.json. Keep ids stable.",
-  "updatedAt": "2026-10-31",
+  "updatedAt": "2026-11-03",
   "groups": [
     {"id": "open", "title": "Open issues"},
     {"id": "decision", "title": "Needs your decision"},
@@ -35,6 +35,17 @@
      "details": ["Facades sit where the sidewalk ends, ~1 m nearer than depth read them (review 7 13.0 s 'building at 12:15 in 5', was 'at 12 in 8').", "Wall-base depth / ground reaches 1.7 at 105 s and 1.3 at 120 s on Chest-0004: which one is right is not verified."]},
     {"id": "O12", "group": "open", "title": "World map: some sidewalk still behind buildings (v26.2.7)",
      "details": ["Thin one- or two-cell building slivers inside open sidewalk early in a run; real sidewalk under bridges.", "Unseen areas deeper than 0.5 m between ground and a building stay unknown on purpose (only seams are closed)."]},
+    {"id": "O13", "group": "open", "title": "World map: the road still shows ahead at 10 s and 20 s (ground projection, v26.2.10)",
+     "details": ["Chest-0004 at 10 s and 20 s: the single-frame observation itself already puts the road there, so it is the ground projection geometry (horizon, pitch, lens lateral), not the map history.", "Needs your timestamps of correct and incorrect places to tune against."]},
+    {"id": "O14", "group": "open", "title": "World map: pose alignment corrects only the drift the map can see (v26.2.10)",
+     "details": ["Unverified after real turns. Chest-0004's dead-reckoned heading drifts ~0.8 deg/s (+80 deg at 100 s walking straight); the accumulated correction reaches -178 deg by 450 s, so the heading is far off.", "The collision pass's own world memory (_WorldMemory) is not corrected, only the map's pose."]},
+    {"id": "O15", "group": "open", "title": "People split: the depth-jump cut is skipped for relative depth (v26.2.10)",
+     "details": ["With relative (unscaled) depth the 0.6 m jump between columns cannot be judged, so only the height-profile cuts split a blob."]},
+    {"id": "O16", "group": "open", "title": "People split: some over-splits (v26.2.10)",
+     "details": ["Chest-0004: hand + cane at 127 s, a speck beside a woman at 234 s, some far pairs at 65 s become extra person items."]},
+    {"id": "O17", "group": "open", "title": "Only the *_v26210 tests see the shipped v26.2.10 behaviour",
+     "details": ["Older tests run on v26.2.9 map settings (time decay, gap closing, no person split) pinned in conftest; their goldens are re-pinned to those."]},
+
 
     {"id": "5", "group": "decision", "title": "Beeps near people",
      "details": ["A person within 5 steps with unknown motion beeps, even 2–3 steps beside the path (`unknownMotionBeepSteps`, `movingLaneHalfWidthM`; v26.1.12).", "A receding person we catch up on gets no beeps; you ticked those at 43.2 s."]},

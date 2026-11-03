@@ -1,5 +1,6 @@
 // Canvas overlay: mask PNG, walking region, danger lane, horizon, role-coloured item outlines / boxes, ego HUD. Frame-synchronised to the <video>.
 import { ROLE_COLOR, lastAtOrBefore } from "./util.js";
+import { itemTooltip, showTip } from "./selection.js";
 
 const PRELOAD = 20;          // frames each side of the playhead
 const CACHE_MAX = 160;       // LRU size (> 2*PRELOAD+1)
@@ -48,6 +49,51 @@ export class Overlay {
       requestAnimationFrame(raf);
     }
     new ResizeObserver(() => { this.layout(); this.redraw(); }).observe(video);
+
+    // v26.2.10: items are hoverable (tooltip) and selectable as a whole; the pointer events come from the stage (the canvas ignores them)
+    this.selection = null;    // set by app: the Selection shared with the world map
+    this.curFrame = null;     // the frame drawn last (hit tests, tooltip)
+    const stage = canvas.parentElement;
+    stage.addEventListener("mousemove", (e) => this.hover(e));
+    stage.addEventListener("mouseleave", () => showTip(null));
+    stage.addEventListener("click", (e) => this.click(e));
+  }
+
+  /** Normalised image coordinates of a pointer event, or null outside the video content. */
+  pointer(e) {
+    const r = this.canvas.getBoundingClientRect();
+    if (!this.cw || !r.width) return null;
+    const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? [x, y] : null;
+  }
+
+  /** The drawn item under the normalised point (inside its outline, else its box); the smallest wins, so a person in front of a wall is hit. */
+  hitItem(x, y) {
+    const f = this.curFrame;
+    if (!f || !this.layers.hazards) return null;
+    let best = null, bestA = Infinity;
+    for (const h of f.hazards ?? []) {
+      const [x0, y0, x1, y1] = h.bbox;
+      if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+      if (this.outlines && h.outline?.length >= 3 && !pointInPolygon(x, y, h.outline)) continue;
+      const a = (x1 - x0) * (y1 - y0);
+      if (a < bestA) { best = h; bestA = a; }
+    }
+    return best;
+  }
+
+  hover(e) {
+    const p = this.pointer(e), h = p ? this.hitItem(p[0], p[1]) : null;
+    this.stageCursor(h ? "pointer" : "");
+    showTip(h ? itemTooltip(h, this.curFrame) : null, e.clientX, e.clientY);
+  }
+
+  stageCursor(c) { this.canvas.parentElement.style.cursor = c; }
+
+  click(e) {
+    const p = this.pointer(e), h = p ? this.hitItem(p[0], p[1]) : null;
+    if (!this.selection) return;
+    if (h) this.selection.selectItem(h); else this.selection.clear();
   }
 
   setRun(run) {
@@ -73,6 +119,7 @@ export class Overlay {
 
   /** The loaded hazards window (CONTRACTS 12.1): sorted frames around the playhead + the response header. */
   setFrames(frames, head) {
+    this.head = head ?? null;
     this.frames = frames ?? [];
     this.fixedStep = head?.settings?.stepLengthM ?? null; // user-set step length, if any
     this.lastK = -2;
@@ -111,6 +158,8 @@ export class Overlay {
   draw(t) {
     const { ctx, cw, ch } = this;
     if (!cw) return;
+    this.curFrame = null;
+    this.canvas.dataset.selTrack = "";
     ctx.clearRect(0, 0, cw, ch);
     const run = this.run;
     if (run && !this.frames.length) this.drawWindow();   // the window frame shows before the first hazards arrive
@@ -123,6 +172,7 @@ export class Overlay {
     if (k < 0 || (t - this.frames[k].t > STALE_FRAME_S && k === this.frames.length - 1)) { this.updateHud(null); return; }
     if (k !== this.lastK) { this.lastK = k; this.preload(k); }
     const f = this.frames[k];
+    this.curFrame = f;
 
     if (this.layers.depth && this.hasDepth) this.drawDepth(k);
     if (this.layers.mask) this.drawMask(k, t);
@@ -134,6 +184,8 @@ export class Overlay {
       const hs = f.hazards ?? [];
       for (const h of hs) if (h.role === "none") this.drawHazard(h);
       for (const h of hs) if (h.role !== "none") this.drawHazard(h);
+      const sel = this.selection?.find(f);
+      if (sel) { this.drawSelected(sel); this.canvas.dataset.selTrack = String(sel.trackId ?? "?"); }
     }
     this.updateHud(f);
   }
@@ -360,6 +412,29 @@ export class Overlay {
     ctx.restore();
   }
 
+  /** v26.2.10: the selected item's whole outline (or box), highlighted, followed by its track id. */
+  drawSelected(h) {
+    const { ctx, cw, ch } = this;
+    const [x0, y0, x1, y1] = h.bbox;
+    const poly = this.outlines && h.outline?.length >= 3 ? h.outline : null;
+    ctx.save();
+    ctx.lineJoin = "round";
+    for (const [w, col] of [[7, "#000000"], [3.5, "#ffe14d"]]) {
+      ctx.lineWidth = w; ctx.strokeStyle = col;
+      if (poly) {
+        ctx.beginPath();
+        poly.forEach(([x, y], i) => (i ? ctx.lineTo(x * cw, y * ch) : ctx.moveTo(x * cw, y * ch)));
+        ctx.closePath(); ctx.stroke();
+      } else ctx.strokeRect(x0 * cw, y0 * ch, (x1 - x0) * cw, (y1 - y0) * ch);
+    }
+    const text = `#${h.trackId ?? "?"}`;
+    ctx.font = "700 13px system-ui, sans-serif"; ctx.textBaseline = "middle";
+    const tw = ctx.measureText(text).width + 8, lx = Math.min(Math.max(0, x1 * cw - tw), cw - tw), ly = Math.min(ch - 18, y1 * ch + 2);
+    ctx.fillStyle = "#ffe14d"; ctx.fillRect(lx, ly, tw, 18);
+    ctx.fillStyle = "#111"; ctx.fillText(text, lx + 4, ly + 9.5);
+    ctx.restore();
+  }
+
   drawHazard(h) {
     const { ctx, cw, ch } = this;
     const legacy = h.role === undefined; // v26.1.0 run
@@ -418,4 +493,14 @@ export class Overlay {
     }
     ctx.restore();
   }
+}
+
+/** Ray casting: is the normalised point inside the polygon [[x, y], ...]? */
+function pointInPolygon(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }

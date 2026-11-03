@@ -16,7 +16,17 @@ NAMES = ["4929_review1", "4929_review2", "4929_review3", "4929_review4", "chest0
 NEW_KEYS = ("worldTracks", "worldTracksSettings")
 
 
-def run_window(name: str, i: int, mode: str | None, config: dict | None = None):
+def v2629_configs() -> tuple[dict, dict]:
+    """(collision config, worldmap config) that restore the v26.2.9 behaviour: the time-decayed add-up fusion with inferred seams and no pose
+    alignment, and one item per person component (v26.2.10 ships facts only + ``personSplit``)."""
+    import worldmap
+    cfg = copy.deepcopy(col.load_config())
+    cfg["personSplit"]["enabled"] = False
+    wcfg = {**worldmap.load_config(), "decay": "time", "conflictFactor": 1.0, "voteCap": 0.0, "poseAlign": False, "gapCloseM": 0.5, "faceThicknessM": 0.3}
+    return cfg, wcfg
+
+
+def run_window(name: str, i: int, mode: str | None, config: dict | None = None, worldmap_config: dict | None = None):
     """(meta, hazards doc, events doc) of window ``i`` of a fixture; ``mode`` = the object distance ("depth" | "ground+depth"), None = default."""
     config = config or col.load_config()
     meta = json.load(open(FIXTURES / f"{name}.json"))
@@ -33,11 +43,11 @@ def run_window(name: str, i: int, mode: str | None, config: dict | None = None):
     if f"w{i}_depth" in npz.files:
         dm = meta["depth"]
         depth = {"t": npz[f"w{i}_t"], "depth": npz[f"w{i}_depth"], "units": dm["units"], "anchor": dm["anchor"]}
-    doc, ev = col.run_collision(npz[f"w{i}_grids"], npz[f"w{i}_t"], meta["classNames"], config, settings, motion, depth)
+    doc, ev = col.run_collision(npz[f"w{i}_grids"], npz[f"w{i}_t"], meta["classNames"], config, settings, motion, depth, worldmap_config=worldmap_config)
     return meta, doc, ev
 
 
-def all_runs(config: dict | None = None):
+def all_runs(config: dict | None = None, worldmap_config: dict | None = None):
     """Yield (label, meta, hazards doc, events doc) for every fixture window and mode."""
     for name in NAMES:
         meta = json.load(open(FIXTURES / f"{name}.json"))
@@ -45,7 +55,7 @@ def all_runs(config: dict | None = None):
         for i, w in enumerate(meta["windows"]):
             modes = ("depth", "ground+depth") if f"w{i}_depth" in npz.files else (None,)
             for mode in modes:
-                m, doc, ev = run_window(name, i, mode, config)
+                m, doc, ev = run_window(name, i, mode, config, worldmap_config)
                 yield f"{name}/{w['key']}/{mode or 'ground'}", m, doc, ev
 
 

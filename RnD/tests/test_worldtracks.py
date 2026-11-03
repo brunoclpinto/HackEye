@@ -127,8 +127,10 @@ def baseline():
 
 
 def test_events_and_every_other_hazards_key_are_byte_identical_to_v2628_on_every_fixture_window(baseline):
+    # (also pins that the v26.2.9 settings restore the old map and items exactly: decay time, no confrontation, no alignment, personSplit off)
     seen = 0
-    for label, meta, doc, ev in wf.all_runs():
+    cfg, wcfg = wf.v2629_configs()        # v26.2.10 changes the map and the people split by design; with the v26.2.9 settings nothing moved
+    for label, meta, doc, ev in wf.all_runs(cfg, wcfg):
         assert wf.events_hash(ev) == baseline[label]["events"], label
         assert wf.hazards_hash(doc) == baseline[label]["hazards"], label
         seen += 1

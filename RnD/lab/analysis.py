@@ -296,6 +296,9 @@ def submit_run(req: dict) -> dict:
             return existing
         if existing["status"] == "done" and not force:
             return {**existing, "reused": True}
+    from lab import collisions
+    if collisions.job_active():
+        raise RunConflict("A collision re-run is running; wait for it or cancel it")
     with _state_lock:
         if _maintenance:
             raise RunConflict("Lab is cleaning up for a new version; try again in a minute")
@@ -384,7 +387,9 @@ def cancel_run(run_id: str) -> dict | None:
 
 
 def cancel_all() -> list[str]:
-    """Cancel every queued and running run; returns their ids."""
+    """Cancel every queued and running run; returns their ids. (v26.2.10: and the collision re-run job.)"""
+    from lab import collisions
+    collisions.cancel_job()
     with _state_lock:
         ids = [i for i, d in _active.items() if d["status"] in ACTIVE_STATUSES]
     for i in ids:
@@ -396,8 +401,15 @@ def cancel_all() -> list[str]:
 
 
 def is_idle() -> bool:
+    from lab import collisions
     with _state_lock:
-        return _busy is None and not _active and _jobs.empty()
+        return _busy is None and not _active and _jobs.empty() and not collisions.job_active()
+
+
+def analysis_active() -> bool:
+    """A run is queued or running (v26.2.10: a collision re-run job never runs together with one)."""
+    with _state_lock:
+        return any(d["status"] in ACTIVE_STATUSES for d in _active.values())
 
 
 def wait_idle(timeout: float) -> bool:
@@ -850,12 +862,14 @@ def _build_worldmap(run_id: str, cid: str) -> None:
 # Collision pass
 # --------------------------------------------------------------------------
 
-def collision_pass(run_id: str, overrides: dict | None = None, label: str = "") -> dict | None:
+def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", job=None) -> dict | None:
     """Compute a NEW collision run (v26.2.8: next id c<n>, never reused) from grids.npz using the recording's current settings, plus
     optional config `overrides` ({"collision": {dotted key: value}, "worldmap": {...}}, validated, applied to in-memory copies).
     Writes runs/<id>/collisions/<cid>/{hazards.json, events.json, collision.json}; the world map is built by `worldmap_pass`.
     Returns the collision.json document, or None when src/collision.py is missing (the run stays valid without hazards).
-    Raises lab.collisions.CollisionError (422) for bad overrides."""
+    Raises lab.collisions.CollisionError (422) for bad overrides.
+    v26.2.10: `job` (a lab.collisions.Job) = the id is already allocated and registered, its collision.json is in status `running`; the
+    frame loop reports to `job.progress` (0-0.4) and stops when the job is cancelled; the job finishes the document after the map."""
     try:
         import collision
         import worldmap
@@ -908,11 +922,13 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "") 
             if anchor is None:
                 anchor = "per-frame" if units == "relative" else "none"
             depth = {"t": z["t"], "depth": z["depth"], "units": units, "anchor": anchor}
-    cid = collisions.allocate(run_id)
+    cid = job.cid if job is not None else collisions.allocate(run_id)
     cdir = collisions.collision_dir(run_id, cid)
     try:
         t0 = time.perf_counter()
         extra = {"window": window} if window is not None else {}     # full-frame runs call exactly as before
+        if job is not None:               # only a job reports (a synchronous pass calls exactly as before)
+            extra["progress"] = lambda i, n: job.report(0.4 * i / max(n, 1))
         from lab import sounds as lab_sounds                       # the Lab-wide sound profile (v26.1.16): the tone intervals
         hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings, motion,
                                                   depth=depth, sounds=lab_sounds.profile(), worldmap_config=wcfg, **extra)
@@ -926,17 +942,21 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "") 
                 "worldmapVersion": None, "settings": stored,
                 "resolved": {**hazards.get("settings", {}), "distanceSource": hazards.get("distanceSource"),
                              "projection": hazards.get("projection")},
-                "overrides": overrides, "label": "", "elapsedSeconds": elapsed,
+                "overrides": overrides, "label": "", "elapsedSeconds": elapsed, "status": "done", "progress": 1.0, "error": None,
                 "counts": {"speech": sum(1 for e in evs if e.get("type") == "speech"),
                            "beeps": sum(1 for e in evs if e.get("type") == "beeps")}}
         if label:
             cdoc["label"] = str(label)[:60]
+        if job is not None:               # still running: the map follows; keep the label the row may have got meanwhile
+            cdoc.update(status="running", progress=0.4, label=(collisions.read_doc(run_id, cid) or {}).get("label", ""))
         collisions.write_doc(run_id, cid, cdoc)
     except BaseException:
-        import shutil
-        shutil.rmtree(cdir, ignore_errors=True)
+        if job is None:
+            import shutil
+            shutil.rmtree(cdir, ignore_errors=True)
         raise
-    collisions.register(run_id, cid)
+    if job is None:
+        collisions.register(run_id, cid)
     fields = {"collisionVersion": config["version"]}
     if window is None and doc.get("side") is not None:
         fields["side"] = side          # a full-frame run shows the side its lane offset was last computed for
@@ -945,7 +965,7 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "") 
     return cdoc
 
 
-def worldmap_pass(run_id: str, cid: str | None = None) -> dict:
+def worldmap_pass(run_id: str, cid: str | None = None, job=None) -> dict:
     """(Re)build worldmap.npz of collision run `cid` (default: the latest) from grids.npz, that collision run's hazards.json (the horizon,
     ego block and calibration the pass stored) and depth.npz, with the config overrides stored in its collision.json. Pure numpy; never
     touches the GPU queue or hazards.json / events.json. Raises FileNotFoundError when grids.npz or hazards.json is missing."""
@@ -972,7 +992,11 @@ def worldmap_pass(run_id: str, cid: str | None = None) -> dict:
     cfg = collisions.apply_overrides(worldmap.load_config(), overrides, "worldmap")
     ccfg = collisions.apply_overrides(collision.load_config(), overrides, "collision")
     t0 = time.perf_counter()
-    arrays = worldmap.build(grids, times, doc["classNames"], hazards, ccfg, cfg, depth)
+    hook = None
+    if job is not None:                   # v26.2.10: 0.4-1.0 of the job's progress; raises when cancelled
+        total = len(grids)
+        hook = lambda i, wm, obs, cls: job.report(0.4 + 0.6 * (i + 1) / max(total, 1))  # noqa: E731
+    arrays = worldmap.build(grids, times, doc["classNames"], hazards, ccfg, cfg, depth, hook=hook)
     elapsed = round(time.perf_counter() - t0, 3)
     tmp = cdir / "worldmap.tmp.npz"
     np.savez_compressed(tmp, **arrays)

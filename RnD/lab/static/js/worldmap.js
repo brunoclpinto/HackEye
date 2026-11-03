@@ -6,6 +6,7 @@
 // 5 steps, and the current frame's hazards as dots (movers highlighted, the role danger outlined).
 import { $, ROLE_COLOR, lastAtOrBefore } from "./util.js";
 import { api } from "./api.js";
+import { itemTooltip, showTip } from "./selection.js";
 
 const SIZE = 200, ORIGIN_COL = 100, ORIGIN_ROW = 200, CELL_M = 0.1;
 const UNKNOWN = 255;
@@ -60,6 +61,48 @@ export function itemsNear(frame, ahead, right) {
   return out;
 }
 
+/** v26.2.10: the item's footprint on the map, canvas px: a segment across its width at its distance. The bbox edges go through the lens
+ *  (rectilinear: tan(bearing) = (x - 0.5) * 2 tan(hfov / 2); fisheye: bearing = (x - 0.5) * hfov), so the lateral spread of each edge is
+ *  distance x (tan(edge) - tan(centre)) around the item's own lateral position. Without a lens the segment is the marker's point. */
+export function footprintOf(h, W, lens) {
+  const m = markerOf(h, W), s = W / SIZE;
+  const hf = lens?.hfovDeg;
+  if (!(hf > 0) || !h.bbox || !(h.distanceM > 0)) return { x1: m.x, y1: m.y, x2: m.x, y2: m.y, x: m.x, y: m.y };
+  const tanOf = (xn) => (lens.projection === "fisheye" ? Math.tan((xn - 0.5) * hf * Math.PI / 180) : (xn - 0.5) * 2 * Math.tan(hf * Math.PI / 360));
+  const xc = (h.bbox[0] + h.bbox[2]) / 2, lim = 6;
+  const dev = (xn) => Math.max(-lim, Math.min(lim, h.distanceM * (tanOf(xn) - tanOf(xc))));
+  const left = dev(h.bbox[0]), right = dev(h.bbox[2]);
+  return { x1: m.x + (left / CELL_M) * s, y1: m.y, x2: m.x + (right / CELL_M) * s, y2: m.y, x: m.x, y: m.y };
+}
+
+/** Distance from the point to the segment of a footprint (canvas px). */
+export function footprintDistance(fp, px, py) {
+  const dx = fp.x2 - fp.x1, dy = fp.y2 - fp.y1, L = dx * dx + dy * dy;
+  const t = L > 0 ? Math.max(0, Math.min(1, ((px - fp.x1) * dx + (py - fp.y1) * dy) / L)) : 0;
+  return Math.hypot(px - (fp.x1 + t * dx), py - (fp.y1 + t * dy));
+}
+
+/** v26.2.10: the 8-connected cells of the same class as (col, row) in the snapshot `grid`; null for an unknown cell.
+ *  Returns {mask (Uint8Array SIZE x SIZE), count, classId}. */
+export function regionOf(grid, col, row, size = SIZE) {
+  const cls = grid?.[row * size + col];
+  if (cls === undefined || cls === UNKNOWN) return null;
+  const mask = new Uint8Array(size * size), stack = [row * size + col];
+  mask[stack[0]] = 1;
+  let count = 0;
+  while (stack.length) {
+    const i = stack.pop(); count++;
+    const r = Math.floor(i / size), c = i % size;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const rr = r + dr, cc = c + dc;
+      if ((!dr && !dc) || rr < 0 || cc < 0 || rr >= size || cc >= size) continue;
+      const j = rr * size + cc;
+      if (!mask[j] && grid[j] === cls) { mask[j] = 1; stack.push(j); }
+    }
+  }
+  return { mask, count, classId: cls };
+}
+
 /** v26.2.9: the world track of the frame as drawn, in canvas px: centre, 1-sigma radius and the radius a click counts as a hit. */
 export function trackOf(w, W, minHitPx = 0) {
   const s = W / SIZE, rad = Math.max(3, (w.sigmaM ?? 0) / CELL_M * s);
@@ -97,16 +140,20 @@ export function wallEdgeSegments(grid, faceIds, surfIds, size = SIZE) {
 
 export class WorldMapPanel {
   /** `getStyle` = () => MaskStyle | null; `getFrames` = () => windowed hazards frames; `isPlaying` = () => bool. */
-  constructor({ getStyle, getFrames, isPlaying }) {
+  constructor({ getStyle, getFrames, isPlaying, getLens }) {
     this.getStyle = getStyle;
     this.getFrames = getFrames;
     this.isPlaying = isPlaying;
+    this.getLens = getLens ?? (() => null);
+    this.selection = null;     // v26.2.10: the Selection shared with the video overlay (set by app)
     this.canvas = $("#wmCanvas");
     this.ctx = this.canvas.getContext("2d");
     this.reset();
     // The canvas follows the layout (CSS size x devicePixelRatio): repaint when its box changes.
     new ResizeObserver(() => { this.sig = ""; this.paintIfNeeded(); }).observe(this.canvas);
     this.canvas.addEventListener("click", (e) => this.select(e));
+    this.canvas.addEventListener("mousemove", (e) => this.hover(e));
+    this.canvas.addEventListener("mouseleave", () => showTip(null));
     this.paint();
   }
 
@@ -115,25 +162,94 @@ export class WorldMapPanel {
     return (frame?.hazards ?? []).filter((h) => Number.isFinite(h.distanceM) && Number.isFinite(h.lateralM) && !isMassive(h));
   }
 
-  /** Click / tap: an item marker under the pointer wins (selection snaps to its cell); else select the map cell under the pointer.
-   *  The marker stays until another click. */
-  select(e) {
-    const r = this.canvas.getBoundingClientRect();
-    if (!r.width) return;
-    const px = this.canvas.width / r.width;                       // canvas px per CSS px (devicePixelRatio and layout scale)
-    const cx = (e.clientX - r.left) * px, cy = (e.clientY - r.top) * px;
+  /** The drawn item under the canvas point (px): its marker or its footprint segment, whichever is nearer; the hit radius is at least 8 CSS px. */
+  itemAt(cx, cy, px) {
+    const W = this.canvas.width, lens = this.getLens();
     let best = null, bestD = Infinity;
     for (const h of this.markers(this.currentHazardFrame())) {
-      const m = markerOf(h, this.canvas.width, HIT_MIN_CSS_PX * px), d = Math.hypot(m.x - cx, m.y - cy);
-      if (d <= m.hit && d < bestD) { best = { h, m }; bestD = d; }
+      const m = markerOf(h, W, HIT_MIN_CSS_PX * px), d = Math.min(Math.hypot(m.x - cx, m.y - cy), footprintDistance(footprintOf(h, W, lens), cx, cy));
+      if (d <= m.hit && d < bestD) { best = h; bestD = d; }
     }
-    const at = best ? [best.m.x, best.m.y] : [cx, cy], cell = this.canvas.width / SIZE;
+    return best;
+  }
+
+  /** The pointer on the canvas: [x, y] in canvas px, the canvas px per CSS px, or null. */
+  canvasPoint(e) {
+    const r = this.canvas.getBoundingClientRect();
+    if (!r.width) return null;
+    const px = this.canvas.width / r.width;
+    return [(e.clientX - r.left) * px, (e.clientY - r.top) * px, px];
+  }
+
+  /** Hover: the tooltip of the item under the pointer, else the selected region's when over it. */
+  hover(e) {
+    const p = this.canvasPoint(e);
+    if (!p) return;
+    const h = this.itemAt(p[0], p[1], p[2]);
+    let text = h ? itemTooltip(h, this.currentHazardFrame()) : null;
+    if (!h && this.region) {
+      const cell = this.canvas.width / SIZE, col = Math.floor(p[0] / cell), row = Math.floor(p[1] / cell);
+      if (col >= 0 && row >= 0 && col < SIZE && row < SIZE && this.region.mask[row * SIZE + col]) text = this.regionText();
+    }
+    this.canvas.style.cursor = text ? "pointer" : "";
+    showTip(text, e.clientX, e.clientY);
+  }
+
+  /** Click / tap: an item (marker or footprint) under the pointer wins (selection snaps to its cell and the item is selected on the video too);
+   *  else the map cell under the pointer is read, and when it is an object-layer cell the whole same-class region is selected. */
+  select(e) {
+    const p = this.canvasPoint(e);
+    if (!p) return;
+    const [cx, cy, px] = p;
+    const best = this.itemAt(cx, cy, px);
+    const m = best ? markerOf(best, this.canvas.width) : null;
+    const at = best ? [m.x, m.y] : [cx, cy], cell = this.canvas.width / SIZE;
     const col = Math.min(SIZE - 1, Math.max(0, Math.floor(at[0] / cell)));
     const row = Math.min(SIZE - 1, Math.max(0, Math.floor(at[1] / cell)));
     this.sel = { col, row };
-    this.selItem = best ? { trackId: best.h.trackId ?? null, className: best.h.className, h: best.h } : null;
+    this.selItem = best ? { trackId: best.trackId ?? null, className: best.className, h: best } : null;
     this.cellData = null; this.cellKey = "";
+    this.pendingRegion = best ? null : { col, row, k: this.k };
+    if (best) this.selection?.selectItem(best); else this.selection?.clear();
     this.sig = ""; this.refreshCell(); this.paintIfNeeded();
+  }
+
+  /** The shared selection changed (here, on the video, Esc): follow it. */
+  onSelection() {
+    if (!this.selection?.item && !this.selection?.region) this.selItem = null;
+    this.region = null;
+    this.sig = "";
+    this.paintIfNeeded();
+  }
+
+  className(id) {
+    const c = this.getStyle()?.info?.classes?.find?.((x) => x.id === id);
+    return c?.name ?? `class ${id}`;
+  }
+
+  /** The selected region of the snapshot shown: re-grown from its seed cell each snapshot (null when the seed is no longer of its class). */
+  updateRegion(grid) {
+    const sr = this.selection?.region;
+    this.region = null;
+    if (!sr || !grid || grid[sr.row * SIZE + sr.col] !== sr.classId) return;
+    const reg = regionOf(grid, sr.col, sr.row);
+    if (!reg) return;
+    let near = Infinity, bMin = Infinity, bMax = -Infinity;
+    for (let i = 0; i < reg.mask.length; i++) {
+      if (!reg.mask[i]) continue;
+      const ahead = (ORIGIN_ROW - Math.floor(i / SIZE)) * CELL_M, right = ((i % SIZE) - ORIGIN_COL) * CELL_M;
+      near = Math.min(near, Math.hypot(ahead, right));
+      const b = Math.atan2(right, ahead) * 180 / Math.PI;
+      bMin = Math.min(bMin, b); bMax = Math.max(bMax, b);
+    }
+    this.region = { ...reg, nearestM: near, clockMin: clockText(clockQuarter(bMin)), clockMax: clockText(clockQuarter(bMax)) };
+  }
+
+  regionText() {
+    const r = this.region;
+    if (!r) return "";
+    const clock = r.clockMin === r.clockMax ? r.clockMin : `${r.clockMin} to ${r.clockMax}`;
+    return `${this.className(r.classId)} region\n${r.count} cells\nnearest ${r.nearestM.toFixed(1)} m\nclock ${clock}`;
   }
 
   /** Fetch the selected cell's layers for the current snapshot (GET /worldmap/cell); latest wins. */
@@ -146,12 +262,39 @@ export class WorldMapPanel {
     this.cellKey = key;
     const token = this.token;
     api(`/api/runs/${this.run.id}/worldmap/cell?i=${this.k}&col=${sel.col}&row=${sel.row}${this.vq('&')}`, { quiet: true })
-      .then((d) => { if (token === this.token && key === this.cellKey) { this.cellData = d; this.renderCell(); } })
+      .then((d) => { if (token === this.token && key === this.cellKey) { this.cellData = d; this.regionFromClick(d); this.renderCell(); } })
       .catch(() => { if (token === this.token && key === this.cellKey) { this.cellData = null; this.renderCell(); } });
+  }
+
+  /** v26.2.10: a click on an object-layer cell with no item selects the whole same-class region of the snapshot shown. */
+  regionFromClick(d) {
+    const pr = this.pendingRegion;
+    this.pendingRegion = null;
+    if (!pr || pr.k !== this.k || !d?.layers || d.object === null) return;
+    const grid = this.cache.get(this.k), cls = grid?.[pr.row * SIZE + pr.col];
+    if (cls === undefined || cls === UNKNOWN) return;
+    this.selection?.selectRegion({ col: pr.col, row: pr.row, classId: cls });
   }
 
   /** The text of the box under the map: the selected cell at the current frame. A never-observed cell (no surface, no object, no item) reads its coordinate line and "unmapped" (v26.2.7). */
   cellText() {
+    const lead = this.selectionLines();
+    const body = this.cellBody();
+    return lead.length ? (this.sel ? lead.concat(body).join("\n") : lead.join("\n")) : body;
+  }
+
+  /** v26.2.10: the readout is led by the selection: the item (as on the video) or the region. */
+  selectionLines() {
+    const sel = this.selection, frame = this.currentHazardFrame();
+    if (sel?.item) {
+      const h = sel.find(frame);
+      return [h ? `Selected: ${itemTooltip(h, frame).split("\n").join(" · ")}` : `Selected: ${sel.item.className} · track ${sel.item.trackId ?? "?"} (not in this frame)`];
+    }
+    if (sel?.region) return [this.region ? `Selected: ${this.regionText().split("\n").join(" · ")}` : "Selected: region (not in this snapshot)"];
+    return [];
+  }
+
+  cellBody() {
     if (!this.sel) return "Click the map to read a cell.";
     const { col, row } = this.sel;
     const ahead = (ORIGIN_ROW - row) * CELL_M, right = (col - ORIGIN_COL) * CELL_M;
@@ -225,6 +368,8 @@ export class WorldMapPanel {
     this.lastFetch = 0;
     this.timer = null;
     this.selItem = null;       // v26.2.6: the item marker the selection was snapped to (followed by track id)
+    this.region = null;        // v26.2.10: the selected region of the snapshot shown {mask, count, classId, nearestM, clockMin, clockMax}
+    this.pendingRegion = null;
   }
 
   /** Switch run (or null). */
@@ -333,9 +478,11 @@ export class WorldMapPanel {
   paintIfNeeded() {
     const f = this.currentHazardFrame();
     const grid = this.k >= 0 ? this.cache.get(this.k) : null;
-    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}`;
+    const sr = this.selection?.region, si = this.selection?.item;
+    const sig = `${this.run?.id}|${this.k}|${grid ? 1 : 0}|${f?.index}|${this.getStyle()?.version}|${si ? `${si.trackId}/${si.className}` : ""}|${sr ? `${sr.col},${sr.row}` : ""}`;
     if (sig === this.sig) return;
     this.sig = sig;
+    this.updateRegion(grid);
     this.paint(grid, f);
     this.renderCell();
   }
@@ -467,10 +614,17 @@ export class WorldMapPanel {
     // hazards: ahead = distanceM, right = lateralM
     if (frame) {
       const hs = this.markers(frame);       // v26.2.6: no dot for building / bridge / tunnel items
+      const lens = this.getLens();
       const drawOne = (h) => {
         const x = ux + (h.lateralM / CELL_M) * s, y = uy - (h.distanceM / CELL_M) * s;
         if (x < -4 || y < -4 || x > W + 4 || y > W + 4) return;
         const col = h.role === "danger" && h.urgency === "final" ? ROLE_COLOR.final : ROLE_COLOR[h.role] ?? ROLE_COLOR.none;
+        const fp = footprintOf(h, W, lens);       // v26.2.10: the item across its width (bbox edges through the lens), 2 px
+        if (fp.x2 - fp.x1 > 1) {
+          ctx.save(); ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.strokeStyle = col; ctx.globalAlpha = h.role === "none" ? 0.6 : 1;
+          ctx.setLineDash(h.coasting ? [4, 3] : []);
+          ctx.beginPath(); ctx.moveTo(fp.x1, fp.y1); ctx.lineTo(fp.x2, fp.y2); ctx.stroke(); ctx.restore();
+        }
         const mover = h.group === "moving", r = Math.max(3, W / 70) * (mover ? 1.5 : 1);
         ctx.beginPath();
         if (mover) { ctx.moveTo(x, y - r * 1.2); ctx.lineTo(x + r * 1.2, y); ctx.lineTo(x, y + r * 1.2); ctx.lineTo(x - r * 1.2, y); ctx.closePath(); }
@@ -496,6 +650,37 @@ export class WorldMapPanel {
       };
       for (const h of hs) if (h.role === "none") drawOne(h);
       for (const h of hs) if (h.role !== "none") drawOne(h);
+      const picked = this.selection?.find(frame);       // the selected item (the same track as on the video): highlighted
+      this.canvas.dataset.selTrack = picked && this.markers(frame).includes(picked) ? String(picked.trackId ?? "?") : "";
+      if (this.canvas.dataset.selTrack) {
+        const fp = footprintOf(picked, W, lens);
+        ctx.save(); ctx.lineCap = "round";
+        for (const [w, c] of [[7, "#000000"], [3.5, "#ffe14d"]]) {
+          ctx.lineWidth = w; ctx.strokeStyle = c;
+          ctx.beginPath(); ctx.arc(fp.x, fp.y, Math.max(6, W / 45), 0, 2 * Math.PI); ctx.stroke();
+          if (fp.x2 - fp.x1 > 1) { ctx.beginPath(); ctx.moveTo(fp.x1, fp.y1); ctx.lineTo(fp.x2, fp.y2); ctx.stroke(); }
+        }
+        ctx.restore();
+      }
+    } else this.canvas.dataset.selTrack = "";
+    // v26.2.10: the selected region: its whole outline (every border between a region cell and a cell that is not)
+    this.canvas.dataset.selRegion = this.region ? String(this.region.count) : "";
+    if (this.region) {
+      const mk = this.region.mask;
+      ctx.save(); ctx.lineCap = "square";
+      for (const [w, c] of [[5, "#000000"], [2.5, "#ffe14d"]]) {
+        ctx.lineWidth = w; ctx.strokeStyle = c; ctx.beginPath();
+        for (let i = 0; i < mk.length; i++) {
+          if (!mk[i]) continue;
+          const r = Math.floor(i / SIZE), cc = i % SIZE;
+          if (cc === 0 || !mk[i - 1]) { ctx.moveTo(cc * s, r * s); ctx.lineTo(cc * s, (r + 1) * s); }
+          if (cc === SIZE - 1 || !mk[i + 1]) { ctx.moveTo((cc + 1) * s, r * s); ctx.lineTo((cc + 1) * s, (r + 1) * s); }
+          if (r === 0 || !mk[i - SIZE]) { ctx.moveTo(cc * s, r * s); ctx.lineTo((cc + 1) * s, r * s); }
+          if (r === SIZE - 1 || !mk[i + SIZE]) { ctx.moveTo(cc * s, (r + 1) * s); ctx.lineTo((cc + 1) * s, (r + 1) * s); }
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
     }
     // user marker
     ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#000000"; ctx.lineWidth = 1.5;

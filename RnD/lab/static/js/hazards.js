@@ -68,7 +68,7 @@ export class HazardWindow {
     const entry = { from, to, merge, promise: null };
     entry.promise = api(url, { quiet: true }).then((doc) => {
       if (token !== this.token || runId !== this.runId || this.inflight !== entry) return; // run changed / superseded by a newer fetch
-      this.head = { version: doc.version, settings: doc.settings, gridW: doc.gridW, gridH: doc.gridH, egoAvailable: doc.egoAvailable };
+      this.head = { version: doc.version, settings: doc.settings, projection: doc.projection, gridW: doc.gridW, gridH: doc.gridH, egoAvailable: doc.egoAvailable };
       if (merge && this._covers(from - 1e-6)) {
         // Prefetch: append the next stretch, drop frames far behind the playhead.
         const keepFrom = Math.max(this.from, (playhead ?? from) - HALF_S);

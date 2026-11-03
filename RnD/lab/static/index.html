@@ -12,11 +12,6 @@
   <h1>HackEye Lab</h1>
   <span id="verBadge" class="muted ver"></span>
   <span id="runBadge" class="muted"></span>
-  <div id="collBar" class="collbar" hidden>
-    <label class="inline">Collision run <select id="collSel" aria-label="Collision run"></select></label>
-    <input id="collLabel" maxlength="60" placeholder="label (optional)" aria-label="Collision run label" autocomplete="off">
-    <button type="button" id="collDel" title="Delete this collision run (not the only one, not one with reviews)">Delete</button>
-  </div>
 </header>
 
 <div class="layout">
@@ -306,5 +301,6 @@
 
 <div id="toasts" aria-live="polite"></div>
 <script type="module" src="/static/app.js"></script>
+<div id="itemTip" class="tip mono" hidden role="tooltip"></div>
 </body>
 </html>

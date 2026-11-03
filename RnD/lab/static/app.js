@@ -12,6 +12,7 @@ import { SoundsPanel } from "./js/sounds.js";
 import { NotesPanel } from "./js/notes.js";
 import { IssuesPanel } from "./js/issues.js";
 import { WorldMapPanel } from "./js/worldmap.js";
+import { Selection } from "./js/selection.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 const video = $("#video");
@@ -29,10 +30,18 @@ overlay.hudEl = $("#hud");
 const classesPanel = new ClassesPanel(overlay);
 const audio = new AudioEngine(video);
 window.__labAudio = audio;                                  // E2E hook (CONTRACTS 13): the tests set / clear the sound profile on it
+
 const sounds = new SoundsPanel({ audio, rerun: () => rerunCollision(), hasRun: () => !!S.run });
 const notesPanel = new NotesPanel({ getRecId: () => S.rec?.id ?? null, getTime: () => S.pendingSeek ?? (video.currentTime || 0), getRunId: () => S.run?.id ?? null });
 const issuesPanel = new IssuesPanel();
-const worldmap = new WorldMapPanel({ getStyle: () => overlay.style, getFrames: () => overlay.frames, isPlaying: () => !video.paused });
+const worldmap = new WorldMapPanel({ getStyle: () => overlay.style, getFrames: () => overlay.frames, isPlaying: () => !video.paused,
+  getLens: () => ({ hfovDeg: overlay.head?.settings?.hfovDeg, projection: overlay.head?.projection }) });
+window.__labWorldmap = worldmap;                           // E2E hook (CONTRACTS 13): the tests read the snapshot grid to find a wall cell
+// v26.2.10: items (and map regions) are selected as a whole; the video overlay and the world map share the selection
+const selection = new Selection();
+overlay.selection = selection;
+worldmap.selection = selection;
+selection.onChange(() => { overlay.redraw(); worldmap.onSelection(); });
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
 const reviews = new Reviews({
   seek: (t) => seekTo(t),
@@ -300,16 +309,70 @@ async function rerunCollision() {
       else toast(`Re-run collision: ${e.message}`);
       throw e;
     }
+    const runId = S.run.id;
     await refreshCollisions();
+    renderRuns();
+    const d = await followCollisionJob(runId, r.id);       // v26.2.10: a background job; the row shows progress + Cancel
+    if (!d) { info.textContent = `${r.id} · cancelled`; return false; }
+    if (d.status === "error") { toast(`Re-run collision: ${d.error ?? "failed"}`); throw new Error(d.error); }
+    if (S.run?.id !== runId) return false;                // the user moved to another run meanwhile
     await selectCollision(r.id, { force: true });
     const ms = performance.now() - t0;
     const fmt = (v) => (v < 1000 ? Math.round(v) + " ms" : (v / 1000).toFixed(2) + " s");
-    const compute = r.elapsedSeconds != null ? `${fmt(r.elapsedSeconds * 1000)} compute, ` : "";
+    const compute = d.elapsedSeconds != null ? `${fmt(d.elapsedSeconds * 1000)} compute, ` : "";
     $("#rerunBtn").classList.remove("primary");
-    info.textContent = `${r.id} · Collision ${r.version ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events · ${S.events.filter((e) => e.type === "beeps").length} beeps`;
+    info.textContent = `${r.id} · Collision ${d.collisionVersion ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events · ${S.events.filter((e) => e.type === "beeps").length} beeps`;
     return true;
-  } catch { info.textContent = "Failed (see error)"; return false; }
+  } catch { if (!/cancelled/.test(info.textContent)) info.textContent = "Failed (see error)"; return false; }
   finally { btn.disabled = !S.run; }
+}
+
+/** Poll the run's collisions once a second while `cid` runs (progress in its row). Resolves with its final doc, or null when it was
+ *  cancelled (its row is gone). One poller per run: a second caller shares it. */
+function followCollisionJob(runId, cid) {
+  S.collFollow ??= {};
+  const key = `${runId}/${cid}`;
+  if (S.collFollow[key]) return S.collFollow[key];
+  S.collFollow[key] = new Promise((resolve) => {
+    const poll = async () => {
+      if (S.run?.id !== runId) { delete S.collFollow[key]; resolve(null); return; }
+      await refreshCollisions();
+      const d = S.colls.find((c) => c.id === cid);
+      if (!d || d.status !== "running") {
+        delete S.collFollow[key];
+        renderColl();
+        resolve(d ?? null);
+        return;
+      }
+      if (!document.activeElement?.closest?.("#runList")) renderRuns();     // not while a label is being typed
+      else updateCollProgress();
+      setTimeout(poll, 1000);
+    };
+    poll();
+  });
+  return S.collFollow[key];
+}
+
+/** If the open run has a collision job in flight (e.g. started before a reload), follow it. */
+function resumeCollisionJob() {
+  const d = S.colls.find((c) => c.status === "running");
+  $("#rerunBtn").disabled = !S.run || !!d;
+  if (d) followCollisionJob(S.run.id, d.id).then(() => { $("#rerunBtn").disabled = !S.run; });
+}
+
+async function cancelCollisionJob(cid) {
+  if (!S.run) return;
+  try { await api(`/api/runs/${S.run.id}/collisions/${cid}/cancel`, { method: "POST", quiet: true }); }
+  catch (e) { toast(`Cancel ${cid}: ${e.message}`); }
+  await refreshCollisions();
+  renderColl();
+}
+
+function updateCollProgress() {
+  for (const d of S.colls) {
+    const el = document.querySelector(`#runList .coll-row[data-run="${S.run.id}"][data-cid="${d.id}"] .progress`);
+    if (el && d.status === "running") setProgress(el, d.progress || 0, `${Math.round((d.progress || 0) * 100)}%`);
+  }
 }
 
 // ---------------------------------------------------------------- collision runs (v26.2.8)
@@ -348,36 +411,32 @@ async function refreshCollisions() {
   try { S.colls = await api(`/api/runs/${S.run.id}/collisions`, { quiet: true }); } catch { S.colls = []; }
 }
 
-/** The collision run to show for a run: the remembered one (localStorage), else the latest. */
+/** The collision run to show for a run: the remembered one (localStorage), else the latest finished one. */
 function pickCollision(runId) {
   let want = null;
   try { want = localStorage.getItem(lsKey(runId)); } catch { /* storage blocked */ }
-  return S.colls.some((c) => c.id === want) ? want : (S.colls.at(-1)?.id ?? null);
+  const done = S.colls.filter((c) => (c.status ?? "done") === "done");
+  return done.some((c) => c.id === want) ? want : (done.at(-1)?.id ?? null);
 }
 
+/** The runs list shows the collisions (rows inside each run's group); the Compare pickers take the same finished rows. */
 function renderColl() {
-  const bar = $("#collBar"), sel = $("#collSel");
-  bar.hidden = !S.run;
-  sel.replaceChildren(...S.colls.map((d) => new Option(collText(d), d.id)));
-  if (!S.colls.length && S.run) sel.add(new Option("no collision run", ""));
-  sel.value = S.cid ?? "";
-  const cur = S.colls.find((c) => c.id === S.cid);
-  if (document.activeElement !== $("#collLabel")) $("#collLabel").value = cur?.label ?? "";
-  $("#collLabel").disabled = !cur;
-  $("#collDel").disabled = !cur || S.colls.length < 2;
+  renderRuns();
+  const done = S.colls.filter((c) => (c.status ?? "done") === "done");
   for (const id of ["#cmpA", "#cmpB"]) {
     const el = $(id), keep = el.value;
-    el.replaceChildren(...S.colls.map((d) => new Option(collText(d), d.id)));
-    if (S.colls.some((c) => c.id === keep)) el.value = keep;
+    el.replaceChildren(...done.map((d) => new Option(collText(d), d.id)));
+    if (done.some((c) => c.id === keep)) el.value = keep;
   }
 }
 
 /** Compare defaults: B = the selected collision run, A = the one before it. */
 function resetCompareDefaults() {
-  const i = S.colls.findIndex((c) => c.id === S.cid);
+  const done = S.colls.filter((c) => (c.status ?? "done") === "done");
+  const i = done.findIndex((c) => c.id === S.cid);
   if (i < 0) return;
   $("#cmpB").value = S.cid;
-  $("#cmpA").value = S.colls[i > 0 ? i - 1 : Math.min(1, S.colls.length - 1)]?.id ?? S.cid;
+  $("#cmpA").value = done[i > 0 ? i - 1 : Math.min(1, done.length - 1)]?.id ?? S.cid;
 }
 
 async function selectCollision(cid, { force = false } = {}) {
@@ -393,28 +452,111 @@ async function selectCollision(cid, { force = false } = {}) {
   hazards.update(video.currentTime || 0);
 }
 
-async function saveCollLabel() {
-  const d = S.colls.find((c) => c.id === S.cid);
-  if (!d || !S.run) return;
-  const label = $("#collLabel").value.trim();
+async function saveCollLabel(runId, d, input) {
+  const label = input.value.trim();
   if (label === (d.label ?? "")) return;
   try {
-    Object.assign(d, await api(`/api/runs/${S.run.id}/collisions/${d.id}`, { method: "PATCH", body: { label } }));
+    Object.assign(d, await api(`/api/runs/${runId}/collisions/${d.id}`, { method: "PATCH", body: { label } }));
     renderColl();
     renderCompare();
   } catch { /* toasted */ }
 }
 
-async function deleteColl() {
-  const d = S.colls.find((c) => c.id === S.cid);
-  if (!d || !S.run) return;
+async function deleteColl(runId, d) {
   if (!window.confirm(`Delete collision run ${d.id}${d.label ? ` (${d.label})` : ""}? Its events, hazards and world map are removed.`)) return;
-  try { await api(`/api/runs/${S.run.id}/collisions/${d.id}`, { method: "DELETE", quiet: true }); }
+  try { await api(`/api/runs/${runId}/collisions/${d.id}`, { method: "DELETE", quiet: true }); }
   catch (e) { toast(`Delete ${d.id}: ${e.message}`); return; }
-  await refreshCollisions();
-  try { localStorage.removeItem(lsKey(S.run.id)); } catch { /* storage blocked */ }
-  S.cid = null;
-  await selectCollision(pickCollision(S.run.id), { force: true });
+  if (S.run?.id === runId) {
+    const wasSel = S.cid === d.id;
+    await refreshCollisions();
+    if (wasSel) {
+      try { localStorage.removeItem(lsKey(runId)); } catch { /* storage blocked */ }
+      S.cid = null;
+      await selectCollision(pickCollision(runId), { force: true });
+    } else renderColl();
+  } else {
+    delete S.runColls?.[runId];
+    await loadRunColls(runId);
+  }
+}
+
+/** Collisions of a run that is not the open one (loaded when its group is opened). */
+async function loadRunColls(runId) {
+  S.runColls ??= {};
+  try { S.runColls[runId] = await api(`/api/runs/${runId}/collisions`, { quiet: true }); } catch { S.runColls[runId] = []; }
+  renderRuns();
+}
+
+const collsOf = (runId) => (S.run?.id === runId ? S.colls : S.runColls?.[runId] ?? []);
+
+/** Open a collision row: the same run switches collision run, another run is loaded showing it. */
+async function openCollRow(runId, d) {
+  if ((d.status ?? "done") !== "done") return;
+  if (S.run?.id === runId) { await selectCollision(d.id); return; }
+  try { localStorage.setItem(lsKey(runId), d.id); } catch { /* storage blocked */ }
+  await loadRun(runId);
+}
+
+function pickCompare(which, cid) {
+  const box = $("#secCompare");
+  box.open = true;
+  $(which).value = cid;
+  renderCompare();
+}
+
+function collRow(runId, d) {
+  const li = document.createElement("li");
+  li.className = "coll-row" + (S.run?.id === runId && S.cid === d.id ? " sel" : "");
+  li.dataset.run = runId; li.dataset.cid = d.id;
+  const status = d.status ?? "done";
+  const top = document.createElement("div");
+  top.className = "coll-top";
+  const id = document.createElement("b"); id.textContent = d.id;
+  const label = document.createElement("input");
+  label.className = "coll-label"; label.maxLength = 60; label.placeholder = collSummary(d); label.value = d.label ?? "";
+  label.autocomplete = "off"; label.setAttribute("aria-label", `Label of ${d.id}`);
+  label.addEventListener("click", (e) => e.stopPropagation());
+  label.addEventListener("change", () => saveCollLabel(runId, d, label));
+  label.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") label.blur(); });
+  const tag = document.createElement("span"); tag.className = `tag ${status}`; tag.textContent = status === "error" ? "error" : status;
+  if (status === "error" && d.error) tag.title = d.error;
+  top.append(id, label, tag);
+  const sub = document.createElement("div");
+  sub.className = "sub";
+  const c = d.counts ?? {};
+  sub.textContent = [`collision ${d.collisionVersion ?? "?"}`, d.worldmapVersion ? `map ${d.worldmapVersion}` : null,
+    status === "done" ? `${c.speech ?? 0} speech · ${c.beeps ?? 0} beeps` : null, collSummary(d)].filter(Boolean).join(" · ");
+  li.append(top, sub);
+  if (status === "running") {
+    const pr = document.createElement("div");
+    pr.className = "progress";
+    pr.innerHTML = "<div></div><span></span>";
+    setProgress(pr, d.progress || 0, `${Math.round((d.progress || 0) * 100)}%`);
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.className = "coll-cancel"; cancel.textContent = "Cancel";
+    cancel.addEventListener("click", (e) => { e.stopPropagation(); cancelCollisionJob(d.id); });
+    li.append(pr, cancel);
+  } else {
+    const bar = document.createElement("div");
+    bar.className = "coll-btns";
+    if (status === "done") {
+      for (const w of ["A", "B"]) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = `coll-pick coll-${w}`; b.textContent = w; b.title = `Use ${d.id} as ${w} in Compare collision runs`;
+        b.addEventListener("click", (e) => { e.stopPropagation(); if (S.run?.id === runId) pickCompare(`#cmp${w}`, d.id); });
+        bar.append(b);
+      }
+    }
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "coll-del"; del.textContent = "Delete";
+    del.title = "Delete this collision run (not the only one, not one with reviews)";
+    del.disabled = collsOf(runId).length < 2 && status !== "error";
+    del.addEventListener("click", (e) => { e.stopPropagation(); deleteColl(runId, d); });
+    bar.append(del);
+    li.append(bar);
+  }
+  if (status === "done") { li.classList.add("clickable"); li.addEventListener("click", () => openCollRow(runId, d)); }
+  return li;
 }
 
 // ---- compare A / B
@@ -424,7 +566,7 @@ async function renderCompare() {
   if (!box.open) return;
   const token = ++cmpToken;
   out.replaceChildren();
-  if (!S.run || S.colls.length < 2) { msg.textContent = S.run ? "This run has one collision run; re-run collision to compare." : "Open a run first."; return; }
+  if (!S.run || S.colls.filter((c) => (c.status ?? "done") === "done").length < 2) { msg.textContent = S.run ? "This run has one collision run; re-run collision to compare." : "Open a run first."; return; }
   const a = $("#cmpA").value, b = $("#cmpB").value, runId = S.run.id;
   if (!a || !b || a === b) { msg.textContent = "Pick two different collision runs."; return; }
   msg.textContent = "Comparing…";
@@ -536,19 +678,38 @@ function renderRuns() {
   const ul = $("#runList");
   ul.replaceChildren();
   if (!S.runs.length) { ul.innerHTML = '<li class="sub">No runs for this recording</li>'; return; }
+  S.openRuns ??= new Set();
   for (const r of S.runs) {
+    // v26.2.10: each run is a collapsible group: the header is the run as it was shown, its collisions are rows inside
     const li = document.createElement("li");
-    li.className = "clickable" + (S.run?.id === r.id ? " sel" : "");
-    li.innerHTML = '<div class="t"></div><div class="sub"></div>';
-    li.firstChild.textContent = runLabel(r);
+    li.className = "run-group" + (S.run?.id === r.id ? " sel" : "");
+    li.dataset.run = r.id;
+    li.dataset.orientation = runOrientation(r);
+    const det = document.createElement("details");
+    det.open = S.openRuns.has(r.id);
+    const head = document.createElement("summary");
+    head.className = "run-head clickable";
+    head.innerHTML = '<div class="t"></div><div class="sub"></div>';
+    head.firstChild.textContent = runLabel(r);
     const tag = document.createElement("span");
     tag.className = `tag ${r.status}`;
     tag.textContent = S.eta?.id === r.id && isActive(r) ? S.eta.text : r.status;
-    li.dataset.run = r.id;
-    li.firstChild.append(tag);
-    li.dataset.orientation = runOrientation(r);
-    li.lastChild.textContent = [r.modelName + (r.device === "cpu" ? " · CPU" : ""), r.request.profile, runDepth(r) ? `depth ${runDepth(r)}` : null, r.createdAt?.replace("T", " ").replace("Z", "")].filter(Boolean).join(" · ");
-    li.addEventListener("click", () => openRun(r));
+    head.firstChild.append(tag);
+    head.lastChild.textContent = [r.modelName + (r.device === "cpu" ? " · CPU" : ""), r.request.profile, runDepth(r) ? `depth ${runDepth(r)}` : null, r.createdAt?.replace("T", " ").replace("Z", "")].filter(Boolean).join(" · ");
+    head.addEventListener("click", (e) => {         // the loaded run's header just folds; any other run is loaded (and shown open)
+      if (S.run?.id === r.id && r.status === "done") return;
+      e.preventDefault();
+      openRun(r);
+    });
+    det.addEventListener("toggle", () => {
+      if (det.open) S.openRuns.add(r.id); else S.openRuns.delete(r.id);
+      if (det.open && r.status === "done" && S.run?.id !== r.id && !S.runColls?.[r.id]) loadRunColls(r.id);
+    });
+    const rows = document.createElement("ul");
+    rows.className = "coll-rows";
+    for (const d of collsOf(r.id)) rows.append(collRow(r.id, d));
+    det.append(head, rows);
+    li.append(det);
     ul.append(li);
   }
 }
@@ -557,7 +718,7 @@ function renderRuns() {
 function progressLabel(r) {
   if (!S.eta || S.eta.id !== r.id) S.eta = { id: r.id, tracker: new EtaTracker(runStartMs(r)) };
   const text = S.eta.text = S.eta.tracker.label(r);
-  for (const tag of document.querySelectorAll(`#runList li[data-run="${r.id}"] .tag`)) tag.textContent = text; // runs list shows it too
+  for (const tag of document.querySelectorAll(`#runList li.run-group[data-run="${r.id}"] .run-head .tag`)) tag.textContent = text; // runs list shows it too
   return text;
 }
 
@@ -689,7 +850,7 @@ function setDepthAvailable(on) {
 }
 
 function unloadRun() {
-  S.run = null; S.colls = []; S.cid = null; S.events = []; S.speech = []; S.tones = []; S.notes = [];
+  S.run = null; S.colls = []; S.runColls = {}; S.cid = null; S.events = []; S.speech = []; S.tones = []; S.notes = [];
   sounds.runChanged();
   hazards.setRun(null);
   overlay.setRun(null);
@@ -710,6 +871,7 @@ async function loadRunData(run0, cid) {
   const d = S.colls.find((c) => c.id === cid);
   const run = { ...run0, collisionId: cid ?? null, collisionVersion: d?.collisionVersion ?? run0.collisionVersion };
   const events = cid ? await api(`/api/runs/${run.id}/events.json?collision=${encodeURIComponent(cid)}`) : { events: [] };
+  selection.clear();
   S.events = events.events ?? [];
   S.speech = S.events.filter((e) => e.type === "speech");
   S.tones = S.events.filter((e) => e.type === "tone");
@@ -773,6 +935,8 @@ async function loadRun(runId, { seek = true, t } = {}) {
   }
   const gen = S.seekGen; // the user may scrub while the run loads; don't yank them back afterwards
   S.run = run;               // the collision list below needs S.run.id
+  S.runColls = {};
+  (S.openRuns ??= new Set()).add(run.id);
   await refreshCollisions();
   const cid = pickCollision(run.id);
   S.cid = cid;
@@ -781,7 +945,7 @@ async function loadRun(runId, { seek = true, t } = {}) {
   renderColl();
   resetCompareDefaults();
   renderCompare();
-  $("#rerunBtn").disabled = false;
+  resumeCollisionJob();
   S.rangeTouched = true; // keep the user's run range, don't auto-sync to playhead
   $("#rangeStart").value = fmtTime(run.request.start);
   $("#rangeEnd").value = fmtTime(run.request.end);
@@ -980,10 +1144,6 @@ function wire() {
   $("#reanalyseBtn").addEventListener("click", () => $("#reusedNote").reanalyse?.());
   $("#cancelBtn").addEventListener("click", cancelAnalysis);
   $("#rerunBtn").addEventListener("click", rerunCollision);
-  $("#collSel").addEventListener("change", (e) => selectCollision(e.target.value));
-  $("#collLabel").addEventListener("change", saveCollLabel);
-  $("#collLabel").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
-  $("#collDel").addEventListener("click", deleteColl);
   $("#secCompare").addEventListener("toggle", renderCompare);
   $("#cmpA").addEventListener("change", renderCompare);
   $("#cmpB").addEventListener("change", renderCompare);
@@ -1002,6 +1162,7 @@ function wire() {
       case "[": stepSpeed(-1); break;
       case "]": stepSpeed(1); break;
       case "m": case "M": toggleMute(); break;
+      case "Escape": selection.clear(); break;
     }
   });
   // Space on a focused button would otherwise also "click" it on keyup.

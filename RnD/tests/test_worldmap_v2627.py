@@ -299,7 +299,7 @@ def test_a_street_seen_through_a_building_fades_while_the_building_stands():
 # ---------------------------------------------------------------- 7. gaps between a surface and a face are closed
 
 def _seam(width, with_face=True, with_surface=True):
-    ob = _observer()
+    ob = _observer(gapCloseM=0.5)                                                    # v26.2.10 ships it off (facts only)
     fu = _fusion(ob, 1.0)
     o = np.full((ob.size, ob.size), UNK, np.uint8)
     if with_surface:

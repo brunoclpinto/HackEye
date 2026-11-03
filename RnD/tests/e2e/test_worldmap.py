@@ -255,3 +255,138 @@ def test_world_tracks_are_in_the_hazards_drawn_and_read_on_click(page):
     line = next(l for l in page.inner_text("#wmCell").splitlines() if l.startswith("World track"))
     assert "σ" in line and "images" in line and "m/s" in line, line
     assert not page.errors, page.errors
+
+
+# ---- v26.2.10: items selectable as a whole, hover info, linked video <-> map, wall regions
+
+def _item_on_video(run, rq):
+    """A drawn, non-massive item with a decent outline, isolated from the others, inside the map: (frame, hazard, centre inside the outline)."""
+    massive = re.compile(r"\b(building|bridge|tunnel)\b", re.I)
+
+    def inside(x, y, poly):
+        c = False
+        for i in range(len(poly)):
+            (xi, yi), (xj, yj) = poly[i], poly[i - 1]
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                c = not c
+        return c
+
+    for a in range(int(rq["start"]), int(rq["end"]), 30):
+        doc = api(f"/api/runs/{run}/hazards?from={a}&to={a + 30}")
+        for f in doc["frames"]:
+            hs = f.get("hazards", [])
+            for h in hs:
+                poly = h.get("outline")
+                if not poly or len(poly) < 3 or h.get("role") == "none" or massive.search(h.get("className") or "") or h.get("trackId") is None:
+                    continue
+                if not (2 < h.get("distanceM", 0) < 15 and abs(h.get("lateralM", 99)) < 6):
+                    continue
+                x = sum(p[0] for p in poly) / len(poly)
+                y = sum(p[1] for p in poly) / len(poly)
+                if not inside(x, y, poly):
+                    continue
+                if any(o is not h and o["bbox"][0] <= x <= o["bbox"][2] and o["bbox"][1] <= y <= o["bbox"][3] for o in hs):
+                    continue                                   # nothing else under the pointer
+                return f, h, (x, y)
+    return None, None, None
+
+
+def _pointer_on_video(page, x, y):
+    box = page.evaluate(BOX, "#overlay")
+    return box["l"] + x * box["w"], box["t"] + y * box["h"]
+
+
+def test_hover_on_a_video_item_shows_its_tooltip_and_click_selects_it_on_video_and_map(page):
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    f, h, (x, y) = _item_on_video(run, rq)
+    if not f:
+        pytest.skip("no isolated drawn item with an outline in the run")
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(800)
+    px, py = _pointer_on_video(page, x, y)
+    page.mouse.move(px - 3, py - 3)
+    page.mouse.move(px, py)
+    page.wait_for_selector("#itemTip:not([hidden])")
+    tip = page.inner_text("#itemTip")
+    assert (h["className"]) in tip and f"track {h['trackId']}" in tip and f"role {h['role']}" in tip, tip
+    assert f"{h['distanceM']:.1f} m" in tip and "steps" in tip and "distance source" in tip, tip
+    page.mouse.move(2, 2)
+    page.wait_for_selector("#itemTip", state="hidden")
+    # click: selected on the video (whole outline, followed by track id) and marked on the map, led in the readout
+    page.mouse.click(px, py)
+    page.wait_for_function("(t) => document.querySelector('#overlay').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.wait_for_function("(t) => document.querySelector('#wmCanvas').dataset.selTrack === String(t)", arg=h["trackId"])
+    assert page.inner_text("#wmCell").startswith(f"Selected: {h['className']}"), page.inner_text("#wmCell")
+    # followed by track id to the next frame, Esc clears both
+    seek(page, f["t"] + 0.01)
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => document.querySelector('#overlay').dataset.selTrack === '' && document.querySelector('#wmCanvas').dataset.selTrack === ''")
+    page.mouse.click(px, py)
+    page.wait_for_function("(t) => document.querySelector('#overlay').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.mouse.click(box_empty(page)[0], box_empty(page)[1])            # a click on empty image clears
+    page.wait_for_function("() => document.querySelector('#overlay').dataset.selTrack === ''")
+    assert not page.errors, page.errors
+
+
+def box_empty(page):
+    """A point of the video that no item covers: the top-left corner of the image."""
+    b = page.evaluate(BOX, "#overlay")
+    return b["l"] + 3, b["t"] + 3
+
+
+def test_click_on_a_map_item_selects_it_on_the_video_too_and_a_wall_region_is_outlined(page):
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    f, h, _ = _item_on_video(run, rq)
+    if not f:
+        pytest.skip("no isolated drawn item with an outline in the run")
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(800)
+    _click_cell(page, int(100 + h["lateralM"] / 0.1), int(200 - h["distanceM"] / 0.1))
+    page.wait_for_function("(t) => document.querySelector('#wmCanvas').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.wait_for_function("(t) => document.querySelector('#overlay').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.keyboard.press("Escape")
+    # a wall (face class) cell with no item: the whole region
+    meta = api(f"/api/runs/{run}/worldmap")
+    found = False
+    for t in (13, 16, 20, 30, 60, 90):
+        seek(page, t)
+        page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+        page.wait_for_timeout(500)
+        cand = page.evaluate("""(faceIds) => {
+          const wm = window.__labWorldmap, grid = wm.cache.get(wm.k), S = 200, out = [];
+          if (!grid) return out;
+          for (let r = 0; r < S; r += 3) for (let c = 0; c < S; c += 3) {
+            if (faceIds.includes(grid[r * S + c]) && !wm.itemAt((c + 0.5) * wm.canvas.width / S, (r + 0.5) * wm.canvas.width / S, 1)) out.push([c, r]);
+          }
+          return out.slice(0, 40);
+        }""", meta["faceClassIds"])
+        for col, row in cand:
+            _click_cell(page, col, row)
+            page.wait_for_timeout(400)
+            if page.evaluate("() => !!document.querySelector('#wmCanvas').dataset.selRegion"):
+                found = True
+                break
+        if found:
+            break
+    assert found, "no wall region could be selected at the probe times"
+    n = int(page.evaluate("() => document.querySelector('#wmCanvas').dataset.selRegion"))
+    assert n > 1
+    txt = page.inner_text("#wmCell")
+    assert txt.startswith("Selected: ") and f"{n} cells" in txt and "nearest" in txt and "clock" in txt, txt
+    # hover over the region: the tooltip names class, cells, nearest distance, clock
+    box = page.evaluate(BOX, "#wmCanvas")
+    page.mouse.move(box["l"] + box["w"] * (col + 0.5) / 200 - 2, box["t"] + box["h"] * (row + 0.5) / 200)
+    page.mouse.move(box["l"] + box["w"] * (col + 0.5) / 200, box["t"] + box["h"] * (row + 0.5) / 200)
+    page.wait_for_selector("#itemTip:not([hidden])")
+    assert f"{n} cells" in page.inner_text("#itemTip")
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => !document.querySelector('#wmCanvas').dataset.selRegion")
+    assert not page.errors, page.errors

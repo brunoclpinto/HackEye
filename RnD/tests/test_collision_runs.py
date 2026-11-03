@@ -30,10 +30,23 @@ def lab(monkeypatch, tmp_path):
     return TestClient(server.app), d
 
 
+def wait_done(c, cid, timeout=60.0):
+    """v26.2.10: the re-run is a background job; wait for its document to leave `running`."""
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        doc = next(d for d in c.get(f"/api/runs/{RUN}/collisions").json() if d["id"] == cid)
+        if doc["status"] != "running":
+            return doc
+        time.sleep(0.02)
+    raise AssertionError("collision job did not finish")
+
+
 def post(c, body=None):
     r = c.post(f"/api/runs/{RUN}/collision", json=body if body is not None else {})
     assert r.status_code == 200, r.text
-    return r.json()
+    assert r.json()["status"] == "running"
+    return wait_done(c, r.json()["id"])
 
 
 def test_ids_are_sequential_and_never_reused(lab):

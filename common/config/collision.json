@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.9",
+  "version": "v26.2.10",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -83,6 +83,8 @@
   "contextSpeak": ["obstacle", "building"],
   "parkedLabels": {"vehicle": "parked car"},
   "minComponentFraction": 0.0004,
+  "personSplit": {"enabled": true, "classes": ["person", "rider"], "personWidthM": 0.55, "splitWidthFactor": 1.4, "splitDepthJumpM": 0.6,
+                  "minPieceM": 0.25, "valleyRows": 2, "valleyFrac": 0.08},
   "roles": {
     "dangerSteps": 10, "finalSteps": 3,
     "featureSteps": 10,

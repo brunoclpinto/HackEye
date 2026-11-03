@@ -24,18 +24,30 @@ def run_dir(monkeypatch, tmp_path):
     return d
 
 
+def _rerun(client):
+    """POST a re-run (a background job since v26.2.10) and wait until it is done."""
+    import time
+    r = client.post(f"/api/runs/{RUN}/collision")
+    assert r.status_code == 200, r.text
+    for _ in range(3000):
+        doc = next(d for d in client.get(f"/api/runs/{RUN}/collisions").json() if d["id"] == r.json()["id"])
+        if doc["status"] != "running":
+            return doc
+        time.sleep(0.02)
+    raise AssertionError("job did not finish")
+
+
 def test_collision_rerun_builds_a_map_when_none_existed(run_dir):
     assert not (run_dir / "collisions").exists()
-    r = TestClient(server.app).post(f"/api/runs/{RUN}/collision")
-    assert r.status_code == 200, r.text
+    assert _rerun(TestClient(server.app))["status"] == "done"
     assert (run_dir / "collisions" / "c1" / "worldmap.npz").exists()
 
 
 def test_collision_rerun_survives_a_failing_map(run_dir, monkeypatch):
-    def boom(run_id, cid=None):
+    def boom(run_id, cid=None, job=None):
         raise RuntimeError("no map")
     monkeypatch.setattr(analysis, "worldmap_pass", boom)
-    assert TestClient(server.app).post(f"/api/runs/{RUN}/collision").status_code == 200
+    assert _rerun(TestClient(server.app))["status"] == "done"
 
 
 def test_job_helper_builds_the_map_and_swallows_a_failure(run_dir, monkeypatch):
@@ -54,7 +66,7 @@ def test_worldmap_meta_built_at_changes_when_the_map_is_rebuilt(run_dir):
     import os
     client = TestClient(server.app)
     assert client.get(f"/api/runs/{RUN}/worldmap").json() == {"exists": False}
-    assert client.post(f"/api/runs/{RUN}/collision").status_code == 200
+    assert _rerun(client)["status"] == "done"
     first = client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"]
     assert first.isdigit()
     assert client.get(f"/api/runs/{RUN}/worldmap").json()["builtAt"] == first

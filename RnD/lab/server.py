@@ -347,7 +347,9 @@ def _cid(run: dict, collision: str | None) -> str:
 
 @app.post("/api/runs/{run_id}/collision")
 def rerun_collision(run_id: str, body: dict | None = Body(default=None)) -> dict:
-    """A NEW collision run (v26.2.8): next id, current recording settings, optional config ``overrides``; its world map is built too."""
+    """A NEW collision run (v26.2.8): next id, current recording settings, optional config ``overrides``; its world map is built too.
+    v26.2.10: a background job. Returns at once with the new collision doc in status ``running`` (``progress`` 0-1); poll
+    ``/collisions`` or cancel with ``POST /collisions/{cid}/cancel``. 409 while another collision job or an analysis runs."""
     run = _run(run_id)
     if run["status"] != "done":
         raise HTTPException(409, f"Run is {run['status']}, not done")
@@ -356,15 +358,24 @@ def rerun_collision(run_id: str, body: dict | None = Body(default=None)) -> dict
     label = body.get("label", "")
     if not isinstance(label, str) or len(label) > collisions.MAX_LABEL:
         raise HTTPException(422, f"label must be a string of at most {collisions.MAX_LABEL} characters")
-    doc = _coll_call(analysis.collision_pass, run_id, body.get("overrides"), label)
-    try:      # v26.2.6: the map is always rebuilt after a collision re-run (object distance / horizon switch change it)
-        analysis.worldmap_pass(run_id, doc["id"])
-    except Exception as exc:  # noqa: BLE001 - the collision result stands
-        analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
-    doc = collisions.read_doc(run_id, doc["id"]) or doc
+    doc = _coll_call(collisions.start_job, run_id, body.get("overrides"), label)
     q = f"?collision={doc['id']}"
     return {**doc, "version": doc["collisionVersion"],
             "hazards": f"/api/runs/{run_id}/hazards.json{q}", "events": f"/api/runs/{run_id}/events.json{q}"}
+
+
+@app.post("/api/runs/{run_id}/collisions/{cid}/cancel")
+def cancel_collision(run_id: str, cid: str) -> dict:
+    """Stop a running collision re-run between frames; its directory is removed and its id is not reused (v26.2.10)."""
+    run = _run(run_id)
+    _cid(run, cid)
+    if not collisions.cancel_job(run_id, cid):
+        raise HTTPException(409, f"{cid} is not running; nothing to cancel")
+    for _ in range(100):           # give the job a moment so the reply shows the end state
+        if not collisions.job_active():
+            break
+        time.sleep(0.1)
+    return {"cancelled": cid, "collisions": collisions.ids(_run(run_id))}
 
 
 @app.get("/api/runs/{run_id}/collisions")
@@ -401,7 +412,7 @@ def delete_collision(run_id: str, cid: str) -> dict:
 
 # --- world map (v26.2 step 1 spike; CONTRACTS 8.1) ---------------------------------------------------------------
 # worldmap.npz: classes (N,200,200) uint8 (255 = unknown), conf (N,200,200) uint8, surface / object (N,200,200) uint8 (v26.2.4, the layers
-# on their own), t, pose (N,3), cellM, origin, ms.
+# on their own), t, pose (N,3), cellM, origin, ms; v26.2.10: alignDeg / alignM / agree / agreePrior (N,).
 # Built from stored files only (pure numpy, synchronous like the collision pass; never the GPU queue).
 
 _WM_CACHE_RUNS = 1
@@ -474,8 +485,14 @@ def get_worldmap(run_id: str, collision: str | None = None) -> dict:
 @app.get("/api/runs/{run_id}/worldmap/pose.json")
 def get_worldmap_pose(run_id: str, collision: str | None = None) -> dict:
     wm = _run_worldmap(run_id, collision)
-    return {"t": [round(float(v), 4) for v in wm["t"]],
-            "pose": [[round(float(a), 3) for a in p] for p in wm["pose"]]}
+    out = {"t": [round(float(v), 4) for v in wm["t"]],
+           "pose": [[round(float(a), 3) for a in p] for p in wm["pose"]]}
+    # v26.2.10: the pose the map found for itself (poseAlign): the accumulated heading correction (deg) and position correction (m), and the
+    # share of the frame's seen cells whose snapshot class equals the frame's own observation (null: no seen cell / a map built before v26.2.10)
+    for key in ("alignDeg", "alignM", "agree"):
+        if key in wm:
+            out[key] = [None if not math.isfinite(float(v)) else round(float(v), 4) for v in wm[key]]
+    return out
 
 
 @app.get("/api/runs/{run_id}/worldmap/cell")
@@ -576,7 +593,7 @@ def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: f
     times = ent["times"]
     lo, hi = bisect.bisect_left(times, t_from), bisect.bisect_right(times, t_to)
     head = ent["head"]
-    return _json({"version": head.get("version"), "settings": head.get("settings"),
+    return _json({"version": head.get("version"), "settings": head.get("settings"), "projection": head.get("projection"),
                   "gridW": head.get("gridW"), "gridH": head.get("gridH"),
                   "egoAvailable": head.get("egoAvailable"),
                   **({"worldTracksSettings": head["worldTracksSettings"]} if "worldTracksSettings" in head else {}),    # v26.2.9

@@ -44,8 +44,12 @@ def ids(run: dict) -> list[str]:
 
 
 def latest(run: dict) -> str | None:
-    got = ids(run)
-    return got[-1] if got else None
+    """The newest collision run that is usable (v26.2.10: not one still running, cancelled or failed)."""
+    for cid in reversed(ids(run)):
+        doc = read_doc(run.get("id", ""), cid)
+        if doc is None or doc.get("status", "done") == "done":
+            return cid
+    return None
 
 
 def resolve(run: dict, cid: str | None) -> str:
@@ -61,10 +65,18 @@ def resolve(run: dict, cid: str | None) -> str:
 
 
 def read_doc(run_id: str, cid: str) -> dict | None:
+    """collision.json with the live job's progress; a `running` doc without a live job (the service died) reads as `error`."""
     try:
-        return json.loads((collision_dir(run_id, cid) / "collision.json").read_text())
+        doc = json.loads((collision_dir(run_id, cid) / "collision.json").read_text())
     except (OSError, ValueError):
         return None
+    if doc.get("status") == "running":
+        job = _job
+        if job is not None and job.run_id == run_id and job.cid == cid:
+            doc["progress"] = round(job.progress, 4)
+        else:
+            doc.update(status="error", error="interrupted")
+    return doc
 
 
 def list_docs(run_id: str) -> list[dict]:
@@ -74,6 +86,104 @@ def list_docs(run_id: str) -> list[dict]:
 
 def write_doc(run_id: str, cid: str, doc: dict) -> None:
     analysis._write_json(collision_dir(run_id, cid) / "collision.json", doc)
+
+
+def update_doc(run_id: str, cid: str, **fields) -> dict | None:
+    with _lock:
+        try:
+            doc = json.loads((collision_dir(run_id, cid) / "collision.json").read_text())
+        except (OSError, ValueError):
+            return None
+        doc.update(fields)
+        write_doc(run_id, cid, doc)
+        return doc
+
+
+# --------------------------------------------------------------------------
+# Re-run job (v26.2.10): one at a time per Lab, in a thread (pure numpy, never the GPU queue)
+# --------------------------------------------------------------------------
+
+class Job:
+    def __init__(self, run_id: str, cid: str):
+        self.run_id, self.cid = run_id, cid
+        self.cancel = threading.Event()
+        self.progress = 0.0
+        self.thread: threading.Thread | None = None
+
+    def report(self, fraction: float) -> None:
+        """Called between frames by the passes; raises when the job was cancelled."""
+        if self.cancel.is_set():
+            raise analysis._Cancelled()
+        self.progress = min(max(float(fraction), 0.0), 1.0)
+
+
+_job: Job | None = None
+
+
+def job_active() -> bool:
+    j = _job
+    return j is not None and j.thread is not None and j.thread.is_alive()
+
+
+def cancel_job(run_id: str | None = None, cid: str | None = None) -> bool:
+    """Ask the running job to stop (between frames); True when there was one (and it is the named one)."""
+    j = _job
+    if not job_active() or (run_id is not None and (j.run_id, j.cid) != (run_id, cid)):
+        return False
+    j.cancel.set()
+    return True
+
+
+def start_job(run_id: str, overrides, label: str) -> dict:
+    """Allocate the next id, write its collision.json as `running`, register it and run the passes in a thread.
+    409 when a collision job or an analysis is running. Returns the new document."""
+    global _job
+    try:
+        import collision
+        import worldmap
+    except ImportError as exc:
+        raise CollisionError(503, f"collision module unavailable ({exc})") from None
+    overrides = validate_overrides(overrides)
+    check_overrides(overrides, collision.load_config(), worldmap.load_config())
+    with _lock:
+        if job_active():
+            raise CollisionError(409, f"A collision re-run is already running ({_job.run_id} {_job.cid})")
+        if analysis.analysis_active():
+            raise CollisionError(409, "An analysis is running; wait for it to finish")
+        cid = allocate(run_id)
+        collision_dir(run_id, cid).mkdir(parents=True, exist_ok=True)
+        doc = {"id": cid, "runId": run_id, "createdAt": analysis._now(), "collisionVersion": None, "worldmapVersion": None,
+               "settings": {}, "resolved": {}, "overrides": overrides, "label": (label or "")[:MAX_LABEL],
+               "elapsedSeconds": None, "counts": {}, "status": "running", "progress": 0.0, "error": None}
+        write_doc(run_id, cid, doc)
+        register(run_id, cid)
+        job = Job(run_id, cid)
+        job.thread = threading.Thread(target=_run_job, args=(job, overrides, label), name=f"collision-{run_id}-{cid}", daemon=True)
+        _job = job
+        job.thread.start()
+    return doc
+
+
+def _run_job(job: Job, overrides: dict, label: str) -> None:
+    run_id, cid = job.run_id, job.cid
+    try:
+        analysis.collision_pass(run_id, overrides, label, job=job)
+        try:      # v26.2.6: the map is always rebuilt after a collision re-run (object distance / horizon switch change it)
+            analysis.worldmap_pass(run_id, cid, job=job)
+        except analysis._Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the collision result stands
+            analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
+        update_doc(run_id, cid, status="done", progress=1.0, error=None)
+    except analysis._Cancelled:
+        with _lock:
+            shutil.rmtree(collision_dir(run_id, cid), ignore_errors=True)
+            run = analysis.get_run(run_id) or {}
+            analysis._update_run(run_id, collisions=[c for c in ids(run) if c != cid])
+        analysis._log(f"run {run_id}: collision {cid} cancelled")
+    except BaseException as exc:  # noqa: BLE001
+        analysis._log(f"run {run_id}: collision {cid} FAILED: {exc!r}")
+        update_doc(run_id, cid, status="error", error=getattr(exc, "message", None) or str(exc) or repr(exc))
 
 
 # --------------------------------------------------------------------------
@@ -191,7 +301,10 @@ def delete(run_id: str, cid: str, review_count: int) -> None:
         got = ids(run)
         if cid not in got:
             raise CollisionError(404, f"Unknown collision run: {cid}")
-        if len(got) <= 1:
+        doc = read_doc(run_id, cid) or {}
+        if doc.get("status") == "running":
+            raise CollisionError(409, f"{cid} is still running; cancel it first")
+        if len(got) <= 1 and doc.get("status") != "error":
             raise CollisionError(409, f"{cid} is the only collision run of this run; it cannot be deleted")
         if review_count:
             raise CollisionError(409, f"{cid} has {review_count} review{'s' if review_count != 1 else ''} (verdicts / notes); "

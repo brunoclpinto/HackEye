@@ -147,7 +147,7 @@ def test_pose_matches_world_memory():
 
 
 def test_votes_decay_and_unknown_floor():
-    cfg = worldmap.load_config()
+    cfg = {**worldmap.load_config(), "decay": "time"}                    # v26.2.10: the default keeps votes; "time" is the v26.2.9 fusion
     kind = worldmap.class_kinds(cfg, NAMES)
     fu = worldmap.Fusion(cfg, kind, np.array([SW, BLD]), (0.0, 0.0))
     ob = worldmap.Observer(cfg, {"hfovDeg": HFOV, "cameraHeightM": CAM_H, "distanceSource": "ground"}, kind, GH, GW)
