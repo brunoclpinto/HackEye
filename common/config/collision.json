@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.7",
+  "version": "v26.2.9",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -155,6 +155,16 @@
   },
   "coast": {"enabled": true, "seconds": 2.0, "vehicleSeconds": 3.0, "histSeconds": 1.0, "minPoints": 3, "minSpanSeconds": 0.5,
     "maxSpeedMps": 15.0, "maxRangeM": 30.0, "rematchRadiusM": 2.0},
+  "worldTracks": {
+    "enabled": true,
+    "accelStaticMps2": 0.05, "accelMoverMps2": 1.5,
+    "rangeSigmaFrac": 0.12, "bearingSigmaDeg": 1.0, "rangeSigmaMinM": 0.1, "nonDepthRangeFactor": 2.0,
+    "initSpeedSigmaStaticMps": 0.3, "initSpeedSigmaMoverMps": 2.0,
+    "gateChi2": 9.21,
+    "fovMarginDeg": 3.0, "coastMaxS": 4.0, "missDropFrames": 3, "maxSigmaM": 3.0, "behindDropM": 2.0, "maxRangeM": 30.0,
+    "horizonS": 8.0, "itemRadiusM": 0.3, "maxTracksOut": 40,
+    "skipClasses": ["building", "structure bridge", "structure tunnel", "bridge", "tunnel"]
+  },
   "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
   "speech": {
     "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0, "contextMaxItems": 3, "summaryHoldSeconds": 0.5,

@@ -178,6 +178,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -188,6 +189,7 @@ from common_paths import find_common_dir
 from geometry import Box, iou
 import faceedge
 import groundfuse
+import worldtracks
 
 _4_CONNECTIVITY = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
 ITEM_GROUPS = ("static", "moving", "feature")
@@ -196,6 +198,32 @@ NO_DATA = 255            # grid cell outside the analysed window (a portrait run
 WARMUP_S = 1.5            # the horizon is the mean of the raw estimates until it has had time to settle (no silence: v26.1.15)
 MIN_TRACK_AGE_S = 0.5     # a track must have lived this long before it may speak or beep (not in the first WARMUP_S of a run)
 _WARNED: set[str] = set()
+
+
+LAST_WORLD_TRACKS_MS: list[float] = []     # ms of the world-track step per frame of the last run_collision (metrics tool; not in the output)
+
+
+def _bottom_distance(ob, horizon: float, cam_h: float, gh: int, f: float) -> float:
+    """Forward distance of the last image row on the centre column (the ground seen at the bottom), as the map's ``objectClearBottomM`` uses it."""
+    try:
+        if ob is not None and getattr(ob, "geometry", False):
+            d = float(groundfuse.ground_point(ob.geo, float(ob.gh), ob.gw / 2.0, float(horizon), ob.cam_h)[0])
+            return d if math.isfinite(d) else 0.0
+        return float(cam_h) * f / (max(1.0 - float(horizon), 1e-6) * gh)
+    except Exception:
+        return 0.0
+
+
+def _hidden_fn(ob):
+    """``(fwd, right) -> bool``: the online map's cell there is hidden behind a building in this frame (None without a map)."""
+    if ob is None or getattr(ob, "ray_hidden", None) is None:
+        return None
+    hid = ob.ray_hidden
+
+    def hidden(fwd: float, right: float) -> bool:
+        r, c = ob.orow - int(round(fwd / ob.cell)), ob.oc + int(round(right / ob.cell))
+        return 0 <= r < hid.shape[0] and 0 <= c < hid.shape[1] and bool(hid[r, c])
+    return hidden
 
 
 def _log(msg: str) -> None:
@@ -3455,6 +3483,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     world = _WorldMemory(config.get("memory", {}), enabled=mser is not None)
     policy.world = world
     coast = _Coast(config.get("coast", {}))
+    wtracks = worldtracks.WorldTracks(config.get("worldTracks"), lane_half, settings.hfov_deg)     # v26.2.9: shadow mode, feeds no decision
     smap = None                                # v26.2.1: the online world map the static rules read (roles.staticSource "map")
     if roles.get("staticSource", "image") == "map" and n:
         import worldmap
@@ -3886,6 +3915,16 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         # world memory: where are we, and which remembered (announced) object is each item?
         world.advance(t, dt, 0.0 if stationary else (walk_cadence * step_len if walk_cadence else ego_speed), heading)
         world.link(items, tracks, t)
+        wt_out = None
+        if wtracks.on:
+            _t_wt = time.perf_counter()
+            wt_out = wtracks.step(t, (world.x, world.y, world.theta) if world.theta is not None else None,
+                                  [{"tid": it.track_id, "cls": it.class_name, "family": it.family or it.label, "group": it.group,
+                                    "static": _is_static_like(it), "fwd": it.distance_m, "right": it.lateral_m, "depth": bool(it.from_depth)}
+                                   for it in items if not (it.lane_part or it.ghost or it.coasting)],
+                                  _bottom_distance(smap.ob if smap is not None else None, horizon, settings.camera_height_m * k, gh, f),
+                                  _hidden_fn(smap.ob if smap is not None else None))
+            wtracks.ms.append((time.perf_counter() - _t_wt) * 1000.0)
 
         # 9. path change
         path_change = turned or (config["pathChange"]["onSurfaceChange"] and adopted is not None
@@ -3952,6 +3991,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             **({"depthCorrection": dc_rep} if dc_rep is not None else {}),
             **({"corridor": corridor_out} if smap is not None else {}),
             **({"faceEdgeLines": smap.fe_lines} if smap is not None and smap.fe_lines else {}),
+            **({"worldTracks": wt_out} if wt_out is not None else {}),
             "hazards": [_hazard_json(it, gh, gw) for it in sorted(items, key=lambda it: it.steps)],
         })
 
@@ -3976,6 +4016,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         for tid in list(coast.active):
             coast._end(tid, float(times[-1]) if n else 0.0, "end")
         hazards_doc["coast"] = {"episodes": coast.episodes}
+    if wtracks.on:
+        hazards_doc["worldTracksSettings"] = dict(wtracks.cfg)
+        LAST_WORLD_TRACKS_MS[:] = wtracks.ms
     if window is not None:                    # absent for full-frame runs (their output is unchanged)
         hazards_doc["window"] = dict(window)
     return hazards_doc, {"version": version, "events": events}

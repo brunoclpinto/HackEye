@@ -31,7 +31,7 @@ REP = {"ref": 1.45, "sigmaRows": 0.6, "curve": [[5.0, 1.0], [12.0, 1.0]]}
 
 def test_config_and_defaults():
     cfg = col.load_config()
-    assert cfg["version"] == "v26.2.7" == worldmap.load_config()["version"]
+    assert cfg["version"] == "v26.2.9" and worldmap.load_config()["version"] == "v26.2.7"
     d = cfg["distance"]
     assert d["objectDistance"] == "depth" and d["useHorizon"] is True      # measured worse than depth on the user's ticks (DECISIONS v26.2.3)
     assert set(d["groundDepth"]) >= {"minRowsBelowHorizon", "binEdgesM", "emaSeconds", "holdSeconds", "extrapolate", "priorCurve", "depthRelErr",
@@ -196,6 +196,9 @@ def _stripped(out):
     doc, ev = copy.deepcopy(out[0]), copy.deepcopy(out[1])
     doc["version"] = ev["version"] = "v26.2.2"
     del doc["settings"]["objectDistance"], doc["settings"]["useHorizon"]
+    doc.pop("worldTracksSettings", None)                 # v26.2.9: the shadow-mode world tracks are additive (events and every other key unchanged)
+    for f in doc["frames"]:
+        f.pop("worldTracks", None)
     return hashlib.sha256(json.dumps([doc, ev], sort_keys=True).encode()).hexdigest()
 
 

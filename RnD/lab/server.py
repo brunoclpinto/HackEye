@@ -579,6 +579,7 @@ def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: f
     return _json({"version": head.get("version"), "settings": head.get("settings"),
                   "gridW": head.get("gridW"), "gridH": head.get("gridH"),
                   "egoAvailable": head.get("egoAvailable"),
+                  **({"worldTracksSettings": head["worldTracksSettings"]} if "worldTracksSettings" in head else {}),    # v26.2.9
                   "from": t_from, "to": t_to, "frames": ent["frames"][lo:hi]})
 
 

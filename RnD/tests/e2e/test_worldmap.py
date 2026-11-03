@@ -221,3 +221,37 @@ def test_map_meta_names_the_face_and_surface_classes_and_the_wall_line_sits_on_t
     assert all(c >= 0 for c in counts), counts                       # the attribute is set on every paint
     assert max(counts) > 0, f"no building edge drawn at any of the probe times: {counts}"
     assert not page.errors, page.errors
+
+
+def _first_world_track_frame(run, rq):
+    for a in range(int(rq["start"]), int(rq["end"]), 30):
+        doc = api(f"/api/runs/{run}/hazards?from={a}&to={a + 30}")
+        for f in doc["frames"]:
+            for w in f.get("worldTracks", []):
+                if w["state"] == "seen" and 2 < w["fwd"] < 15 and abs(w["right"]) < 6:
+                    return f, w
+    return None, None
+
+
+def test_world_tracks_are_in_the_hazards_drawn_and_read_on_click(page):
+    """v26.2.9 (shadow mode): the hazards frames carry worldTracks (and the doc worldTracksSettings); the canvas draws them
+    (data-world-tracks = the count of the frame); a click on a track's ring adds the 'World track' line."""
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    doc = api(f"/api/runs/{run}/hazards?from={int(rq['start'])}&to={int(rq['start']) + 30}")
+    assert all("worldTracks" in f for f in doc["frames"]), "every frame carries worldTracks"
+    assert doc["worldTracksSettings"]["gateChi2"] == 9.21
+    f, w = _first_world_track_frame(run, rq)
+    if f is None:
+        pytest.skip("no seen world track inside the map in the run")
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(600)
+    assert int(page.evaluate("() => document.querySelector('#wmCanvas').dataset.worldTracks || '-1'")) >= 1
+    _click_cell(page, int(100 + w["right"] / 0.1), int(200 - w["fwd"] / 0.1))
+    page.wait_for_function("() => /World track W\\d+/.test(document.querySelector('#wmCell').textContent)")
+    line = next(l for l in page.inner_text("#wmCell").splitlines() if l.startswith("World track"))
+    assert "σ" in line and "images" in line and "m/s" in line, line
+    assert not page.errors, page.errors

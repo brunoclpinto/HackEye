@@ -1165,3 +1165,31 @@ The remaining gap rays at 30 / 120 / 200 s are runs of 17–129 unknown cells: a
 1. **Disk:** each collision run stores its own hazards.json (~28 MB) and worldmap.npz (~53 MB) for a 454 s run, so ~80 MB per re-run; delete the ones you no longer need.
 2. **Added notes are shared** by every collision run of a recording (only verdicts are per collision run).
 3. **Overrides are free text JSON:** only existence and type are checked, not the value range.
+
+
+## v26.2.9 — world tracks in shadow mode: position, velocity and uncertainty per item, speech unchanged (plan [`plans/v26.2.9.md`](plans/v26.2.9.md); user question 2026-10-31 "mapping the image into the world map, maintaining its vector direction and speed for calculation (even when expected to be in image but missing) wouldn't it be a better less faulty and faster approach?"; approved "go for it"; Lab version bumped and wiped: run `5fda5626e808` removed; `collision.json` v26.2.9, `worldmap.json` unchanged)
+
+**Why.** Opus's answer to the question: yes for consistency and persistence (not for speed: segmentation ~158 ms and depth ~60 ms dominate), provided the pose and metric positions are good enough. Step 1 builds the tracks next to the current pass, measures them and changes no speech. Steps 2 (movers decided by the tracks) and 3 (statics; ghosts, coasting, snapping folded in; decisions by time to collision) follow once the numbers hold.
+
+**What was built (Sonnet worker, Opus review).**
+- `src/worldtracks.py`: a constant-velocity Kalman filter per item in the `_WorldMemory` frame (`[x, y, vx, vy]`, 4 x 4 covariance, white-acceleration noise 0.05 static-like / 1.5 movers), measurements located with the current pose (range sigma 12 % of distance, x2 off depth; bearing sigma 1 deg), Mahalanobis gate 9.21, re-identification of a new image track against unseen world tracks of the same family, states `seen` / `out-of-view` / `missing` / `dropped` (out-of-view from the field of view, behind the user, below the bottom row, or hidden by the online map; coasts 4 s; missing dropped after 3 frames), and a path test per track (closest approach, `onCourse`, `ttcS`).
+- `run_collision` hooks (`collision.py`): the step runs after the world-memory link, only reads items; `hazards.json` gains per-frame `worldTracks` and top-level `worldTracksSettings`. Events are byte-identical (hashes of v26.2.8 pinned in `tests/fixtures/worldtracks_baseline_v2628.json`; hazards goldens re-pinned with the new keys, one comment per pin).
+- `collision.json` `worldTracks` block (all parameters, `enabled`). Lab world map panel draws the tracks under the item markers (ring, velocity arrow, state style, closest-approach line when on course) and a click adds the `World track W12 · ...` line (CONTRACTS 7.11b and the world map panel).
+- `tools/worldtracks_metrics.py <runId> [--collision cid] | --dir | --fixtures`.
+
+**Metrics (fixtures, ground and depth modes, 8290 frames, 303,538 track-frames).**
+1. Pose drift proxy (static-like tracks seen >= 2 s, ideal ~0): point-like (poles, signs, obstacles, vehicles) 1231 tracks, world speed median 0.475 m/s, p90 1.155 m/s, position spread median 0.38 m, p90 1.31 m; all static-like 2058 tracks: 0.448 / 1.08 m/s, spread 0.37 / 1.30 m. This is not near 0: pose and distance noise still leak into the velocity.
+2. Continuity: 2.4 image tracks per world track on average, 26,913 re-identifications, gap median 0.17 s (p90 0.83 s), prediction error at re-acquisition median 1.25 m (p90 3.92 m).
+3. Agreement with today's `danger` role vs `onCourse`: movers 88.7 % of item-frames agree (463 danger and on course, 1247 danger not on course, 3623 on course without danger); statics 91.1 % (536 / 245 / 6145); 27 % of mover danger frames and 69 % of static danger frames are on course; 717 danger frames had no track.
+4. Missing: 15.1 % of track-frames `missing` (45,962; top classes curb, vehicle, barrier wall, pole, fence, vegetation), 120,292 out-of-view; 13,708 tracks dropped after missing, 8,577 dropped otherwise.
+5. Cost: 1.35 ms per frame (p95 2.2 ms).
+The Chest-0004 run was wiped by the version bump before a collision re-run with world tracks existed, so there are no run-mode numbers.
+
+**Tests.** Unit **674 passed, 6 skipped** (new: `tests/test_worldtracks.py`; the Chest-0004 review7 golden in `tests/test_orientation.py` re-pinned to 2dab88b7... for version v26.2.9 plus the additive `worldTracks` / `worldTracksSettings` keys; `tests/test_collision_v2623.py` proves the stripped hash unchanged). Browser E2E **82 passed** (new `test_world_tracks_are_in_the_hazards_drawn_and_read_on_click` in `tests/e2e/test_worldmap.py`).
+
+### Known / possible issues (shipped on purpose; user rule: don't block)
+1. **World tracks fragment.** On Chest-0004 c2, frames 0 to 0.33 s, many tracks went `missing` and were replaced by new ids (W4 -> W29 for the same sidewalk-obstacle; W10, a person, was `missing` while being re-detected). Re-identification and gating need tuning before step 2. The fixtures agree: 2.4 image tracks per world track and 15 % `missing`.
+2. **Static velocity is not ~0** (median 0.45 m/s for static-like items, spread 0.37 m): the user's pose uncertainty and the distance noise are not modelled, so statics get spurious speeds; the `onCourse` call of statics is therefore noisy.
+3. **Re-acquisition error** is 1.25 m median (p90 3.9 m), larger than the gate's expectation for movers; `missing` is dropped after 3 frames, so many true re-appearances open a new track.
+4. **Movers: 27 % of danger frames are on course** by the tracks; the pass's danger role and the tracks disagree most for movers, which step 2 must resolve.
+5. The tracks are skipped for lane parts, ghost and coasting items and for building / bridge / tunnel, and need a motion track (pose); without it `worldTracks` is empty.

@@ -60,6 +60,22 @@ export function itemsNear(frame, ahead, right) {
   return out;
 }
 
+/** v26.2.9: the world track of the frame as drawn, in canvas px: centre, 1-sigma radius and the radius a click counts as a hit. */
+export function trackOf(w, W, minHitPx = 0) {
+  const s = W / SIZE, rad = Math.max(3, (w.sigmaM ?? 0) / CELL_M * s);
+  return { x: (ORIGIN_COL + 0.5) * s + (w.right / CELL_M) * s, y: (ORIGIN_ROW + 0.5) * s - (w.fwd / CELL_M) * s, rad, hit: Math.max(rad, minHitPx) };
+}
+
+/** v26.2.9: the readout line of a world track (shadow mode: nothing here feeds the speech). */
+export function worldTrackLine(w, egoHeadingDeg = 0) {
+  let b = (w.headingDeg ?? 0) - egoHeadingDeg; b = ((b + 540) % 360) - 180;      // the ground heading seen from where we look
+  const hours = Number.isFinite(w.headingDeg) && w.speedMps > 0.05 ? ` toward ${clockText(clockQuarter(b))}` : "";
+  const parts = [`World track ${w.id} · ${w.class} · ${w.state} · ${(w.speedMps ?? 0).toFixed(1)} m/s${hours}`];
+  if (Number.isFinite(w.cpaM)) parts.push(`closest ${w.cpaM.toFixed(1)} m in ${(w.cpaS ?? 0).toFixed(1)} s${w.onCourse ? " (on course)" : ""}`);
+  parts.push(`σ ${(w.sigmaM ?? 0).toFixed(1)} m`, `images ${(w.imageTracks ?? []).join(", ")}`);
+  return parts.join(" · ");
+}
+
 /** v26.2.7: the wall line. Segments (in cell units, [x1, y1, x2, y2]) on every border between a cell of a face class (`faceIds`: building, wall...)
  *  and a 4-neighbour cell of a surface class (`surfIds`) of the snapshot `grid` (Uint8Array SIZE x SIZE, 255 = unknown). */
 export function wallEdgeSegments(grid, faceIds, surfIds, size = SIZE) {
@@ -180,6 +196,11 @@ export class WorldMapPanel {
       `Object: ${hit ? itemLine(hit) + (obj === null ? "" : ` · map: ${name(obj)}${level(obj)}`) : obj === null ? "none" : name(obj) + level(obj)}`];
     for (const it of items) lines.push(`Item: ${it}`);
     if (!items.length) lines.push("Item: none");
+    for (const w of frame?.worldTracks ?? []) {        // v26.2.9: a world track whose ring (or 8 CSS px) covers the click
+      if (w.state === "dropped") continue;
+      const m = trackOf(w, W, HIT_MIN_CSS_PX * W / (this.canvas.clientWidth || W));
+      if (Math.hypot(m.x - cx, m.y - cy) <= m.hit) lines.push(worldTrackLine(w, frame?.ego?.headingDeg ?? 0));
+    }
     return lines.join("\n");
   }
 
@@ -415,6 +436,32 @@ export class WorldMapPanel {
           ctx.fillStyle = col;
           for (const [f, r] of fe[key] ?? []) ctx.fillRect(ux + (r / CELL_M) * s - cellPx / 2, uy - (f / CELL_M) * s - cellPx / 2, cellPx, cellPx);
         }
+      }
+    }
+    // v26.2.9: the world tracks (shadow mode), under the item markers: 1-sigma ring, 1 s velocity arrow (relative to the ground), closest-approach line
+    const wts = frame?.worldTracks ?? [];
+    this.canvas.dataset.worldTracks = String(wts.length);
+    if (wts.length) {
+      const th = (frame.ego?.headingDeg ?? 0) * Math.PI / 180, egoV = frame.ego?.speedMps ?? 0, pxm = s / CELL_M;
+      for (const w of wts) {
+        if (w.state === "dropped") continue;
+        const x = ux + w.right * pxm, y = uy - w.fwd * pxm;
+        if (x < -4 || y < -4 || x > W + 4 || y > W + 4) continue;
+        const col = w.onCourse ? (ROLE_COLOR.danger ?? "#ff4040") : w.state === "missing" ? "rgba(170,170,170,0.9)" : "rgba(120,200,255,0.95)";
+        ctx.setLineDash(w.state === "seen" ? [] : [4, 3]); ctx.lineWidth = 1.5; ctx.strokeStyle = col;
+        ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.arc(x, y, Math.max(3, (w.sigmaM ?? 0) * pxm), 0, 2 * Math.PI); ctx.stroke(); ctx.globalAlpha = 1;
+        const vf = w.vx * Math.sin(th) + w.vy * Math.cos(th), vr = w.vx * Math.cos(th) - w.vy * Math.sin(th);   // ground velocity in the ego frame
+        if (w.speedMps > 0.2) {
+          const len = Math.max(4, Math.hypot(vf, vr) * pxm), ang = Math.atan2(vr, vf), ex = x + Math.sin(ang) * len, ey = y - Math.cos(ang) * len;
+          ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(ex, ey);
+          ctx.moveTo(ex, ey); ctx.lineTo(ex - Math.sin(ang - 0.5) * 5, ey + Math.cos(ang - 0.5) * 5);
+          ctx.moveTo(ex, ey); ctx.lineTo(ex - Math.sin(ang + 0.5) * 5, ey + Math.cos(ang + 0.5) * 5); ctx.stroke();
+        }
+        if (w.onCourse && Number.isFinite(w.cpaS)) {
+          const cx = x + (vr * w.cpaS) * pxm, cy = y - ((vf - egoV) * w.cpaS) * pxm;
+          ctx.setLineDash([2, 3]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx, cy); ctx.stroke();
+        }
+        ctx.setLineDash([]);
       }
     }
     // hazards: ahead = distanceM, right = lateralM

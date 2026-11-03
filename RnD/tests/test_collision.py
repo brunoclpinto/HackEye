@@ -1013,8 +1013,8 @@ def test_output_documents_are_serializable_and_complete():
     doc, ev = run(approach_frames(seconds=15), mot=motion(15))
     json.dumps(doc)
     json.dumps(ev)
-    assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames", "coast"}
-    assert doc["version"] == "v26.2.7" == ev["version"]
+    assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames", "coast", "worldTracksSettings"}
+    assert doc["version"] == "v26.2.9" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM",
                                   "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM", "objectDistance", "useHorizon"}      # v26.2.3: the object distance / horizon switch
     assert (doc["gridW"], doc["gridH"]) == (W, H)
@@ -1027,7 +1027,7 @@ def test_output_documents_are_serializable_and_complete():
                    "clock", "clockText", "pan", "distanceM", "lateralM", "stepsTo", "closingMps", "urgency", "areaFrac", "collision", "latVelMps", "crossMps"}
     seen_hazard = False
     for f in doc["frames"]:
-        assert set(f) - {"faceEdgeLines"} == frame_keys                  # v26.2.2: faceEdgeLines (the fitted wall lines) only on a frame with a judged wall candidate
+        assert set(f) - {"faceEdgeLines", "worldTracks"} == frame_keys                  # v26.2.2: faceEdgeLines (the fitted wall lines) only on a frame with a judged wall candidate
         assert set(f["ego"]) == ego_keys and set(f["ego"]["estimated"]) == {"speed", "cadence", "stepLength"}
         assert len(f["lane"]) == 4 and all(len(p) == 2 for p in f["lane"])
         if f["region"]:
