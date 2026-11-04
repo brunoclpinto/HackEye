@@ -254,9 +254,15 @@ def test_rerun_form_overrides_are_sent_and_the_row_shows_tags_and_the_effective_
                                                   "horizon.source": "fused", "ego.cadenceSource": "image"}}
         tags = page.locator(f"{_row(cid)} .coll-ovtag").all_inner_texts()
         assert tags == ["source map", "predictive off", "heading imu", "horizon fused", "cadence image"], tags
-        # "(config default)" sends nothing
-        for sel in ("#ovSource", "#ovPredictive", "#ovHeading", "#ovHorizon", "#ovCadence"):
-            page.select_option(sel, "")
+        # the default option is marked "(default)" (no separate "config default" entry); choosing it sends nothing
+        cfg = api("/api/config/collision")
+        defaults = {"#ovSource": cfg["source"]["mode"], "#ovPredictive": "on" if cfg["speech"]["predictive"]["enabled"] else "off",
+                    "#ovHeading": cfg["ego"]["headingSource"], "#ovHorizon": cfg["horizon"]["source"], "#ovCadence": cfg["ego"]["cadenceSource"]}
+        for sel, dv in defaults.items():
+            labels = page.locator(f"{sel} option").all_inner_texts()
+            assert not any("config default" in t for t in labels), labels
+            assert [t for t in labels if t.endswith(" (default)")] == [page.locator(f"{sel} option[value='{dv}']").inner_text()], (sel, labels)
+            page.select_option(sel, dv)
         plain = _rerun(page); made.append(plain)
         assert next(c for c in api(f"/api/runs/{_run()}/collisions") if c["id"] == plain)["overrides"] == {}
         assert page.locator(f"{_row(plain)} .coll-ovtag").count() == 0 or "objDist" in page.locator(f"{_row(plain)} .coll-ovtag").first.get_attribute("data-tag")

@@ -202,7 +202,7 @@ function fillMountSelect() {
   sel.replaceChildren();
   const presets = S.config?.mountPresets ?? {};
   for (const [k, v] of Object.entries(presets)) sel.add(new Option(v.label ?? k, k));
-  if (S.config?.defaultMount) sel.value = S.config.defaultMount;
+  if (S.config?.defaultMount) { sel.value = S.config.defaultMount; markDefault(sel, S.config.defaultMount); }
   const loc = $("#locSel");
   loc.replaceChildren(new Option("Legacy mount", ""));
   for (const [k, v] of Object.entries(S.config?.body?.cameraLocations ?? {})) loc.add(new Option(v.label ?? k, k));
@@ -234,7 +234,7 @@ function updateSettingPlaceholders() {
   const hf = r?.hfovDeg ?? S.config?.defaultHfovDeg;
   if (hf != null) $("#hfovInput").placeholder = `${hf} (default)`;
   const auto = $("#projSel").querySelector('option[value="auto"]');
-  auto.textContent = r?.projection ? `Auto (${r.projection})` : "Auto";
+  auto.textContent = (r?.projection ? `Auto (${r.projection})` : "Auto") + " (default)";
 }
 
 async function loadSettings() {
@@ -267,11 +267,26 @@ function syncObjDist() {
   if (off && sel.value !== "depth") sel.value = "depth";
   $("#objDistHint").hidden = !off;
 }
-/** The dotted-key controls of the re-run form: {key: value} for every control not on "(config default)". */
+/** v26.2.11: the option whose value is the default shows " (default)" after its label (no separate "config default" entry). */
+function markDefault(sel, value) {
+  for (const o of sel.options) {
+    o.dataset.base ??= o.textContent;
+    o.textContent = o.dataset.base + (value != null && o.value === String(value) ? " (default)" : "");
+  }
+}
+/** The dotted-key controls of the re-run form: {key: value} for every control whose value differs from the shipped config default. */
 const OV_VALUES = { on: true, off: false };
+function ovDefaults() {
+  for (const el of document.querySelectorAll("select[data-key]")) {
+    let v = el.dataset.key.split(".").reduce((o, k) => o?.[k], S.config ?? {});
+    if (typeof v === "boolean") v = v ? "on" : "off";
+    if (v != null && [...el.options].some((o) => o.value === v)) { el.dataset.default = v; el.value = v; markDefault(el, v); }
+    else delete el.dataset.default;
+  }
+}
 function overrideControls() {
   const out = {};
-  for (const el of document.querySelectorAll("select[data-key]")) if (el.value) out[el.dataset.key] = el.value in OV_VALUES ? OV_VALUES[el.value] : el.value;
+  for (const el of document.querySelectorAll("select[data-key]")) if (el.value !== el.dataset.default) out[el.dataset.key] = el.value in OV_VALUES ? OV_VALUES[el.value] : el.value;
   return out;
 }
 function settingsFromForm() {
@@ -713,7 +728,7 @@ function labelResolutions() {
   const sizes = ($("#orientSel").value === "portrait" ? S.rec?.inputSizesPortrait : S.rec?.inputSizes) ?? {};
   for (const o of $("#profileSel").options) {
     const sz = sizes[o.value];
-    o.textContent = sz ? `${o.value} · ${sz[0]}×${sz[1]}` : o.value;
+    o.textContent = (sz ? `${o.value} · ${sz[0]}×${sz[1]}` : o.value) + (o.value === "736p" ? " (default)" : "");
     o.disabled = !!S.rec && !sz;
   }
   const sel = $("#profileSel");
@@ -1113,7 +1128,7 @@ function wire() {
   $("#stepFwd").addEventListener("click", () => step(1));
   const speedSel = $("#speedSel");
   for (const s of SPEEDS) speedSel.add(new Option(`${s}×`, String(s)));
-  speedSel.value = "1";
+  speedSel.value = "1"; markDefault(speedSel, "1");
   $("#horizonSel").addEventListener("change", syncObjDist);
   speedSel.addEventListener("change", () => setSpeed(Number(speedSel.value)));
   const bar = $("#seekBar");
@@ -1232,6 +1247,8 @@ async function init() {
   notesPanel.load();
   issuesPanel.load();
   fillMountSelect();
+  ovDefaults();
+  for (const [id, v] of [["#orientSel", "landscape"], ["#deviceSel", "gpu"], ["#sideSel", "center"], ["#distSel", "depth"], ["#objDistSel", "depth"], ["#horizonSel", "true"], ["#shapeSel", "outlines"]]) markDefault($(id), v);
   if (models) {
     for (const m of models.models) $("#modelSel").add(new Option(m.name + (m.default ? " (default)" : ""), m.path));
     const d = models.models.find((m) => m.default);
@@ -1243,6 +1260,7 @@ async function init() {
       for (const d of dm) $("#depthSel").add(new Option(d === "none" ? "Off" : DEPTH_LABELS[d] ?? d, d));
       if (!dm.includes("none")) $("#depthSel").add(new Option("Off", "none"), 0);
       $("#depthSel").value = dm.includes("da2-metric-outdoor-small") ? "da2-metric-outdoor-small" : "none";   // depth on by default (v26.1.10)
+      markDefault($("#depthSel"), $("#depthSel").value);
       $("#depthLbl").hidden = false;
     }
   } else $("#profileSel").add(new Option("default", "default"));
