@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.10",
+  "version": "v26.2.11",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -16,6 +16,9 @@
       "head":  {"label": "Head",          "heightRatio": 1.0,  "heightOffsetM": 0.05, "horizon": 0.48, "sideOffsetM": 0.07}
     }
   },
+  "source": {"mode": "image", "imageNetSteps": 3.0, "imageNetFrames": 2, "regionPadM": 2.0, "regionMinCells": 2, "maxTrackJumpM": 3.0,
+             "maxTrackJumpFrac": 0.35, "coastFromTracks": true},
+  "horizon": {"source": "gravity", "gravityWeight": 0.5, "levelTauS": 30.0},
   "geometry": {
     "defaultStepLengthM": 0.70,
     "laneHalfWidthM": 0.60,
@@ -143,7 +146,14 @@
     "speedMinTracks": 1, "speedMaxMps": 6.0, "speedEma": 0.3, "stepLengthRangeM": [0.3, 1.8],
     "calibrationWindowSeconds": 20.0, "calibrationMinSamples": 12, "calibrationEmaMinSeconds": 3.0, "calibrationEmaSeconds": 40.0,
     "priorStepLengthM": 0.70, "scalePrior": null, "scalePriorSeconds": 30.0, "scaleMaxChangePerSecond": 0.25, "scaleRange": [0.5, 4.0], "calibrationMinRawSpeed": 0.2,
-    "stationary": {"medianSeconds": 1.0, "enterPx": 0.8, "leavePx": 1.0, "enterSeconds": 1.5, "leaveSeconds": 1.0}
+    "stationary": {"medianSeconds": 1.0, "enterPx": 0.8, "leavePx": 1.0, "enterSeconds": 1.5, "leaveSeconds": 1.0},
+    "sensors": true, "headingSource": "auto", "cadenceSource": "auto", "stationarySource": "auto", "onePose": "auto", "gravityTauS": 0.5, "rollCorrect": false,
+    "imu": {"yawSign": -1.0, "yawGravityTauS": 1.0, "accelUpAxis": 0, "accelRightAxis": 1, "accelForwardAxis": 2, "pitchSign": -1.0, "rollSign": -1.0,
+            "timeOffsetS": -0.10, "biasMinStationaryS": 2.0, "biasLowFraction": 0.2, "activityWindowS": 1.0, "cadenceRateHz": 60.0,
+            "stationary": {"medianSeconds": 0.3, "enterPx": 0.5, "leavePx": 0.8, "enterSeconds": 1.5, "leaveSeconds": 1.0}},
+    "gps": {"enabled": true, "maxDop": 2.5, "minFix": 3, "course": true, "courseTauS": 30.0, "courseWindowS": 8.0, "courseMinTravelM": 6.0,
+            "courseMinSpeedMps": 0.6, "courseMaxTurnDeg": 25.0, "courseRejectDeg": 60.0, "courseInitN": 5,
+            "speedScale": true, "speedMinS": 20.0, "speedTauS": 40.0}
   },
   "crosswalk": {"class": "crosswalk", "enterFraction": 0.3, "enterSeconds": 0.5, "exitFraction": 0.15, "exitSeconds": 0.7},
   "contextMemory": {"forgetAfterSeconds": 30.0},
@@ -165,11 +175,19 @@
     "gateChi2": 9.21,
     "fovMarginDeg": 3.0, "coastMaxS": 4.0, "missDropFrames": 3, "maxSigmaM": 3.0, "behindDropM": 2.0, "maxRangeM": 30.0,
     "horizonS": 8.0, "itemRadiusM": 0.3, "maxTracksOut": 40,
-    "skipClasses": ["building", "structure bridge", "structure tunnel", "bridge", "tunnel"]
+    "skipClasses": ["building", "structure bridge", "structure tunnel", "bridge", "tunnel"],
+    "extendedClasses": ["curb", "crosswalk", "barrier", "barrier fence", "barrier guard-rail", "barrier wall", "divider", "nature vegetation",
+                        "vegetation", "terrain", "nature terrain", "fence", "wall", "guard-rail"],
+    "headingSigmaDegPerS": 0.5, "poseSigmaMaxS": 4.0,
+    "staticVelocityDamping": 0.5, "dampingDirectionalS": 1.0, "dampingDirectionalMinM": 0.15, "dampingDirectionalRatio": 0.6,
+    "moverPromoteMps": 0.8, "moverPromoteS": 1.0,
+    "missDropS": 1.0, "reviveS": 1.0, "reidOneToOne": true, "classMismatchCost": 2.0,
+    "trustMinS": 0.5, "trustMaxSigmaM": 0.5, "trustMaxSpeedSigmaMps": 0.3
   },
   "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
   "speech": {
     "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0, "contextMaxItems": 3, "summaryHoldSeconds": 0.5,
+    "predictive": {"enabled": true, "startLatencyS": 0.2, "wordsPerSecond": 2.8, "minSteps": 1, "passedM": 0.3, "maxMoverMps": 12.0},
     "maxEntries": 3, "peopleMotionWaitSeconds": 1.5, "peopleMotionWaitSteps": 6, "priorityMinGapSeconds": 1.0, "thinRearmSeconds": 8.0, "featureLabelGapSeconds": 6.0, "featureNewCrossingSteps": 5,
     "featureLabelOverrides": {"crosswalk": {"gapSeconds": 20, "newCrossingSteps": 20}, "curb": {"gapSeconds": 20, "newCrossingSteps": 24}},
     "templates": {

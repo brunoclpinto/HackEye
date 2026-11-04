@@ -29,6 +29,10 @@ sys.path.insert(0, str(ROOT))
 POINT_LIKE = ("pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign", "sidewalk-obstacle", "vehicle")   # vehicle: only static-like (parked)
 
 
+LEGACY = {"extendedClasses": [], "headingSigmaDegPerS": 0.0, "staticVelocityDamping": 1.0, "moverPromoteMps": 0.0, "missDropS": 0.0,
+          "reviveS": 0.0, "reidOneToOne": False}          # v26.2.10 behaviour (also the dotted overrides of a Lab re-run)
+
+
 def _q(v, p):
     return round(float(np.percentile(v, p)), 3) if len(v) else None
 
@@ -45,6 +49,8 @@ class Acc:
         self.dropped_missing = self.dropped_other = 0
         self.ms: list[float] = []
         self.frames = 0
+        self.trusted_frames = self.seen_frames = 0
+        self.trusted_speed: list[float] = []
 
     def add_doc(self, doc: dict) -> None:
         recs: dict[str, list[tuple]] = {}
@@ -68,6 +74,11 @@ class Acc:
                         self.dropped_other += 1
                 prev_state[i] = w["state"]
                 if w["state"] == "seen":
+                    self.seen_frames += 1
+                    if w.get("trusted"):
+                        self.trusted_frames += 1
+                        if w["staticLike"]:
+                            self.trusted_speed.append(w["speedMps"])
                     recs.setdefault(i, []).append((t, w))
                     if i in last_seen and len(w["imageTracks"]) > n_img.get(i, 1) and w["innovM"] is not None:
                         self.reid_n += 1
@@ -132,6 +143,9 @@ class Acc:
                           "missingShare": round(self.state_frames["missing"] / tot, 4) if tot else None,
                           "outOfViewFrames": self.state_frames["out-of-view"], "byClass": dict(self.missing_cls.most_common(10)),
                           "droppedAfterMissing": self.dropped_missing, "droppedOther": self.dropped_other},
+            "2b_trusted": {"seenFrames": self.seen_frames, "trustedFrames": self.trusted_frames,
+                           "trustedShare": round(self.trusted_frames / self.seen_frames, 3) if self.seen_frames else None,
+                           "staticTrustedSpeedMedianMps": _q(self.trusted_speed, 50), "staticTrustedSpeedP90Mps": _q(self.trusted_speed, 90)},
             "5_costMsPerFrame": {"mean": round(float(np.mean(self.ms)), 3) if self.ms else None, "p95": _q(self.ms, 95),
                                  "frames": len(self.ms)},
         }
@@ -145,12 +159,24 @@ def main() -> None:
     ap.add_argument("--fixtures", action="store_true")
     ap.add_argument("--mode", default=None, choices=["depth", "ground+depth"])
     ap.add_argument("--json", default=None)
+    ap.add_argument("--wt", action="append", default=[], metavar="KEY=JSON",
+                    help="fixtures: override a worldTracks key, e.g. --wt staticVelocityDamping=1.0 (repeatable)")
+    ap.add_argument("--legacy", action="store_true", help="fixtures: the v26.2.10 world tracks (all v26.2.11 switches off)")
     a = ap.parse_args()
     acc = Acc()
     if a.fixtures:
         import collision as col
         from tests import worldtracks_fixtures as wf
-        for label, meta, doc, ev in wf.all_runs():
+        cfg = None
+        if a.wt or a.legacy:
+            import copy
+            cfg = copy.deepcopy(col.load_config())
+            if a.legacy:
+                cfg["worldTracks"].update(LEGACY)
+            for kv in a.wt:
+                k, v = kv.split("=", 1)
+                cfg["worldTracks"][k] = json.loads(v)
+        for label, meta, doc, ev in wf.all_runs(cfg):
             if a.mode and not label.endswith("/" + a.mode):
                 continue
             acc.add_doc(doc)

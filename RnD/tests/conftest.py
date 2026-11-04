@@ -33,3 +33,23 @@ def _v2629_map_settings(request):
     mp.setattr(collision, "load_config", _cfg)
     yield
     mp.undo()
+
+
+# v26.2.11: ``speech.predictive.enabled`` is on by default (the phrase says where the item will be when it ends). Every test that pins the
+# phrases of an earlier version runs with it off: ``collision.load_config`` returns it off for any caller except the modules below (the
+# caller is looked at, because several test modules read the config at import time, before any fixture runs).
+_PREDICTIVE_OK = ("test_orientation", "test_collision_v26210", "test_collision_v26211", "test_worldtracks_v26211", "test_lab_v26211_ui",
+                  "test_sensors_v26211")
+
+
+def pytest_configure(config):
+    import collision
+    real = collision.load_config
+
+    def _cfg(path=None):
+        c = real(path) if path is not None else real()
+        caller = sys._getframe(1).f_globals.get("__name__", "").rsplit(".", 1)[-1]
+        if caller not in _PREDICTIVE_OK:
+            c["speech"]["predictive"]["enabled"] = False
+        return c
+    collision.load_config = _cfg

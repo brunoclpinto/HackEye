@@ -246,13 +246,14 @@ def test_removed_system_phrase_is_not_spoken(page, created_reviews):
         page.click("#playBtn")       # pause
         return page.evaluate("window.__spoken.map(s => s.text)")
 
+    spoken_text = re.sub(r"\bcurb\b", "kerb", ev["text"], flags=re.I)   # audio.js PRONUNCIATIONS: the spoken form of the display text
     open_lab(page, LONG_REC, run=FULL_RUN, t=ev["t"] - 3)
     # Positive control first: with the preview off the system's own phrase is spoken...
     page.uncheck("#reviewPreviewChk")
-    assert ev["text"] in play_through(), "control: the system phrase should be spoken with the preview off"
+    assert spoken_text in play_through(), "control: the system phrase should be spoken with the preview off"
     # ...and with it on (the default) the phrase marked ⊘ is skipped.
     page.check("#reviewPreviewChk")
-    assert ev["text"] not in play_through(), "removed phrase was spoken"
+    assert spoken_text not in play_through(), "removed phrase was spoken"
     assert any(e.get("source") == "system" for e in audio_log(page))
 
 

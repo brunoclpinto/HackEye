@@ -390,3 +390,32 @@ def test_click_on_a_map_item_selects_it_on_the_video_too_and_a_wall_region_is_ou
     page.keyboard.press("Escape")
     page.wait_for_function("() => !document.querySelector('#wmCanvas').dataset.selRegion")
     assert not page.errors, page.errors
+
+
+# ---- v26.2.11: plain emoji markers
+def _first_person_frame(run, rq):
+    for a in range(int(rq["start"]), int(rq["end"]), 30):
+        doc = api(f"/api/runs/{run}/hazards?from={a}&to={a + 30}")
+        for f in doc["frames"]:
+            for h in f["hazards"]:
+                if h["className"] == "person" and 1 < h["distanceM"] < 14 and abs(h["lateralM"]) < 6 and not h.get("coasting"):
+                    return f, h
+    return None, None
+
+
+def test_person_item_is_drawn_as_a_plain_emoji_on_the_map(page):
+    """v26.2.11: items of the emoji families are drawn as an emoji (data-emojis counts them); the table is the one in js/worldmap.js."""
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    f, h = _first_person_frame(run, rq)
+    if f is None:
+        pytest.skip("no person inside the map in the run")
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_function("() => +document.querySelector('#wmCanvas').dataset.emojis >= 1", timeout=10_000)
+    table = page.evaluate("async () => { const m = await import('/static/js/worldmap.js'); return m.EMOJI; }")
+    assert table["person"] == "\U0001F6B6" and table["rider"] == "\U0001F6B4" and table["sign"] == "\U0001FAA7"
+    assert "pole" not in table and "curb" not in table
+    assert not page.errors, page.errors

@@ -217,6 +217,7 @@ class Geometry:
         self.gh, self.gw, self.hfov, self.fisheye, self.cam_h = gh, gw, float(hfov_deg), projection == "fisheye", float(cam_h)
         self.f_eq = gw / math.radians(self.hfov)
         self.f_pin = (gw / 2.0) / math.tan(math.radians(self.hfov) / 2.0)
+        self.roll = 0.0          # v26.2.11 (``ego.rollCorrect``): the camera roll (rad, + = right side down) the geometry undoes; set per frame
 
 
 def _pitch(geo: Geometry, horizon: float) -> float:
@@ -231,6 +232,9 @@ def ray_dir(geo: Geometry, row_b, col_c):
     (almost) sideways or backwards."""
     row_b, col_c = np.broadcast_arrays(np.asarray(row_b, dtype=np.float64), np.asarray(col_c, dtype=np.float64))
     px, py = col_c - geo.gw / 2.0, row_b - geo.gh / 2.0
+    if geo.roll:                                   # the pixel as a level camera would see it
+        cr, sr = math.cos(geo.roll), math.sin(geo.roll)
+        px, py = px * cr - py * sr, px * sr + py * cr
     if geo.fisheye:
         r = np.hypot(px, py)
         theta = r / geo.f_eq
@@ -285,6 +289,9 @@ def ground_pixel(geo: Geometry, fwd, right, horizon: float, cam_h: float | None 
             px, py = k * xn, k * yn
         else:
             px, py = xn * geo.f_pin, yn * geo.f_pin
+    if geo.roll:                                   # back into the rolled camera's image
+        cr, sr = math.cos(geo.roll), math.sin(geo.roll)
+        px, py = px * cr + py * sr, -px * sr + py * cr
     return py + geo.gh / 2.0, px + geo.gw / 2.0
 
 

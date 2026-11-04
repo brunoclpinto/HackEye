@@ -218,3 +218,65 @@ def test_rerun_ends_in_a_row_of_its_runs_group_with_label_and_delete(page):
         assert not page.errors, page.errors
     finally:
         _drop(made)
+
+
+# ---- v26.2.11: effective object distance (note 3) and the dotted-override controls of the re-run form
+def test_horizon_off_greys_out_the_ground_object_distances(page):
+    rq = api(f"/api/runs/{_run()}")["request"]
+    open_lab(page, rq["recording"], t=5, run=_run())
+    page.wait_for_selector("#objDistSel")
+    disabled = lambda: page.evaluate("() => [...document.querySelectorAll('#objDistSel option')].filter((o) => o.disabled).map((o) => o.value)")
+    page.select_option("#horizonSel", "true")
+    page.select_option("#objDistSel", "ground-contact")
+    assert disabled() == [] and page.is_hidden("#objDistHint")
+    page.select_option("#horizonSel", "false")                       # a ground mode selected: falls back to depth, with the hint
+    assert page.input_value("#objDistSel") == "depth"
+    assert sorted(disabled()) == ["ground+depth", "ground-contact"]
+    assert page.is_visible("#objDistHint") and "falls back to depth" in page.inner_text("#objDistHint")
+    page.select_option("#horizonSel", "true")
+    assert disabled() == [] and page.is_hidden("#objDistHint")
+
+
+def test_rerun_form_overrides_are_sent_and_the_row_shows_tags_and_the_effective_mode(page):
+    made = []
+    rq = api(f"/api/runs/{_run()}")["request"]
+    try:
+        open_lab(page, rq["recording"], t=5, run=_run())
+        page.wait_for_selector(f"{GROUP}[data-run='{_run()}'] .coll-row")
+        page.select_option("#ovSource", "map")
+        page.select_option("#ovPredictive", "off")
+        page.select_option("#ovHeading", "imu")
+        page.select_option("#ovHorizon", "fused")
+        page.select_option("#ovCadence", "image")
+        cid = _rerun(page); made.append(cid)
+        got = next(c for c in api(f"/api/runs/{_run()}/collisions") if c["id"] == cid)
+        assert got["overrides"] == {"collision": {"source.mode": "map", "speech.predictive.enabled": False, "ego.headingSource": "imu",
+                                                  "horizon.source": "fused", "ego.cadenceSource": "image"}}
+        tags = page.locator(f"{_row(cid)} .coll-ovtag").all_inner_texts()
+        assert tags == ["source map", "predictive off", "heading imu", "horizon fused", "cadence image"], tags
+        # "(config default)" sends nothing
+        for sel in ("#ovSource", "#ovPredictive", "#ovHeading", "#ovHorizon", "#ovCadence"):
+            page.select_option(sel, "")
+        plain = _rerun(page); made.append(plain)
+        assert next(c for c in api(f"/api/runs/{_run()}/collisions") if c["id"] == plain)["overrides"] == {}
+        assert page.locator(f"{_row(plain)} .coll-ovtag").count() == 0 or "objDist" in page.locator(f"{_row(plain)} .coll-ovtag").first.get_attribute("data-tag")
+
+        # a ground mode with the horizon off (stored settings): accepted, the doc and the hazards carry the effective mode, the row says it
+        stored = api(f"/api/recordings/{rq['recording']}/settings")
+        keep = {k: stored[k] for k in ("objectDistance", "useHorizon")}
+        try:
+            api(f"/api/recordings/{rq['recording']}/settings", "PUT", {**stored, "objectDistance": "ground-contact", "useHorizon": False})
+            d = collision_job(_run()); made.append(d["id"])
+            assert d["status"] == "done" and d["objectDistanceEffective"] == "depth" and d["resolved"]["objectDistanceEffective"] == "depth"
+            hz = api(f"/api/runs/{_run()}/hazards?from=0&to=2&collision={d['id']}")
+            assert hz["settings"]["objectDistanceEffective"] == "depth" and hz["settings"]["objectDistance"] == "ground-contact"
+            page.reload(); page.wait_for_selector(_row(d["id"]), timeout=30_000)
+            assert "ground-contact -> depth (horizon off)" in page.inner_text(_row(d["id"]))
+        finally:
+            api(f"/api/recordings/{rq['recording']}/settings", "PUT", {**stored, **keep})
+        # an unsupported value of a known key is still refused
+        with pytest.raises(AssertionError, match="422"):
+            api(f"/api/runs/{_run()}/collision", "POST", {"overrides": {"collision": {"source.mode": "nope"}}})
+        assert not page.errors, page.errors
+    finally:
+        _drop(made)

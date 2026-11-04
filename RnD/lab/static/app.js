@@ -257,7 +257,22 @@ function applySettingsToForm() {
   $("#distSel").value = s.distanceSource ?? "depth";
   $("#objDistSel").value = s.objectDistance ?? "depth";
   $("#horizonSel").value = String(s.useHorizon ?? true);
+  syncObjDist();
   updateSettingPlaceholders();
+}
+/** v26.2.11: ground-contact / ground+depth need the horizon: with it off they are greyed out (hint shown) and a selected one falls back to depth. */
+function syncObjDist() {
+  const off = $("#horizonSel").value === "false", sel = $("#objDistSel");
+  for (const o of sel.options) o.disabled = off && o.value !== "depth";
+  if (off && sel.value !== "depth") sel.value = "depth";
+  $("#objDistHint").hidden = !off;
+}
+/** The dotted-key controls of the re-run form: {key: value} for every control not on "(config default)". */
+const OV_VALUES = { on: true, off: false };
+function overrideControls() {
+  const out = {};
+  for (const el of document.querySelectorAll("select[data-key]")) if (el.value) out[el.dataset.key] = el.value in OV_VALUES ? OV_VALUES[el.value] : el.value;
+  return out;
 }
 function settingsFromForm() {
   const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
@@ -293,10 +308,19 @@ function readOverrides() {
   return v;
 }
 
+/** The text field merged with the dotted-key controls (the controls win); undefined when both are empty, null when the text is invalid. */
+function allOverrides() {
+  const typed = readOverrides();
+  if (typed === null) return null;
+  const ctl = overrideControls();
+  if (!Object.keys(ctl).length) return typed;
+  return { ...(typed ?? {}), collision: { ...((typed ?? {}).collision ?? {}), ...ctl } };
+}
+
 async function rerunCollision() {
   if (!S.run || !S.rec) return false;
   const btn = $("#rerunBtn"), info = $("#rerunInfo");
-  const overrides = readOverrides();
+  const overrides = allOverrides();
   if (overrides === null) return false;
   btn.disabled = true; info.textContent = "Running…";
   const t0 = performance.now();
@@ -387,6 +411,20 @@ function flatKeys(node, prefix = "", out = {}) {
   return out;
 }
 
+/** v26.2.11: the overrides the row shows as tags (dotted key -> tag name). */
+const TAGGED = { "source.mode": "source", "speech.predictive.enabled": "predictive", "ego.headingSource": "heading",
+  "horizon.source": "horizon", "ego.cadenceSource": "cadence" };
+
+/** The row's tags: the tagged overrides ("source map"), and the effective object distance when it differs ("ground-contact -> depth (horizon off)"). */
+function collTags(d) {
+  const tags = [];
+  const flat = flatKeys(d.overrides ?? {});
+  for (const [k, v] of Object.entries(flat)) { const name = TAGGED[k.replace(/^collision\./, "")]; if (name) tags.push({ k: name, text: `${name} ${shortVal(v)}` }); }
+  const req = d.settings?.objectDistance, eff = d.objectDistanceEffective;
+  if (req && eff && req !== eff) tags.push({ k: "objDist", text: `${req} -> ${eff} (horizon ${d.settings?.useHorizon === false ? "off" : "on"})` });
+  return tags;
+}
+
 /** What differs from the run's first collision run, short: "objDist ground+depth · horizon off · itemLens off"; "first" for c1. */
 function collSummary(d) {
   const first = S.colls[0];
@@ -397,7 +435,7 @@ function collSummary(d) {
     parts.push(`${SHORT_KEYS[k] ?? k} ${shortVal(d.settings[k])}`);
   }
   const fo = flatKeys(first.overrides ?? {}), o = flatKeys(d.overrides ?? {});
-  for (const k of Object.keys(o)) if (JSON.stringify(o[k]) !== JSON.stringify(fo[k])) parts.push(`${k.split(".").pop()} ${shortVal(o[k])}`);
+  for (const k of Object.keys(o)) if (!TAGGED[k.replace(/^collision\./, "")] && JSON.stringify(o[k]) !== JSON.stringify(fo[k])) parts.push(`${k.split(".").pop()} ${shortVal(o[k])}`);
   return parts.join(" · ") || "same settings";
 }
 
@@ -527,6 +565,13 @@ function collRow(runId, d) {
   sub.textContent = [`collision ${d.collisionVersion ?? "?"}`, d.worldmapVersion ? `map ${d.worldmapVersion}` : null,
     status === "done" ? `${c.speech ?? 0} speech · ${c.beeps ?? 0} beeps` : null, collSummary(d)].filter(Boolean).join(" · ");
   li.append(top, sub);
+  const tags = collTags(d);
+  if (tags.length) {
+    const box = document.createElement("div");
+    box.className = "coll-tags";
+    for (const t of tags) { const sp = document.createElement("span"); sp.className = "coll-ovtag"; sp.dataset.tag = t.k; sp.textContent = t.text; box.append(sp); }
+    li.append(box);
+  }
   if (status === "running") {
     const pr = document.createElement("div");
     pr.className = "progress";
@@ -1069,6 +1114,7 @@ function wire() {
   const speedSel = $("#speedSel");
   for (const s of SPEEDS) speedSel.add(new Option(`${s}×`, String(s)));
   speedSel.value = "1";
+  $("#horizonSel").addEventListener("change", syncObjDist);
   speedSel.addEventListener("change", () => setSpeed(Number(speedSel.value)));
   const bar = $("#seekBar");
   bar.addEventListener("input", () => { draggingSeek = true; seekTo(Number(bar.value)); });

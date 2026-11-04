@@ -31,7 +31,7 @@ REP = {"ref": 1.45, "sigmaRows": 0.6, "curve": [[5.0, 1.0], [12.0, 1.0]]}
 
 def test_config_and_defaults():
     cfg = col.load_config()
-    assert cfg["version"] == "v26.2.10" and worldmap.load_config()["version"] == "v26.2.10"
+    assert cfg["version"] == "v26.2.11" and worldmap.load_config()["version"] == "v26.2.11"
     d = cfg["distance"]
     assert d["objectDistance"] == "depth" and d["useHorizon"] is True      # measured worse than depth on the user's ticks (DECISIONS v26.2.3)
     assert set(d["groundDepth"]) >= {"minRowsBelowHorizon", "binEdgesM", "emaSeconds", "holdSeconds", "extrapolate", "priorCurve", "depthRelErr",

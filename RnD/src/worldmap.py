@@ -445,6 +445,7 @@ class Observer:
         obs = np.full((size, size), UNKNOWN, dtype=np.uint8)
         horizon = float(frame["horizon"])
         self.last_horizon = horizon
+        self.geo.roll = math.radians(float((frame.get("ego") or {}).get("rollCorrectDeg") or 0.0))      # v26.2.11 (ego.rollCorrect)
         cam_h = self.cam_h * self.ground_scale(frame)
         kgrid = self.kind[grid]
         if not self.use_horizon and dmap is not None and frame.get("depthScale"):
@@ -522,6 +523,9 @@ class Observer:
         z = dmap[np.minimum(dh - 1, ((rr + 0.5) / gh * dh).astype(int)),
                  np.minimum(dw - 1, ((cc + 0.5) / gw * dw).astype(int))].astype(np.float64) * float(frame["depthScale"])
         px, py = cc + 0.5 - gw / 2.0, rr + 0.5 - gh / 2.0
+        if self.geo.roll:
+            cr, sr = math.cos(self.geo.roll), math.sin(self.geo.roll)
+            px, py = px * cr - py * sr, px * sr + py * cr
         if self.fisheye:
             r = np.hypot(px, py)
             theta = r / (gw / math.radians(self.hfov))

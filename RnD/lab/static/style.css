@@ -308,3 +308,7 @@ button.link[hidden] { display: none; }
   background: rgba(15,17,21,0.92); color: #f2f4f7; border: 1px solid var(--border); max-width: 90vw; }
 .tip[hidden] { display: none; }
 #stage canvas, #wmCanvas { cursor: default; }
+/* v26.2.11: tags on a collision row (overridden source / predictive / heading / horizon / cadence; effective object distance) */
+.coll-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.coll-ovtag { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: rgba(120,200,255,0.18); border: 1px solid rgba(120,200,255,0.4); }
+.coll-ovtag[data-tag="objDist"] { background: rgba(255,200,80,0.18); border-color: rgba(255,200,80,0.5); }

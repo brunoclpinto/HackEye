@@ -927,6 +927,9 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", 
     try:
         t0 = time.perf_counter()
         extra = {"window": window} if window is not None else {}     # full-frame runs call exactly as before
+        sens = recordings.sensors_for(doc["request"]["recording"])      # v26.2.11: GoPro telemetry (None: no gpmd stream = v26.2.10 behaviour)
+        if sens is not None:
+            extra["sensors"] = sens
         if job is not None:               # only a job reports (a synchronous pass calls exactly as before)
             extra["progress"] = lambda i, n: job.report(0.4 * i / max(n, 1))
         from lab import sounds as lab_sounds                       # the Lab-wide sound profile (v26.1.16): the tone intervals

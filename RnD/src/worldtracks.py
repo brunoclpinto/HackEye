@@ -23,6 +23,14 @@ DEFAULTS = {
     "fovMarginDeg": 3.0, "coastMaxS": 4.0, "missDropFrames": 3, "maxSigmaM": 3.0, "behindDropM": 2.0, "maxRangeM": 30.0,
     "horizonS": 8.0, "itemRadiusM": 0.3, "maxTracksOut": 40,
     "skipClasses": ["building", "structure bridge", "structure tunnel", "bridge", "tunnel"],
+    # v26.2.11 (each switch off = the v26.2.10 behaviour: [] / 1.0 / 0 / 0 / 0 / false)
+    "extendedClasses": ["curb", "crosswalk", "barrier", "barrier fence", "barrier guard-rail", "barrier wall", "divider", "nature vegetation",
+                        "vegetation", "terrain", "nature terrain", "fence", "wall", "guard-rail"],
+    "headingSigmaDegPerS": 0.5, "poseSigmaMaxS": 4.0,
+    "staticVelocityDamping": 0.5, "dampingDirectionalS": 1.0, "dampingDirectionalMinM": 0.15, "dampingDirectionalRatio": 0.6,
+    "moverPromoteMps": 0.8, "moverPromoteS": 1.0,
+    "missDropS": 1.0, "reviveS": 1.0, "reidOneToOne": True, "classMismatchCost": 2.0,
+    "trustMinS": 0.5, "trustMaxSigmaM": 0.5, "trustMaxSpeedSigmaMps": 0.3,
 }
 
 
@@ -33,12 +41,13 @@ def settings(cfg: dict | None) -> dict:
 
 
 class _WT:
-    __slots__ = ("id", "cls", "family", "group", "static", "x", "P", "t", "t0", "last_seen", "tid", "images", "state", "miss", "seen_now", "innov")
+    __slots__ = ("id", "cls", "family", "group", "static", "x", "P", "t", "t0", "last_seen", "tid", "images", "state", "miss", "seen_now", "innov", "seen_s", "ivs", "promoted", "prom_t0", "miss_t0", "dead_t")
 
     def __init__(self, wid, m, x, P, t):
         self.id, self.x, self.P, self.t, self.t0, self.last_seen = wid, x, P, t, t, t
         self.cls, self.family, self.group, self.static = m["cls"], m["family"], m["group"], m["static"]
         self.tid, self.images, self.state, self.miss, self.seen_now, self.innov = m["tid"], [m["tid"]], "seen", 0, True, None
+        self.seen_s, self.ivs, self.promoted, self.prom_t0, self.miss_t0, self.dead_t = 0.0, [], False, None, None, None
 
 
 def _rot(theta_deg: float) -> np.ndarray:
@@ -69,6 +78,9 @@ class WorldTracks:
         self.half = float(lane_half_m) + float(self.cfg["itemRadiusM"])
         self.hfov = float(hfov_deg)
         self.skip = frozenset(self.cfg["skipClasses"])
+        self.extended = frozenset(self.cfg["extendedClasses"])
+        self.dead: dict[int, _WT] = {}            # dropped for being missing, still predicted for ``reviveS`` (re-identification only)
+        self._ctx: tuple[np.ndarray, np.ndarray] | None = None
         self.tracks: dict[int, _WT] = {}          # world id number -> track
         self.link: dict[int, int] = {}            # image track id -> world id number
         self.next = 1
@@ -102,6 +114,36 @@ class WorldTracks:
         tr.x = F @ tr.x
         tr.P = F @ tr.P @ F.T + q * Q
         tr.t = t
+        damp = self.cfg["staticVelocityDamping"]
+        if damp < 1.0 and tr.static and not tr.promoted and not self._directional(tr, t):
+            tr.x[2:4] *= damp ** dt
+            tr.P[2:4, :] *= damp ** dt
+            tr.P[:, 2:4] *= damp ** dt
+
+    def _directional(self, tr: _WT, t: float) -> bool:
+        """The innovations of the last ``dampingDirectionalS`` all point the same way (the item really moves): no damping then."""
+        c = self.cfg
+        iv = [(ti, v) for ti, v in tr.ivs if t - ti <= c["dampingDirectionalS"] + 1e-9]
+        if len(iv) < 3 or iv[-1][0] - iv[0][0] < 0.6 * c["dampingDirectionalS"]:
+            return False
+        vs = np.array([v for _, v in iv])
+        mean_norm = float(np.mean(np.hypot(vs[:, 0], vs[:, 1])))
+        net = float(np.hypot(*vs.mean(axis=0)))
+        return net >= c["dampingDirectionalMinM"] and net >= c["dampingDirectionalRatio"] * mean_norm
+
+    def _Rx(self, tr: _WT, z: np.ndarray, R: np.ndarray, t: float) -> np.ndarray:
+        """R plus the pose uncertainty: the heading may have drifted by ``headingSigmaDegPerS`` x the time since the track was last updated."""
+        c = self.cfg
+        if c["headingSigmaDegPerS"] <= 0 or self._ctx is None:
+            return R
+        origin, M = self._ctx
+        d = z - origin
+        r = math.hypot(d[0], d[1])
+        if r < 1e-6:
+            return R
+        ang = math.radians(c["headingSigmaDegPerS"]) * min(max(t - tr.last_seen, 0.0), c["poseSigmaMaxS"])
+        w = np.array([-d[1], d[0]]) / r
+        return R + (r * ang) ** 2 * np.outer(w, w)
 
     @staticmethod
     def _maha(tr: _WT, z: np.ndarray, R: np.ndarray) -> float:
@@ -147,13 +189,21 @@ class WorldTracks:
         self.prev_pose, self.prev_t = pose, t
         M = _rot(th)
         origin = np.array([x0, y0])
+        self._ctx = (origin, M)
         for tr in self.tracks.values():
             self._predict(tr, t)
             tr.seen_now = False
             tr.innov = None
+        expired = []
+        for tr in list(self.dead.values()):
+            if t - tr.dead_t > c["reviveS"]:
+                del self.dead[tr.id]
+                expired.append(tr)
+            else:
+                self._predict(tr, t)
         zs = []
         for m in measurements:
-            if m["cls"] in self.skip:
+            if m["cls"] in self.skip or m["cls"] in self.extended:
                 continue
             z = origin + M @ np.array([m["fwd"], m["right"]])
             zs.append((m, z, self._R(m["fwd"], m["right"], m["depth"], M)))
@@ -165,27 +215,60 @@ class WorldTracks:
             if tr is None:
                 self.link.pop(m["tid"], None)
                 pending.append((m, z, R))
-            elif self._maha(tr, z, R) <= c["gateChi2"]:
-                self._take(tr, m, z, R, t)
+            elif self._maha(tr, z, self._Rx(tr, z, R, t)) <= c["gateChi2"]:
+                self._take(tr, m, z, self._Rx(tr, z, R, t), t)
                 claimed.add(tr.id)
             else:                                                 # a jump: a new world track, the old link ends
                 self.link.pop(m["tid"], None)
                 pending.append((m, z, R))
-        for m, z, R in pending:
-            best, bd = None, c["gateChi2"]
-            for tr in self.tracks.values():                       # re-identification through a gap
-                if tr.id in claimed or tr.seen_now or tr.state == "dropped" or tr.family != m["family"]:
+        cands = [tr for tr in list(self.tracks.values()) + list(self.dead.values()) if tr.id not in claimed and not tr.seen_now and tr.state != "dropped"]
+        if c["reidOneToOne"]:
+            pairs = []
+            for i, (m, z, R) in enumerate(pending):
+                for tr in cands:
+                    if tr.family != m["family"]:
+                        continue
+                    d = self._maha(tr, z, self._Rx(tr, z, R, t))
+                    if d <= c["gateChi2"]:
+                        pairs.append((d + (0.0 if tr.cls == m["cls"] else c["classMismatchCost"]), i, tr.id))
+            pairs.sort(key=lambda p: p[0])
+            used_m: set[int] = set()
+            used_t: set[int] = set()
+            assign: dict[int, _WT] = {}
+            by_id = {tr.id: tr for tr in cands}
+            for _, i, wid in pairs:
+                if i in used_m or wid in used_t:
                     continue
-                d = self._maha(tr, z, R)
-                if d <= bd:
-                    best, bd = tr, d
+                used_m.add(i)
+                used_t.add(wid)
+                assign[i] = by_id[wid]
+        else:
+            assign = {}
+            taken: set[int] = set()
+            for i, (m, z, R) in enumerate(pending):
+                best, bd = None, c["gateChi2"]
+                for tr in cands:
+                    if tr.id in taken or tr.family != m["family"]:
+                        continue
+                    d = self._maha(tr, z, self._Rx(tr, z, R, t))
+                    if d <= bd:
+                        best, bd = tr, d
+                if best is not None:
+                    assign[i] = best
+                    taken.add(best.id)
+        for i, (m, z, R) in enumerate(pending):
+            best = assign.get(i)
             if best is not None:
+                if best.id in self.dead:                           # revived
+                    del self.dead[best.id]
+                    self.tracks[best.id] = best
+                    best.dead_t = None
                 if best.tid is not None and self.link.get(best.tid) == best.id:
                     del self.link[best.tid]
                 self.link[m["tid"]] = best.id
                 best.tid = m["tid"]
                 best.images.append(m["tid"])
-                self._take(best, m, z, R, t)
+                self._take(best, m, z, self._Rx(best, z, R, t), t)
                 claimed.add(best.id)
             else:
                 tr = self._new(m, z, R, t)
@@ -204,14 +287,24 @@ class WorldTracks:
                 bearing = math.degrees(math.atan2(right, fwd)) if rng > 1e-6 else 0.0
                 oov = fwd < 0 or abs(bearing) > half_fov or fwd < d_bottom or (hidden is not None and bool(hidden(fwd, right)))
                 if oov:
-                    tr.state, tr.miss = "out-of-view", 0
+                    tr.state, tr.miss, tr.miss_t0 = "out-of-view", 0, None
                     drop = drop or t - tr.last_seen > c["coastMaxS"]
                 else:
                     tr.state = "missing"
                     tr.miss += 1
-                    drop = drop or tr.miss >= c["missDropFrames"]
+                    if tr.miss_t0 is None:
+                        tr.miss_t0 = t
+                    gone = tr.miss >= c["missDropFrames"] and t - tr.miss_t0 >= c["missDropS"] - 1e-9
+                    if gone and not drop and c["reviveS"] > 0:     # kept (unseen in the output) for re-identification
+                        del self.tracks[tr.id]
+                        if tr.tid is not None and self.link.get(tr.tid) == tr.id:
+                            del self.link[tr.tid]
+                        tr.dead_t = t
+                        self.dead[tr.id] = tr
+                        continue
+                    drop = drop or gone
             else:
-                tr.state, tr.miss = "seen", 0
+                tr.state, tr.miss, tr.miss_t0 = "seen", 0, None
             if drop:
                 tr.state = "dropped"
             out.append(self._json(tr, t, fwd, right, M))
@@ -219,14 +312,44 @@ class WorldTracks:
                 del self.tracks[tr.id]
                 if tr.tid is not None and self.link.get(tr.tid) == tr.id:
                     del self.link[tr.tid]
+        for tr in expired:                                        # gave up waiting for a re-identification: reported once as dropped
+            fwd, right = M.T @ np.array([tr.x[0] - x0, tr.x[1] - y0])
+            tr.state = "dropped"
+            out.append(self._json(tr, t, float(fwd), float(right), M))
         out.sort(key=lambda d: (d["fwd"] ** 2 + d["right"] ** 2))
         return out[: int(c["maxTracksOut"])]
 
+    def lookup(self, tid: int, t: float) -> dict | None:
+        """(v26.2.11, map mode / predictive speech) The world track an image track belongs to, predicted to time ``t`` on its constant
+        velocity: {x, y, vx, vy, trusted, state, static, promoted, seenS} or None. ``trusted`` = the output flag as of its last update."""
+        wn = self.link.get(tid)
+        tr = self.tracks.get(wn) if wn is not None else None
+        if tr is None:
+            return None
+        c = self.cfg
+        dt = max(0.0, t - tr.t)
+        sig, vsig = _eig_radius(tr.P[:2, :2]), _eig_radius(tr.P[2:4, 2:4])
+        trusted = bool(tr.seen_s >= c["trustMinS"] and sig <= c["trustMaxSigmaM"] and vsig <= c["trustMaxSpeedSigmaMps"] and tr.state != "dropped")
+        return {"x": float(tr.x[0] + tr.x[2] * dt), "y": float(tr.x[1] + tr.x[3] * dt), "vx": float(tr.x[2]), "vy": float(tr.x[3]),
+                "trusted": trusted, "state": tr.state, "static": bool(tr.static), "promoted": bool(tr.promoted), "seenS": float(tr.seen_s),
+                "id": f"W{tr.id}"}
+
     def _take(self, tr: _WT, m: dict, z: np.ndarray, R: np.ndarray, t: float) -> None:
         tr.innov = float(np.hypot(*(z - tr.x[:2])))          # predicted vs measured position (the re-acquisition error after a gap)
+        tr.ivs.append((t, z - tr.x[:2]))
+        del tr.ivs[:-12]
         self._update(tr, z, R)
-        tr.seen_now, tr.last_seen, tr.miss, tr.state = True, t, 0, "seen"
-        tr.cls, tr.group, tr.static = m["cls"], m["group"], m["static"]
+        c = self.cfg
+        tr.seen_s += min(max(t - tr.last_seen, 0.0), 0.5)
+        tr.seen_now, tr.last_seen, tr.miss, tr.state, tr.miss_t0 = True, t, 0, "seen", None
+        tr.cls, tr.group = m["cls"], m["group"]
+        if c["moverPromoteMps"] > 0 and m["static"] and not tr.promoted and math.hypot(tr.x[2], tr.x[3]) > c["moverPromoteMps"]:
+            tr.prom_t0 = t if tr.prom_t0 is None else tr.prom_t0
+            if t - tr.prom_t0 >= c["moverPromoteS"]:
+                tr.promoted = True
+        elif not tr.promoted:
+            tr.prom_t0 = None
+        tr.static = bool(m["static"]) and not tr.promoted
         tr.tid = m["tid"]
         if m["tid"] not in tr.images:
             tr.images.append(m["tid"])
@@ -252,10 +375,13 @@ class WorldTracks:
         rel_h = None if math.sqrt(vv) < 0.05 else math.degrees(math.atan2(vr, vf))
         head = None if speed < 0.05 else math.degrees(math.atan2(tr.x[2], tr.x[3]))
         r2 = lambda v: None if v is None else round(float(v), 2)
+        sig = _eig_radius(tr.P[:2, :2])
+        vsig = _eig_radius(tr.P[2:4, 2:4])
+        trusted = bool(tr.seen_s >= c["trustMinS"] and sig <= c["trustMaxSigmaM"] and vsig <= c["trustMaxSpeedSigmaMps"] and tr.state != "dropped")
         return {"id": f"W{tr.id}", "class": tr.cls, "family": tr.family, "group": tr.group, "staticLike": bool(tr.static), "state": tr.state,
                 "imageTracks": list(tr.images), "trackId": tr.tid if tr.seen_now else None,
                 "x": r2(tr.x[0]), "y": r2(tr.x[1]), "vx": r2(tr.x[2]), "vy": r2(tr.x[3]), "fwd": r2(fwd), "right": r2(right),
                 "speedMps": r2(speed), "headingDeg": None if head is None else round(head, 1),
                 "relHeadingDeg": None if rel_h is None else round(rel_h, 1), "sigmaM": r2(_eig_radius(tr.P[:2, :2])),
                 "cpaM": r2(cpa), "cpaS": r2(ts), "onCourse": bool(on), "ttcS": r2(ttc),
-                "innovM": r2(tr.innov), "age": r2(t - tr.t0), "unseenS": r2(0.0 if tr.seen_now else t - tr.last_seen)}
+                "innovM": r2(tr.innov), "trusted": trusted, "speedSigmaMps": r2(vsig), "seenS": r2(tr.seen_s), "promoted": bool(tr.promoted), "age": r2(t - tr.t0), "unseenS": r2(0.0 if tr.seen_now else t - tr.last_seen)}

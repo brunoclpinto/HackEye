@@ -138,6 +138,15 @@ export function wallEdgeSegments(grid, faceIds, surfIds, size = SIZE) {
   return segs;
 }
 
+/** v26.2.11 (note 4): the one table of plain emoji markers, keyed by the item / world-track class name (listed in CONTRACTS). Classes
+ *  not in it (pole, curb, crosswalk, obstacle, barrier, vegetation, building...) keep the dot / diamond marker. */
+export const EMOJI = {
+  person: "\u{1F6B6}", rider: "\u{1F6B4}", animal: "\u{1F415}", vehicle: "\u{1F697}", bus: "\u{1F68C}", truck: "\u{1F69A}",
+  "traffic-light": "\u{1F6A6}", "traffic-light pedestrians": "\u{1F6A6}", "traffic-sign": "\u{1FAA7}", sign: "\u{1FAA7}",
+};
+export const emojiFor = (name) => EMOJI[name] ?? null;
+const EMOJI_PX = 18;      // CSS px, whatever the zoom
+
 export class WorldMapPanel {
   /** `getStyle` = () => MaskStyle | null; `getFrames` = () => windowed hazards frames; `isPlaying` = () => bool. */
   constructor({ getStyle, getFrames, isPlaying, getLens }) {
@@ -588,6 +597,12 @@ export class WorldMapPanel {
     // v26.2.9: the world tracks (shadow mode), under the item markers: 1-sigma ring, 1 s velocity arrow (relative to the ground), closest-approach line
     const wts = frame?.worldTracks ?? [];
     this.canvas.dataset.worldTracks = String(wts.length);
+    let emojiN = 0;
+    const emojiPx = EMOJI_PX * (W / (this.canvas.getBoundingClientRect().width || W));       // fixed in screen px
+    const putEmoji = (em, x, y, alpha) => {        // plain emoji (system font), centred on the item
+      ctx.save(); ctx.globalAlpha = alpha; ctx.font = `${emojiPx}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "#ffffff"; ctx.fillText(em, x, y); ctx.restore(); emojiN++;
+    };
     if (wts.length) {
       const th = (frame.ego?.headingDeg ?? 0) * Math.PI / 180, egoV = frame.ego?.speedMps ?? 0, pxm = s / CELL_M;
       for (const w of wts) {
@@ -609,6 +624,8 @@ export class WorldMapPanel {
           ctx.setLineDash([2, 3]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx, cy); ctx.stroke();
         }
         ctx.setLineDash([]);
+        const wem = emojiFor(w.class);
+        if (wem) putEmoji(wem, x, y, w.state === "seen" ? 1 : 0.4);
       }
     }
     // hazards: ahead = distanceM, right = lateralM
@@ -626,10 +643,12 @@ export class WorldMapPanel {
           ctx.beginPath(); ctx.moveTo(fp.x1, fp.y1); ctx.lineTo(fp.x2, fp.y2); ctx.stroke(); ctx.restore();
         }
         const mover = h.group === "moving", r = Math.max(3, W / 70) * (mover ? 1.5 : 1);
+        const em = emojiFor(h.className);
         ctx.beginPath();
-        if (mover) { ctx.moveTo(x, y - r * 1.2); ctx.lineTo(x + r * 1.2, y); ctx.lineTo(x, y + r * 1.2); ctx.lineTo(x - r * 1.2, y); ctx.closePath(); }
+        if (em) putEmoji(em, x, y, h.coasting ? 0.5 : h.role === "none" ? 0.85 : 1);     // v26.2.11: a plain emoji instead of the dot
+        else if (mover) { ctx.moveTo(x, y - r * 1.2); ctx.lineTo(x + r * 1.2, y); ctx.lineTo(x, y + r * 1.2); ctx.lineTo(x - r * 1.2, y); ctx.closePath(); }
         else ctx.arc(x, y, r, 0, 2 * Math.PI);
-        if (h.coasting) {   // predicted position of a mover that left the image: hollow, dashed
+        if (em) { /* no dot */ } else if (h.coasting) {   // predicted position of a mover that left the image: hollow, dashed
           ctx.setLineDash([4, 3]); ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke(); ctx.setLineDash([]);
         } else {
           ctx.fillStyle = col; ctx.globalAlpha = h.role === "none" ? 0.6 : 1; ctx.fill(); ctx.globalAlpha = 1;
@@ -663,6 +682,7 @@ export class WorldMapPanel {
         ctx.restore();
       }
     } else this.canvas.dataset.selTrack = "";
+    this.canvas.dataset.emojis = String(emojiN);       // v26.2.11: how many emoji markers were drawn (items + world tracks)
     // v26.2.10: the selected region: its whole outline (every border between a region cell and a cell that is not)
     this.canvas.dataset.selRegion = this.region ? String(this.region.count) : "";
     if (this.region) {

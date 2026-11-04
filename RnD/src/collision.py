@@ -189,6 +189,7 @@ from common_paths import find_common_dir
 from geometry import Box, iou
 import faceedge
 import groundfuse
+import sensors as sensor_lib
 import worldtracks
 
 _4_CONNECTIVITY = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
@@ -918,6 +919,9 @@ class _Item:
     dist_source: str = ""                     # (v26.2.3, objectDistance != "depth") "depth" | "ground" | "fused": where distance_m came from
     raw_depth_m: float | None = None          # ... the scaled depth before the range correction
     ground_m: float | None = None             # ... its ground ray in depth metres (None: not in contact / outside the band)
+    srcsel: str = ""                          # (v26.2.11, source.mode "map") where its position came from: "map" | "track" | "image"; "" = image mode
+    track_motion: tuple | None = None         # (source "track") (own speed towards us along the line of sight, sideways velocity, velocity across the line of sight) m/s, from its world track
+    pred_v: tuple | None = None               # (v26.2.11, predictive speech) a trusted mover's world velocity in our frame (forward, right) m/s
 
     def __post_init__(self) -> None:
         if self.clock_q is None:
@@ -1948,17 +1952,22 @@ class _WorldMemory:
     def active(self) -> bool:
         return self.enabled and self.theta is not None
 
-    def advance(self, t: float, dt: float, speed: float | None, heading_deg: float | None) -> None:
+    def advance(self, t: float, dt: float, speed: float | None, heading_deg: float | None, pose: tuple | None = None) -> None:
+        """``pose`` (v26.2.11, "one pose"): the online map's corrected (x, y, heading) of this frame; it replaces the dead reckoning (the
+        map's own PoseTracker integrates exactly this, plus the alignment found against the map)."""
         if heading_deg is None:
             self.theta = None
             return
         if speed is not None:
             self.speed, self.speed_t = speed, t
-        v = self.speed if (self.speed is not None and t - self.speed_t <= self.hold_s + 1e-9) else 0.0
-        mid = heading_deg if self.theta is None else 0.5 * (self.theta + heading_deg)
-        self.x += v * dt * math.sin(math.radians(mid))
-        self.y += v * dt * math.cos(math.radians(mid))
-        self.theta = heading_deg
+        if pose is not None:
+            self.x, self.y, self.theta = float(pose[0]), float(pose[1]), float(pose[2])
+        else:
+            v = self.speed if (self.speed is not None and t - self.speed_t <= self.hold_s + 1e-9) else 0.0
+            mid = heading_deg if self.theta is None else 0.5 * (self.theta + heading_deg)
+            self.x += v * dt * math.sin(math.radians(mid))
+            self.y += v * dt * math.cos(math.radians(mid))
+            self.theta = heading_deg
         fx, fy = math.sin(math.radians(self.theta)), math.cos(math.radians(self.theta))
         for eid in list(self.entries):
             e = self.entries[eid]
@@ -2309,8 +2318,9 @@ class _Coast:
             ep["t1"], ep["end"] = round(t, 2), why
             self.episodes.append(ep)
 
-    def items(self, t: float, seen: dict[int, _Item], world: "_WorldMemory", tracks: dict, step_len: float, blocked=None) -> list[_Item]:
-        """The coasting items of this frame (``seen``: the real items by track id)."""
+    def items(self, t: float, seen: dict[int, _Item], world: "_WorldMemory", tracks: dict, step_len: float, blocked=None, ext=None) -> list[_Item]:
+        """The coasting items of this frame (``seen``: the real items by track id). ``ext`` (v26.2.11, source.mode "map"): image track id ->
+        its trusted world track {x, y, vx, vy} (predicted to ``t``) or None; a coasting mover follows that instead of its own line fit."""
         out: list[_Item] = []
         if not self.on or world.theta is None:
             return out
@@ -2325,15 +2335,19 @@ class _Coast:
                 self._end(tid, t, "lost")
                 self.last.pop(tid, None); self.hist.pop(tid, None)
                 continue
-            v = self._velocity(tid)
+            e = ext(tid) if ext is not None else None
+            v = (e["vx"], e["vy"]) if e is not None else self._velocity(tid)
             horizon_s = self.vehicle_seconds if it0.class_name == "vehicle" else self.seconds
             if v is None or t - t_last > horizon_s + 1e-9 or t - t_last <= 0:
                 if t - t_last > horizon_s + 1e-9:
                     self._end(tid, t, "expired")
                     self.last.pop(tid, None); self.hist.pop(tid, None)
                 continue
-            _, wx0, wy0 = self.hist[tid][-1]
-            wx, wy = wx0 + v[0] * (t - self.hist[tid][-1][0]), wy0 + v[1] * (t - self.hist[tid][-1][0])
+            if e is not None:
+                wx, wy = e["x"], e["y"]
+            else:
+                _, wx0, wy0 = self.hist[tid][-1]
+                wx, wy = wx0 + v[0] * (t - self.hist[tid][-1][0]), wy0 + v[1] * (t - self.hist[tid][-1][0])
             dx, dy = wx - world.x, wy - world.y
             fwd, right = dx * s_ + dy * c_, dx * c_ - dy * s_
             if fwd <= 0.0:
@@ -2357,7 +2371,8 @@ class _Coast:
             bearing = math.degrees(math.atan2(right, fwd))
             g = replace(it0, coasting=True, shape=None, clipped=True, speak=False, distance_m=fwd, lateral_m=right, bearing=bearing,
                         clock=clock_from_bearing(bearing), clock_q=clock_quarter(bearing), clock_text=clock_text(clock_quarter(bearing)),
-                        pan=_pan_from_bearing(bearing), closing=closing, closing_raw=closing, map_cells=0, map_world=None, image_dl=None)
+                        pan=_pan_from_bearing(bearing), closing=closing, closing_raw=closing, map_cells=0, map_world=None, image_dl=None,
+                        srcsel="track" if e is not None else it0.srcsel)
             if tid not in self.active:
                 self.active[tid] = {"track": tid, "class": it0.class_name, "t0": round(t, 2), "steps0": round(steps_to(fwd, step_len), 1),
                                     "speedMps": round(math.hypot(*v), 2), "moving": it0.moving}
@@ -2420,6 +2435,15 @@ class SpeechPolicy:
         self.summary_since: float | None = None
         self.world: _WorldMemory | None = None   # object permanence (v26.1.7); set by the driver, None = track/label rules
         self.stationary = False                  # the user stands still (v26.1.11); set by the driver each frame
+        pr = self.cfg.get("predictive") or {}      # v26.2.11: say the position the item has when the phrase ends
+        self.pred_on = bool(pr.get("enabled", False))
+        self.pred_latency = float(pr.get("startLatencyS", 0.2))
+        self.pred_wps = float(pr.get("wordsPerSecond", 2.8))
+        self.pred_min_steps = float(pr.get("minSteps", 1))
+        self.pred_passed = float(pr.get("passedM", 0.3))
+        self.speech_rate = 1.0                   # the sound profile's speechRate (set by the driver)
+        self.ego_u: float | None = None          # our ground speed (m/s), None = unknown (no prediction); set by the driver each frame
+        self.pred_stats = {"phrases": 0, "changed": 0, "dropped": 0}
 
     # -- memory ----------------------------------------------------------
     def clear_context(self, t: float | None = None) -> None:
@@ -2561,6 +2585,72 @@ class SpeechPolicy:
             return self._text(template, near)
         return self._fmt("multi", label=near.label, clocks=self._join_clocks(group), steps=steps)
 
+    # -- predictive speech (v26.2.11) --------------------------------------
+    @staticmethod
+    def _words(text: str) -> int:
+        return len(text.replace(",", " ").split())
+
+    def _view(self, it: _Item, dt: float) -> _Item | None:
+        """The item as it is ``dt`` seconds from now: we walk ``ego_u`` m/s straight ahead, a static-like item stays, a mover with a trusted
+        world track keeps its velocity (``pred_v``). None = passed (forward < ``passedM``)."""
+        u = self.ego_u or 0.0
+        vf, vr = it.pred_v if it.pred_v is not None else (0.0, 0.0)
+        f0 = it.distance_m
+        f, r = f0 + (vf - u) * dt, it.lateral_m + vr * dt
+        if f < self.pred_passed:
+            return None
+        bearing = math.degrees(math.atan2(r, f))
+        cq = clock_quarter(bearing)
+        steps = it.steps * f / f0 if f0 > 1e-6 else it.steps
+        return replace(it, distance_m=f, lateral_m=r, bearing=bearing, clock=clock_from_bearing(bearing), clock_q=cq, clock_text=clock_text(cq),
+                       steps=max(steps, self.pred_min_steps))
+
+    def _compose(self, build, lead: _Item | None, wrap=None):
+        """(text, predicted info) of a phrase. ``build(view)`` -> list of (items, text) segments, ``view(item)`` -> the item to say (None =
+        dropped from its segment). The phrase is built on today's positions; each item is timed to the END OF ITS OWN SEGMENT: ``dt_i`` =
+        ``startLatencyS`` + words up to and including that segment / (``wordsPerSecond`` x speech rate). It is built once more on every item's
+        position at ``t + dt_i`` (an item passed by then is dropped). ``wrap(text)`` adds the phrase template. Without prediction (off, our
+        speed unknown) the first text."""
+        wrap = wrap or (lambda t: t)
+        parts = build(lambda it: it)
+        text = wrap(", ".join(t for _, t in parts)) if parts else None
+        if not self.pred_on or self.ego_u is None or text is None:
+            return text, None
+        rate = max(self.pred_wps * self.speech_rate, 1e-6)
+        dts: dict[int, float] = {}
+        words = 0
+        order: list[int] = []
+        for grp, seg in parts:
+            words += self._words(seg)
+            for it in grp:
+                dts[id(it)] = self.pred_latency + words / rate
+                order.append(id(it))
+        phrase_s = self.pred_latency + words / rate
+        views = {}
+        by_id = {id(it): it for grp, _ in parts for it in grp}
+        for k, it in by_id.items():
+            views[k] = self._view(it, dts[k])
+        parts2 = build(lambda it: views.get(id(it), it))
+        text2 = wrap(", ".join(t for _, t in parts2)) if parts2 else None
+        self.pred_stats["phrases"] += 1
+        self.pred_stats["dropped"] += sum(1 for v in views.values() if v is None)
+        if text2 != text:
+            self.pred_stats["changed"] += 1
+        info = {"dt": round(dts.get(id(lead), phrase_s), 2), "phraseS": round(phrase_s, 2), "textNow": text}
+        if len(order) > 1:
+            info["dts"] = [round(dts[k], 2) for k in order]
+        v = views.get(id(lead)) if lead is not None else None
+        if v is not None:
+            info.update({"steps": self._n(v.steps), "clock": v.clock_text, "fwd": round(v.distance_m, 2), "right": round(v.lateral_m, 2)})
+        return text2, info
+
+    def _with_prediction(self, ev: dict, info: dict | None, lead: _Item | None) -> dict:
+        if info is not None:
+            if lead is not None:
+                info = {**info, "stepsNow": self._n(lead.steps)}
+            ev["predicted"] = {k: info[k] for k in ("dt", "phraseS", "dts", "steps", "clock", "fwd", "right", "stepsNow", "textNow") if k in info}
+        return ev
+
     def _feature_allowed(self, t: float, it: _Item) -> bool:
         """The same label is not repeated within featureLabelGapSeconds unless it is a different crossing: its
         position along our walk (calibrated steps ahead plus steps walked) differs by >= featureNewCrossingSteps.
@@ -2644,8 +2734,10 @@ class SpeechPolicy:
                 mute = mute or (it.group == "static" and not it.thin and tr.context_seen and not it.mem_named and self._danger_recent(t))
                 if not mute:
                     self._register(t, it, tracks, danger=True)
-                ev = self._event(t, "final", self._text(self._kind(it, "final"), it), it, "final")
-                return None if mute else ev
+                kind = self._kind(it, "final")
+                txt, info = self._compose(lambda v: [] if v(it) is None else [([it], self._text(kind, v(it)))], it)
+                ev = self._event(t, "final", txt or "", it, "final")
+                return None if (mute or txt is None) else self._with_prediction(ev, info, it)
         # 2./3. danger, features and the notice for thin objects, one phrase: danger leads, then features, then thin
         # v26.1.12 (review 5, 76.5 s): a mover announced before is announced again, once, when it turns to "approaching" on a
         # collision course ("moving away" at 63 s, then walking towards us); this is the only re-announcement
@@ -2719,10 +2811,21 @@ class SpeechPolicy:
                 self._event(t, "feature", "", None)
                 return None
             lead = next((grp[0] for kind, grp in voiced if kind != "thin"), voiced[0][1][0])
-            texts = [self._entry(kind, grp) for kind, grp in voiced]
+
+            def build(v, voiced=voiced):
+                parts = []
+                for kind, grp in voiced:
+                    alive = [(i, v(i)) for i in grp if v(i) is not None]
+                    if alive:
+                        parts.append(([i for i, _ in alive], self._entry(kind, [w for _, w in alive])))
+                return parts
+            text, info = self._compose(build, lead)
+            if text is None:                   # everything in it is passed by the end of the phrase: the beeps said it (slot consumed)
+                self._event(t, "feature", "", None)
+                return None
             if any(kind not in ("feature", "thin") for kind, _ in voiced):
-                return self._event(t, "danger", ", ".join(texts), lead, "danger")
-            return self._event(t, "feature", ", ".join(texts), lead)
+                return self._with_prediction(self._event(t, "danger", text, lead, "danger"), info, lead)
+            return self._with_prediction(self._event(t, "feature", text, lead), info, lead)
         if danger:                              # context and surface wait while a danger is active
             self.pending_since.clear()
             return None
@@ -2780,9 +2883,14 @@ class SpeechPolicy:
         for key in chosen:
             self._register(t, cands[key], tracks)
         first = cands[chosen[0]]
-        items_txt = ", ".join(self._text("context", cands[k]) for k in chosen)
-        text = self.cfg["templates"].get("contextGroup", "{items}").format(items=items_txt)
-        return self._event(t, "context", text, first)
+
+        def build_ctx(v):
+            return [([cands[k]], self._text("context", v(cands[k]))) for k in chosen if v(cands[k]) is not None]
+        text, info = self._compose(build_ctx, first, lambda items: self.cfg["templates"].get("contextGroup", "{items}").format(items=items))
+        if text is None:
+            self._event(t, "context", "", None)
+            return None
+        return self._with_prediction(self._event(t, "context", text, first), info, first)
 
     def memory_if_spoken(self, t: float, it: _Item) -> None:
         """A danger/final call that names a context label counts as having referenced it."""
@@ -3158,6 +3266,7 @@ def _hazard_dict(it: _Item) -> dict:
             **({"depthM": _r(it.depth_m, 2)} if it.depth_on else {}),
             **({"lanePart": True} if it.lane_part else {}),
             **({"source": it.map_source, "mapCells": it.map_cells} if it.group == "static" and it.map_source else {}),
+            **({"source": it.srcsel} if it.srcsel else {}),
             **({"imageDistanceM": round(it.image_dl[0], 2), "imageLateralM": round(it.image_dl[1], 2)} if it.image_dl else {}),
             **({"ghost": True} if it.ghost else {}),
             **({"coasting": True} if it.coasting else {}),
@@ -3174,6 +3283,18 @@ def _hazard_dict(it: _Item) -> dict:
 # --------------------------------------------------------------------------
 # Static items on the fused world map (v26.2.1)
 # --------------------------------------------------------------------------
+
+def _set_position(it: _Item, fwd: float, right: float) -> None:
+    """Move an item to (forward, right) metres: bearing, clock and pan follow; the image measurement is kept in ``image_dl`` (first call)."""
+    bearing = math.degrees(math.atan2(right, fwd))
+    if it.image_dl is None:
+        it.image_dl = (it.distance_m, it.lateral_m, it.bearing, it.clock, it.clock_q, it.clock_text, it.pan)
+    it.distance_m, it.lateral_m, it.bearing = fwd, right, bearing
+    it.clock = clock_from_bearing(bearing)
+    it.clock_q = clock_quarter(bearing)
+    it.clock_text = clock_text(it.clock_q)
+    it.pan = _pan_from_bearing(bearing)
+
 
 class _StaticMap:
     """The collision pass's online world map (``worldmap.WorldMap``, causal: this frame and the past) and what the static rules
@@ -3328,15 +3449,11 @@ class _StaticMap:
         return float(fwd[k]), float(right[k]), n, nf
 
     def _apply(self, it: _Item, fwd: float, right: float, n: int) -> None:
-        bearing = math.degrees(math.atan2(right, fwd))
-        if it.image_dl is None:
-            it.image_dl = (it.distance_m, it.lateral_m, it.bearing, it.clock, it.clock_q, it.clock_text, it.pan)
-        it.distance_m, it.lateral_m, it.bearing = fwd, right, bearing
-        it.clock = clock_from_bearing(bearing)
-        it.clock_q = clock_quarter(bearing)
-        it.clock_text = clock_text(it.clock_q)
-        it.pan = _pan_from_bearing(bearing)
+        _set_position(it, fwd, right)
         it.map_cells = n
+        x, y, th = self.pose
+        s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
+        it.map_world = (x + s_ * fwd + c_ * right, y + c_ * fwd - s_ * right)
         x, y, th = self.pose
         s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
         it.map_world = (x + s_ * fwd + c_ * right, y + c_ * fwd - s_ * right)
@@ -3423,6 +3540,42 @@ class _StaticMap:
             return
         self._apply(it, fe["nearestFaceM"], fe["nearestFaceRightM"], fe["face"])
 
+    def region(self, it: _Item, pad_m: float, min_cells: int):
+        """(v26.2.11, source.mode "map") The 8-connected region of fused object cells of the item's family (confidence >= ``mapMinConf``) that its
+        footprint touches, searched in a patch grown by ``pad_m``: (forward m, right m of its nearest cell, cells in the walking corridor, cells,
+        width across the line of sight m), or None (no footprint / fewer than ``min_cells`` cells: the image measurement stays)."""
+        lut = self._lut(it)
+        fpr = self._footprint(it, lut)
+        if fpr is None:
+            return None
+        fp, pr0, pc0 = fpr
+        size = self.ob.size
+        P = int(round(pad_m / self.cell))
+        r0, c0 = max(0, pr0 - P), max(0, pc0 - P)
+        r1, c1 = min(size, pr0 + fp.shape[0] + P), min(size, pc0 + fp.shape[1] + P)
+        sl = (slice(r0, r1), slice(c0, c1))
+        fam = self.solid[sl] & lut[self.classes[sl]]
+        if not fam.any():
+            return None
+        lab, _ = ndimage.label(fam, structure=np.ones((3, 3), dtype=bool))
+        hit = np.zeros(fam.shape, dtype=bool)
+        hit[pr0 - r0:pr0 - r0 + fp.shape[0], pc0 - c0:pc0 - c0 + fp.shape[1]] = fp
+        ids = np.unique(lab[hit & fam])
+        ids = ids[ids > 0]
+        if not ids.size:
+            return None
+        m = np.isin(lab, ids)
+        n = int(np.count_nonzero(m))
+        if n < min_cells:
+            return None
+        fwd, right = self.ob.fwd[sl][m], self.ob.right[sl][m]
+        k = int(np.argmin(fwd + 1e-3 * np.abs(right)))
+        b = math.atan2(right[k], fwd[k])
+        across = -math.sin(b) * fwd + math.cos(b) * right
+        width = float(across.max() - across.min()) + self.cell
+        n_corr = int(np.count_nonzero(m & self.corr_full[sl]))
+        return float(fwd[k]), float(right[k]), n_corr, n, width
+
     def locate(self, it: _Item) -> None:
         """World position of the item's image measurement (a ghost is followed from it when the map did not place it)."""
         x, y, th = self.pose
@@ -3498,9 +3651,214 @@ def _motion_series(motion: dict | None, hfov_deg: float, ego_cfg: dict):
     return mt, cad, np.cumsum(-dx * hfov_deg), stat
 
 
+IMU_STATIONARY_DEFAULT = {"medianSeconds": 0.3, "enterPx": 0.5, "leavePx": 0.8, "enterSeconds": 1.5, "leaveSeconds": 1.0}
+
+
+def _nearest(tu: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """Index in the sorted ``tu`` of the sample at or just before each ``t`` (clipped)."""
+    return np.clip(np.searchsorted(tu, t + 1e-9, side="right") - 1, 0, len(tu) - 1)
+
+
+def _sensor_series(sens: dict | None, mser, times, ego_cfg: dict, hfov_deg: float) -> dict | None:
+    """v26.2.11: everything the device sensors (GoPro GPMF, ``sensors.py``) give the pass, on the motion track's time base ``mt`` (the
+    motion track's own times; the analysed frame times when the run has none). None without usable sensors.
+
+    Keys: mt; cad (accelerometer step cadence, Hz or nan); stat_imu (accel + gyro quiet); heading_imu (gyro heading, deg, 0 at the start);
+    heading_gps (the same pulled toward the GPS course); info {biasDegPerS, biasSource, gps updates}.
+    ``stationary`` for the bias is the final stationary series (computed by the caller through ``select_stationary``)."""
+    if not sens or "gyro" not in sens or "accl" not in sens:
+        return None
+    mt = np.asarray(mser[0] if mser is not None else times, dtype=float)
+    if len(mt) < 2:
+        return None
+    s = sensor_lib.crop(sens, float(mt[0]) - 6.0, float(mt[-1]) + 6.0)
+    if len(s.get("gyro_t", ())) < 200 or len(s.get("accl_t", ())) < 100:
+        return None
+    icfg = ego_cfg.get("imu") or {}
+    out: dict = {"mt": mt, "s": s}
+    # stationary: accelerometer + gyro activity, on a 10 Hz grid
+    et, en = sensor_lib.motion_energy(s, float(icfg.get("activityWindowS", 1.0)))
+    tu = np.arange(mt[0], mt[-1] + 0.05, 0.1)
+    st_cfg = {**IMU_STATIONARY_DEFAULT, **(icfg.get("stationary") or {})}
+    out["stat_imu"] = estimate_stationary(tu, np.interp(tu, et, en), st_cfg)[_nearest(tu, mt)]
+    # cadence from the vertical acceleration (same estimator, band and window as the image cadence)
+    vt, vert, side = sensor_lib.vertical_signals(s, float(icfg.get("cadenceRateHz", 60.0)))
+    cad = estimate_cadence(vt, vert, ego_cfg["cadenceWindowSeconds"], ego_cfg["cadenceBandHz"], ego_cfg["cadenceMinPeakRatio"], dx=side,
+                           min_step_hz=ego_cfg.get("minStepHz", 1.4), harmonic_ratio=ego_cfg.get("harmonicMinRatio", 0.25))
+    out["cad"] = cad[_nearest(vt, mt)]
+    pt, pitch, roll = sensor_lib.gravity_angles(s, {**icfg, "gravityTauS": ego_cfg.get("gravityTauS", 0.5)})
+    out["pitch"], out["roll"] = pitch[_nearest(pt, mt)], roll[_nearest(pt, mt)]
+    return out
+
+
+class HorizonGravity:
+    """v26.2.11 (``horizon.source`` "gravity" | "fused"): the horizon row from the camera pitch of the gravity vector. The pitch changes
+    the horizon by ``f`` rows per radian (the lens's centre slope); the LEVEL (the mount angle) is the slow average of (image horizon - gravity
+    horizon), a running mean at the start, then a ``levelTauS`` average: gravity gives the fast part, the image the slow one.
+    "gravity" = that sum; "fused" = the image horizon pulled toward it by ``gravityWeight``."""
+
+    def __init__(self, cfg: dict, gh: int, gw: int, hfov_deg: float, projection: str):
+        geo = groundfuse.Geometry(gh, gw, hfov_deg, projection, 1.0)
+        self.rows_per_deg = (geo.f_eq if geo.fisheye else geo.f_pin) * math.pi / 180.0 / gh
+        self.tau = float(cfg.get("levelTauS", 30.0))
+        self.weight = float(cfg.get("gravityWeight", 0.5))
+        self.lo, self.hi = (float(v) for v in cfg.get("horizonValidRange", [0.25, 0.75]))
+        self.level: float | None = None
+        self.n = 0
+        self.prev_t: float | None = None
+
+    def update(self, t: float, pitch_deg: float, h_img: float, source: str) -> float:
+        raw = pitch_deg * self.rows_per_deg                     # pitch + = looking up: the horizon moves down
+        dt = 0.0 if self.prev_t is None else max(0.0, t - self.prev_t)
+        self.prev_t = t
+        d = h_img - raw
+        self.n += 1
+        if self.level is None:
+            self.level = d
+        else:
+            self.level += max(1.0 / self.n, min(1.0, dt / self.tau if self.tau > 0 else 1.0)) * (d - self.level)
+        hg = min(self.hi, max(self.lo, self.level + raw))
+        return hg if source == "gravity" else h_img + self.weight * (hg - h_img)
+
+
+class GpsSpeedScale:
+    """v26.2.11 (``ego.gps.speedScale``): the step length pulled toward what the GPS says. Samples (GPS 2D speed, cadence x prior step length) of
+    moving frames with a good fix; once they span >= ``speedMinS`` the ratio of their medians (over the last ``speedWindowS``) is the target
+    scale k, followed with the time constant ``speedTauS``. k stays 1 until then and is clipped to [``speedMinScale``, ``speedMaxScale``]."""
+
+    def __init__(self, cfg: dict):
+        self.min_s = float(cfg.get("speedMinS", 20.0))
+        self.win_s = float(cfg.get("speedWindowS", 60.0))
+        self.tau = float(cfg.get("speedTauS", 40.0))
+        self.lo, self.hi = float(cfg.get("speedMinScale", 0.5)), float(cfg.get("speedMaxScale", 1.6))
+        self.k = 1.0
+        self.samples: list[tuple[float, float, float]] = []
+        self.prev_t: float | None = None
+
+    def update(self, t: float, gps_speed: float | None, model_speed: float | None) -> float:
+        dt = 0.0 if self.prev_t is None else max(0.0, t - self.prev_t)
+        self.prev_t = t
+        if gps_speed is not None and model_speed is not None and gps_speed > 0.3 and model_speed > 0.3:
+            self.samples.append((t, gps_speed, model_speed))
+        while self.samples and t - self.samples[0][0] > self.win_s:
+            self.samples.pop(0)
+        if len(self.samples) >= 10 and self.samples[-1][0] - self.samples[0][0] >= self.min_s:
+            target = float(np.median([a for _, a, _ in self.samples]) / np.median([b for _, _, b in self.samples]))
+            target = min(self.hi, max(self.lo, target))
+            self.k += (1.0 - math.exp(-dt / self.tau)) * (target - self.k) if self.tau > 0 else target - self.k
+        return self.k
+
+
+def _gps_at(s: dict, t: float, cfg: dict) -> dict | None:
+    """The GPS state at time ``t`` for the ego block: {lat, lon, speedMps, dop, fix, good} (the sample at or just before ``t``) or None."""
+    if "gps_t" not in s or len(s["gps_t"]) == 0:
+        return None
+    k = int(np.clip(np.searchsorted(s["gps_t"], t + 1e-9, side="right") - 1, 0, len(s["gps_t"]) - 1))
+    if abs(s["gps_t"][k] - t) > 1.5:
+        return None
+    fix, dop = int(s["gps_fix"][k]), float(s["gps_dop"][k])
+    good = fix >= int(cfg.get("minFix", 3)) and dop <= float(cfg.get("maxDop", 2.5)) and bool(cfg.get("enabled", True))
+    has = fix >= 2
+    return {"lat": round(float(s["gps"][k, 0]), 7) if has else None, "lon": round(float(s["gps"][k, 1]), 7) if has else None, "speedMps": round(float(s["gps"][k, 3]), 2),
+            "dop": round(dop, 2), "fix": fix, "good": good}
+
+
+def _auto_stationary(flow_stat: np.ndarray, imu_stat: np.ndarray) -> tuple[np.ndarray, str]:
+    """``ego.stationarySource`` "auto": see the DECISIONS entry of v26.2.11 for the measurement behind the choice."""
+    return imu_stat, "imu"
+
+
+def _sensor_heading(sser: dict, stat: np.ndarray | None, ego_cfg: dict) -> None:
+    """Fill ``sser`` with the gyro heading (bias from the stationary spans of ``stat``) and its GPS-corrected twin."""
+    icfg = ego_cfg.get("imu") or {}
+    mt = sser["mt"]
+    h, info = sensor_lib.heading_series(sser["s"], mt, mt if stat is not None else None, stat, icfg)
+    sser["heading_imu"], sser["info"] = h, info
+    g = ego_cfg.get("gps") or {}
+    sser["heading_gps"] = h
+    if g.get("enabled", True) and "gps" in sser["s"]:
+        off, ginfo = sensor_lib.gps_course_offset(sser["s"], mt, h, g)
+        sser["heading_gps"] = h + off
+        info["gpsUpdates"] = ginfo["updates"]
+
+
+def _trusted_track(wtracks, tid: int, t: float) -> dict | None:
+    e = wtracks.lookup(tid, t)
+    return e if (e is not None and e["trusted"]) else None
+
+
+def _ego_frame(pose: tuple, x: float, y: float) -> tuple[float, float]:
+    """World (x, y) -> (forward, right) metres of the pose (x, y, heading deg)."""
+    th = math.radians(pose[2])
+    s_, c_ = math.sin(th), math.cos(th)
+    dx, dy = x - pose[0], y - pose[1]
+    return dx * s_ + dy * c_, dx * c_ - dy * s_
+
+
+def _map_source(items: list[_Item], tracks: dict, smap: "_StaticMap", wtracks, cfg: dict, t: float, step_len: float,
+                u: float | None, counts: dict) -> None:
+    """source.mode "map" (v26.2.11): where each real item's position comes from, ``item.srcsel``.
+
+    * a static item (not judged by the face / edge test, which already is the map's) -> its 8-connected region of fused map cells
+      (``_StaticMap.region``): the nearest cell is its distance / lateral / clock; ``map``;
+    * a mover with a TRUSTED world track -> the track's position at ``t`` and its velocity (``track``): the closing speed, the
+      sideways velocity and the own speed along the line of sight come from the track instead of the image's contact-row history;
+    * the image safety net (``imageNetSteps`` / ``imageNetFrames``): an item within 3 steps, a new track (< 2 frames) or a mover whose world
+      track is not trusted (or jumps from the image by more than ``maxTrackJumpM``) stays as the image measured it (``image``).
+    The image item stays the carrier of the identity, the overlay (bbox, outline), the confirmation and the speech bookkeeping."""
+    net_steps, net_frames = float(cfg.get("imageNetSteps", 3.0)), int(cfg.get("imageNetFrames", 2))
+    pad, min_cells = float(cfg.get("regionPadM", 2.0)), int(cfg.get("regionMinCells", 2))
+    jump_m, jump_frac = float(cfg.get("maxTrackJumpM", 3.0)), float(cfg.get("maxTrackJumpFrac", 0.35))
+    pose = smap.pose
+    for it in items:
+        if it.lane_part or it.ghost or it.coasting:
+            continue
+        tr = tracks[it.track_id]
+        it.srcsel = "image"
+        net = it.distance_m / step_len <= net_steps or tr.present_run < net_frames
+        if it.group == "static":
+            if it.map_judged or it.class_name in smap.judged:        # the face / edge test: already the map's
+                it.srcsel = "map" if it.image_dl is not None else "image"
+            elif not net:
+                reg = smap.region(it, pad, min_cells)
+                if reg is not None:
+                    smap._apply(it, reg[0], reg[1], reg[2])
+                    it.map_source, it.srcsel = "map", "map"
+        elif it.group == "moving" and not net and u is not None and wtracks.on:
+            e = _trusted_track(wtracks, it.track_id, t)
+            if e is not None:
+                fwd, right = _ego_frame(pose, e["x"], e["y"])
+                if fwd > 0.0 and math.hypot(fwd - it.distance_m, right - it.lateral_m) <= max(jump_m, jump_frac * it.distance_m):
+                    vf, vr = _ego_frame((0.0, 0.0, pose[2]), e["vx"], e["vy"])
+                    rng = max(math.hypot(fwd, right), 1e-6)
+                    uf, ur = fwd / rng, right / rng
+                    _set_position(it, fwd, right)
+                    it.pred_v = (vf, vr)
+                    it.closing = -(uf * (vf - u) + ur * vr)                    # the gap's shrink rate, our own speed included
+                    it.track_motion = (-(uf * vf + ur * vr), vr, -ur * vf + uf * vr)
+                    it.srcsel = "track"
+        counts[it.srcsel] += 1
+
+
+def _predict_velocities(items: list[_Item], wtracks, t: float, theta: float, pcfg: dict) -> None:
+    """Predictive speech: a mover with a trusted, moving world track carries its velocity in our frame (``pred_v``)."""
+    top = float(pcfg.get("maxMoverMps", 12.0))
+    for it in items:
+        if it.group != "moving" or it.lane_part or it.ghost:
+            continue
+        e = _trusted_track(wtracks, it.track_id, t)
+        if e is None or e["static"] or math.hypot(e["vx"], e["vy"]) > top:
+            continue
+        it.pred_v = _ego_frame((0.0, 0.0, math.degrees(theta)), e["vx"], e["vy"])
+
+
 def run_collision(grids, times, class_names, config, settings, motion=None, depth=None,
-                  window=None, sounds=None, worldmap_config=None, progress=None) -> tuple[dict, dict]:
+                  window=None, sounds=None, worldmap_config=None, progress=None, sensors=None) -> tuple[dict, dict]:
     """Per-frame hazards and the speech/tone event list. ``motion`` = {"t","dx","dy"} arrays or None.
+
+    ``sensors`` (v26.2.11): the recording's device telemetry (``sensors.extract``, on the recording's time line) or None; with it the heading
+    comes from the gyro (``ego.headingSource``), the cadence / stationary from the accelerometer, and the ego block gains the gravity pitch /
+    roll and the GPS fix. Without it the pass is exactly the v26.2.10 one.
 
     ``sounds`` (v26.1.16): the Lab's sound profile ({"kinds": {...}, "speechRate"}, see ``resolve_sounds``) or None = the defaults of
     ``collision.json`` ``tones``; it sets the pitch, duration and repeat interval of the tone events.
@@ -3531,6 +3889,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     # steps and the gait calibration use this step length: the per-recording value overrides the prior
     step_len = settings.step_length_m if settings.step_length_m is not None else float(
         ego_cfg.get("priorStepLengthM", default_step))
+    step_len0 = step_len
+    gps_cfg = ego_cfg.get("gps") or {}
+    gps_scale = GpsSpeedScale(gps_cfg) if (sensors is not None and ego_cfg.get("sensors", True) and gps_cfg.get("enabled", True)
+                                           and gps_cfg.get("speedScale", False)) else None
 
     dist_cfg = config.get("distance", {})
     # anchor horizon: "estimated" (the frame's smoothed horizon), "fixed" (the mount preset's), or a row fraction
@@ -3593,6 +3955,35 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     if window is not None:
         win_bounds = (window["c0"] / gw, (window["c0"] + window["cols"]) / gw)
     mser = _motion_series(motion, settings.hfov_deg, ego_cfg)
+    flow_hcum = None if mser is None else mser[2]
+    sser = _sensor_series(sensors, mser, times, ego_cfg, settings.hfov_deg) if (sensors is not None and ego_cfg.get("sensors", True)) else None
+    heading_source = "flow"
+    cadence_source = "image"
+    stationary_source = "image"
+    if sser is not None:
+        mt_s = sser["mt"]
+        c_src, st_src, h_src = (ego_cfg.get(k, "auto") for k in ("cadenceSource", "stationarySource", "headingSource"))
+        flow_stat = None if mser is None else mser[3]
+        cad_s = sser["cad"] if (c_src in ("auto", "imu") or mser is None) else mser[1]
+        cadence_source = "imu" if cad_s is sser["cad"] else "image"
+        if flow_stat is None or st_src == "imu":
+            stat_s, stationary_source = sser["stat_imu"], "imu"
+        elif st_src == "image":
+            stat_s = flow_stat
+        elif st_src == "both":
+            stat_s, stationary_source = flow_stat & sser["stat_imu"], "both"
+        elif st_src == "either":
+            stat_s, stationary_source = flow_stat | sser["stat_imu"], "either"
+        else:      # auto
+            stat_s, stationary_source = _auto_stationary(flow_stat, sser["stat_imu"])
+        _sensor_heading(sser, stat_s, ego_cfg)
+        if h_src in ("auto", "imu"):
+            use_gps = bool((ego_cfg.get("gps") or {}).get("course", True)) and bool((ego_cfg.get("gps") or {}).get("enabled", True))
+            hcum_s = sser["heading_gps"] if use_gps else sser["heading_imu"]
+            heading_source = "imu+gps" if use_gps and sser["info"].get("gpsUpdates") else "imu"
+        else:
+            hcum_s = flow_hcum if flow_hcum is not None else sser["heading_imu"]
+        mser = (mt_s, cad_s, hcum_s, stat_s)
     ego = _Ego()
     surface = _SurfaceTracker(config["surfaces"])
     crosswalk = _CrosswalkTracker(config["crosswalk"])
@@ -3605,11 +3996,17 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     policy.world = world
     coast = _Coast(config.get("coast", {}))
     wtracks = worldtracks.WorldTracks(config.get("worldTracks"), lane_half, settings.hfov_deg)     # v26.2.9: shadow mode, feeds no decision
+    _op = ego_cfg.get("onePose", "auto")        # v26.2.11: the world memory and the world tracks use the online map's corrected pose
+    one_pose = bool(sser is not None) if _op == "auto" else _op in ("on", True)
     smap = None                                # v26.2.1: the online world map the static rules read (roles.staticSource "map")
     if roles.get("staticSource", "image") == "map" and n:
         import worldmap
         smap = _StaticMap(worldmap, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode, wcfg=worldmap_config)
     map_ms: list[float] = []
+    src_cfg = config.get("source") or {}                   # v26.2.11: where the items' positions come from
+    map_mode = str(src_cfg.get("mode", "image")) == "map" and smap is not None
+    src_counts = {"map": 0, "track": 0, "image": 0}
+    policy.speech_rate = resolve_sounds(config["tones"], sounds)["speechRate"]
     under_rows = int(config["surfaces"].get("passUnderRows", 6))
     under_gone_s = float(config["surfaces"].get("passUnderGoneSeconds", 1.5))
     under_min_w = float(config["surfaces"].get("passUnderMinWidth", 0.15))
@@ -3619,6 +4016,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     prev_group: str | None = None
     prev_left = prev_right = None
     horizon = settings.horizon_default
+    h_state = horizon                         # the image horizon estimate's own state (the gravity horizon never feeds back into it)
+    hz_cfg = config.get("horizon") or {}
+    hz_source = str(hz_cfg.get("source", "image")) if sser is not None else "image"
+    hz_off = HorizonGravity({**hz_cfg, "horizonValidRange": geo_cfg["horizonValidRange"]}, gh, gw, settings.hfov_deg, projection) if hz_source != "image" else None
     raws: list[float] = []
     last_estimate_t = -math.inf
     first_t: float | None = None
@@ -3664,6 +4065,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         if raw is not None:
             raws.append(raw)
             last_estimate_t = t
+        horizon = h_state
         if not warm:
             horizon = float(np.mean(raws)) if raws else settings.horizon_default
         elif raw is None and t - last_estimate_t <= HORIZON_HOLD_S:
@@ -3672,18 +4074,39 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             target = settings.horizon_default if raw is None else raw
             step = geo_cfg["horizonEma"] * (target - horizon)
             horizon += max(-geo_cfg["horizonMaxStep"], min(geo_cfg["horizonMaxStep"], step))
+        h_state = horizon
 
-        cadence = heading = None
+        cadence = heading = flow_heading = None
         stationary = False
+        ego_sens: dict = {}
         if mser is not None:
             mt, cad, hcum, stat = mser
             j = int(np.clip(np.searchsorted(mt, t), 0, len(mt) - 1))
             if j > 0 and abs(mt[j - 1] - t) < abs(mt[j] - t):
                 j -= 1
             cadence = None if np.isnan(cad[j]) else float(cad[j])
-            heading = float(np.interp(t, mt, hcum))
+            heading = flow_heading = float(np.interp(t, mt, hcum))
+            if sser is not None and flow_hcum is not None:
+                flow_heading = float(np.interp(t, mt, flow_hcum))      # the image shift the track matching needs
             stationary = stat is not None and bool(stat[j])
+            if sser is not None:
+                pitch_now, roll_now = float(np.interp(t, mt, sser["pitch"])), float(np.interp(t, mt, sser["roll"]))
+                ego_sens = {"pitchDeg": _r(pitch_now, 2), "rollDeg": _r(roll_now, 2), "gps": _gps_at(sser["s"], t, ego_cfg.get("gps") or {})}
+                if ego_cfg.get("rollCorrect", False):
+                    ego_sens["rollCorrectDeg"] = _r(roll_now, 2)          # the roll the ground geometry undoes (items here, the map in worldmap.Observer)
+                if hz_off is not None:
+                    horizon = hz_off.update(t, pitch_now, h_state, hz_source)
+                    ego_sens["horizonImageY"] = round(h_state, 4)
         walk_cadence = None if stationary else cadence      # a standing user's bob is not a gait
+        if sser is not None and ego_cfg.get("rollCorrect", False):
+            _roll = math.radians(ego_sens.get("rollCorrectDeg") or 0.0)
+            for _g in (item_lens, gd_geo if gd_on else None):
+                if _g is not None:
+                    _g.roll = _roll
+        if gps_scale is not None and sser is not None:
+            g_now = ego_sens.get("gps")
+            step_len = step_len0 * gps_scale.update(t, g_now["speedMps"] if g_now and g_now["good"] else None,
+                                                    walk_cadence * step_len0 if walk_cadence else None)
         # v26.1.14: stepping onto / off a crosswalk (the crosswalk share under the feet)
         cw_change = crosswalk.update(t, _seed_fraction(grid, cw_class, config["surfaces"]["seedBox"]), stationary)
         if cw_change:
@@ -3716,9 +4139,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         # 4. tracking
         tracks = {k: v for k, v in tracks.items() if t - v.last_t <= trk["maxMissedSeconds"]}
         pan_shift = 0.0
-        if heading is not None and prev_heading is not None and settings.hfov_deg > 0:
-            pan_shift = max(-0.25, min(0.25, -(heading - prev_heading) / settings.hfov_deg))
-        prev_heading = heading
+        if flow_heading is not None and prev_heading is not None and settings.hfov_deg > 0:
+            pan_shift = max(-0.25, min(0.25, -(flow_heading - prev_heading) / settings.hfov_deg))
+        prev_heading = flow_heading
         if abs(pan_shift) >= trk.get("panMatchMinShift", math.inf):
             last_hard_pan_t = t
         matches = _match(tracks, items, t, trk, pan_shift, people_classes)
@@ -3881,11 +4304,13 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             # ``worldmap.build`` reproduces it; static items are then judged on it; a static danger that left the image is a ghost
             frame_in = {"horizon": round(horizon, 4), "scale": round(scale.value, 3), "depthScale": depth_scale_out, "dcorr": dc_rep,
                         "ego": {"speedMps": _r(ego_speed, 2), "headingDeg": _r(heading, 1), "stationary": stationary,
-                                "depthPitchDeg": _r(anchor.pitch_deg, 1) if plane else None}}
+                                "depthPitchDeg": _r(anchor.pitch_deg, 1) if plane else None, **ego_sens}}
             smap.update(i, frame_in, dmap, grid)
             map_ms.append(smap.ms)
             for it in items:
                 smap.measure(it)
+            if map_mode:
+                _map_source(items, tracks, smap, wtracks, src_cfg, t, step_len, ego_motion if ego_motion is not None else ego_speed, src_counts)
             seen_now = {it.track_id for it in items}
             for tid, tr in tracks.items():
                 if tid in seen_now or tr.ghost_src is None:
@@ -3903,7 +4328,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
 
         if coast.on:
             real = {it.track_id: it for it in items}
-            items.extend(coast.items(t, real, world, tracks, step_len, smap.point_in_solid if smap is not None and smap.solid_on else None))
+            items.extend(coast.items(t, real, world, tracks, step_len, smap.point_in_solid if smap is not None and smap.solid_on else None,
+                                     (lambda tid: _trusted_track(wtracks, tid, t)) if (map_mode and src_cfg.get("coastFromTracks", True) and wtracks.on) else None))
 
         # 6-8. steps, parked vs moving, roles
         span = None
@@ -3937,6 +4363,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 tr.lhist = [h for h in tr.lhist if h[0] >= t - trk["historySeconds"] - 1e-9]
             it.lat_vel = _lateral_velocity(tr.lhist, trk["motionMinSeconds"])
             it.cross_mps = _cross_velocity(tr.lhist, ego_motion, roles.get("crossWindowSeconds", 1.0))
+            if it.track_motion is not None:                  # (source "track") the world track's velocity instead of the image's
+                it.lat_vel, it.cross_mps = it.track_motion[1], it.track_motion[2]
             if it.group == "static" or it.group == "feature":
                 it.moving = False
             elif it.closing is not None and ego_motion is not None:
@@ -3951,7 +4379,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 # v26.1.11: a far person's depth closing swings 1.0 <-> 4.0 m/s from frame to frame (review 4, 87 s: a
                 # person walking towards us read "standing"); judged on a smoothed speed (motionSmoothSeconds)
                 tau = roles.get("motionSmoothSeconds", 0.0)
-                if tr.along_s is None or tau <= 0 or t - tr.along_t > trk["maxMissedSeconds"]:
+                if it.track_motion is not None:              # (source "track") the world track is a filtered velocity already
+                    along = tr.along_s = it.track_motion[0]
+                elif tr.along_s is None or tau <= 0 or t - tr.along_t > trk["maxMissedSeconds"]:
                     tr.along_s = along
                 else:
                     tr.along_s += (1.0 - math.exp(-(t - tr.along_t) / tau)) * (along - tr.along_s)
@@ -4037,18 +4467,23 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                     surface.note_evidence(t)
 
         # world memory: where are we, and which remembered (announced) object is each item?
-        world.advance(t, dt, 0.0 if stationary else (walk_cadence * step_len if walk_cadence else ego_speed), heading)
+        world.advance(t, dt, 0.0 if stationary else (walk_cadence * step_len if walk_cadence else ego_speed), heading,
+                      smap.pose if (one_pose and smap is not None) else None)
         world.link(items, tracks, t)
         wt_out = None
         if wtracks.on:
             _t_wt = time.perf_counter()
             wt_out = wtracks.step(t, (world.x, world.y, world.theta) if world.theta is not None else None,
                                   [{"tid": it.track_id, "cls": it.class_name, "family": it.family or it.label, "group": it.group,
-                                    "static": _is_static_like(it), "fwd": it.distance_m, "right": it.lateral_m, "depth": bool(it.from_depth)}
+                                    "static": _is_static_like(it),
+                                    "fwd": it.image_dl[0] if (map_mode and it.image_dl) else it.distance_m,       # map mode: the image measurement, not what the track itself placed
+                                    "right": it.image_dl[1] if (map_mode and it.image_dl) else it.lateral_m, "depth": bool(it.from_depth)}
                                    for it in items if not (it.lane_part or it.ghost or it.coasting)],
                                   _bottom_distance(smap.ob if smap is not None else None, horizon, settings.camera_height_m * k, gh, f),
                                   _hidden_fn(smap.ob if smap is not None else None))
             wtracks.ms.append((time.perf_counter() - _t_wt) * 1000.0)
+            if policy.pred_on and world.theta is not None:
+                _predict_velocities(items, wtracks, t, math.radians(world.theta), policy.cfg["predictive"])
 
         # 9. path change
         path_change = turned or (config["pathChange"]["onSurfaceChange"] and adopted is not None
@@ -4073,6 +4508,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         if ego_speed is not None:
             policy.travel_steps += ego_speed * dt / step_len
         policy.stationary = stationary
+        policy.ego_u = ego_speed
         speech = policy.step(t, items, tracks, surface_known)
         if speech:
             events.append(speech)
@@ -4099,6 +4535,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             "lane": _lane_polygon(geo, lane_half, roles["dangerSteps"] * step_len),
             "ego": {"speedMps": _r(ego_speed, 2), "cadenceHz": _r(cadence, 2), "stepLengthM": round(step_len, 2),
                     "headingDeg": _r(heading, 1), "stationary": stationary,
+                    **ego_sens,
                     "depthAnchor": _r(a_now, 4),
                     "depthAnchorMode": anchor_mode,
                     "depthPitchDeg": _r(anchor.pitch_deg, 1) if plane else None,
@@ -4130,12 +4567,24 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         "projection": projection, "distanceSource": source,
         "settings": {"mount": settings.mount, "hfovDeg": settings.hfov_deg,
                      "cameraHeightM": settings.camera_height_m, "stepLengthM": settings.step_length_m,
-                     "laneHalfWidthM": lane_half, "priorStepLengthM": step_len,
+                     "laneHalfWidthM": lane_half, "priorStepLengthM": step_len0,
                      "userHeightM": settings.user_height_m, "cameraLocation": settings.camera_location,
                      "cameraSide": settings.camera_side, "lateralOffsetM": lat_off,
                      "objectDistance": getattr(settings, "object_distance", "depth"), "useHorizon": bool(getattr(settings, "use_horizon", True))},
         "gridW": gw, "gridH": gh, "egoAvailable": mser is not None, "frames": frames_out,
     }
+    if one_pose and smap is not None:
+        hazards_doc["settings"]["onePose"] = True
+    if map_mode:
+        hazards_doc["settings"]["sourceMode"] = "map"
+        hazards_doc["settings"]["sourceCounts"] = dict(src_counts)
+    if policy.pred_on:
+        hazards_doc["settings"]["predictive"] = dict(policy.pred_stats)
+    if sser is not None:
+        hazards_doc["settings"].update({"headingSource": heading_source, "cadenceSource": cadence_source,
+                                        "stationarySource": stationary_source, "horizonSource": hz_source,
+                                        "gyroBiasDegPerS": sser["info"].get("biasDegPerS"), "gyroBiasSource": sser["info"].get("biasSource"),
+                                        "gpsUpdates": sser["info"].get("gpsUpdates", 0)})
     if coast.on:
         for tid in list(coast.active):
             coast._end(tid, float(times[-1]) if n else 0.0, "end")

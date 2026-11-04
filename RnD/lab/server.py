@@ -27,6 +27,7 @@ from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
+import groundfuse  # noqa: E402
 from lab import analysis, collisions, display, issues, notes, recordings, reviews, sounds, versioning  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -263,6 +264,7 @@ def _settings_response(rec_id: str) -> dict:
         "lateralOffsetM": rs.lateral_offset_m,
         "objectDistance": rs.object_distance,
         "useHorizon": rs.use_horizon,
+        "objectDistanceEffective": groundfuse.resolved_mode(rs.object_distance, rs.use_horizon),     # v26.2.11
     }
     return {**stored, "resolved": resolved}
 
@@ -569,6 +571,9 @@ def _hazards_doc(run_id: str, collision: str | None = None) -> dict:
         if ent is None or ent["sig"] != sig:
             doc = json.loads(path.read_text())
             frames = doc.pop("frames", [])
+            st = doc.get("settings")
+            if isinstance(st, dict) and st.get("objectDistance"):       # v26.2.11: what the run really used
+                st["objectDistanceEffective"] = groundfuse.resolved_mode(st["objectDistance"], st.get("useHorizon", True))
             ent = {"sig": sig, "head": doc, "frames": frames, "times": [f["t"] for f in frames]}
             _hz_cache[key] = ent
         _hz_cache.move_to_end(key)

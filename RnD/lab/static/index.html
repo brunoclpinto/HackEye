@@ -107,7 +107,22 @@
           <label>Horizon <select id="horizonSel" title="Off: no ground ray in any distance and the map is projected through the depth map">
             <option value="true">On</option><option value="false">Off</option></select></label>
         </div>
+        <p id="objDistHint" class="hint" hidden>needs Use horizon: falls back to depth</p>
         <p class="hint">Empty = preset / estimated from the footage.</p>
+        <div class="two">
+          <label>Collision source <select id="ovSource" data-key="source.mode" title="Where the items come from: the image (today) or the online world map (map statics, trusted world tracks, with the image safety net)">
+            <option value="">(config default)</option><option value="image">Image</option><option value="map">Map</option></select></label>
+          <label>Predictive speech <select id="ovPredictive" data-key="speech.predictive.enabled" title="Say each item at the place it will be when the phrase ends">
+            <option value="">(config default)</option><option value="on">On</option><option value="off">Off</option></select></label>
+        </div>
+        <div class="two">
+          <label>Heading <select id="ovHeading" data-key="ego.headingSource" title="Where the heading comes from: auto, the gyro (IMU) or the image flow">
+            <option value="">(config default)</option><option value="auto">Auto</option><option value="imu">IMU</option><option value="flow">Flow</option></select></label>
+          <label>Horizon <select id="ovHorizon" data-key="horizon.source" title="Where the horizon row comes from: the image, gravity (IMU) or both fused">
+            <option value="">(config default)</option><option value="image">Image</option><option value="gravity">Gravity</option><option value="fused">Fused</option></select></label>
+        </div>
+        <label>Cadence <select id="ovCadence" data-key="ego.cadenceSource" title="Where the step cadence comes from: auto, the IMU or the image">
+          <option value="">(config default)</option><option value="auto">Auto</option><option value="imu">IMU</option><option value="image">Image</option></select></label>
         <label>Config overrides (this re-run only)
           <input id="collOverrides" class="mono" spellcheck="false" autocomplete="off" placeholder='{"collision": {"distance.itemLens": "off"}}'
             title="Dotted keys of collision.json / worldmap.json, e.g. {&quot;collision&quot;: {&quot;distance.itemLens&quot;: &quot;off&quot;}, &quot;worldmap&quot;: {&quot;gapCloseM&quot;: 0}}. Empty = none."></label>

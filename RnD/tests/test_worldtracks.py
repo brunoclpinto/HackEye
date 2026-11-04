@@ -83,7 +83,7 @@ def test_hidden_person_is_reidentified_with_a_new_image_track():
 
 
 def test_detection_vanishing_in_plain_view_is_missing_then_dropped_after_three_frames():
-    wt = _wt()
+    wt = _wt(missDropS=0.0, reviveS=0.0)          # v26.2.10 drop rule (v26.2.11 default: three frames AND 1 s, then revivable)
 
     def items(t):
         return [(1, 1.0, 12.0, {"cls": "pole", "group": "static", "static": True})] if t < 1.0 else []

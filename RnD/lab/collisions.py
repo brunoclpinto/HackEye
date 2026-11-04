@@ -76,7 +76,20 @@ def read_doc(run_id: str, cid: str) -> dict | None:
             doc["progress"] = round(job.progress, 4)
         else:
             doc.update(status="error", error="interrupted")
+    _add_effective(doc)
     return doc
+
+
+def _add_effective(doc: dict) -> None:
+    """v26.2.11: `objectDistanceEffective` (what the run really used: no ground ray without the horizon) in the doc and its `resolved`."""
+    st = doc.get("settings") or {}
+    if not st.get("objectDistance"):
+        return
+    import groundfuse
+    eff = groundfuse.resolved_mode(st.get("objectDistance"), st.get("useHorizon", True))
+    doc["objectDistanceEffective"] = eff
+    if isinstance(doc.get("resolved"), dict):
+        doc["resolved"]["objectDistanceEffective"] = eff
 
 
 def list_docs(run_id: str) -> list[dict]:
@@ -246,6 +259,21 @@ def validate_overrides(overrides) -> dict:
     return out
 
 
+# v26.2.11: settings the Lab sends as overrides before (or while) the backend adds them to the config. A key missing from the config is
+# accepted when it is listed here with one of its allowed values (it is then created); once the config has it, the normal checks apply.
+PENDING_KEYS = {
+    "collision": {"source.mode": ("image", "map"), "speech.predictive.enabled": (True, False),
+                  "ego.headingSource": ("auto", "imu", "flow"), "horizon.source": ("image", "gravity", "fused"),
+                  "ego.cadenceSource": ("auto", "imu", "image")},
+    "worldmap": {},
+}
+
+
+def _pending(group: str, key: str, value) -> bool:
+    allowed = PENDING_KEYS.get(group, {}).get(key)
+    return allowed is not None and any(value == a and type(value) is type(a) for a in allowed)
+
+
 def apply_overrides(config: dict, overrides: dict, group: str) -> dict:
     """A deep copy of `config` with the `group` overrides applied (dotted keys). Each key must exist and keep its JSON type;
     else CollisionError 422 naming the key. The loaded config is never mutated."""
@@ -255,10 +283,16 @@ def apply_overrides(config: dict, overrides: dict, group: str) -> dict:
             raise CollisionError(422, f"overrides.{group}: bad key {key!r}")
         parts = key.split(".")
         node = out
+        pending = _pending(group, key, value)
         for p in parts[:-1]:
+            if isinstance(node, dict) and p not in node and pending:
+                node[p] = {}
             if not isinstance(node, dict) or p not in node:
                 raise CollisionError(422, f"overrides.{group}: unknown key {key!r}")
             node = node[p]
+        if isinstance(node, dict) and parts[-1] not in node and pending:
+            node[parts[-1]] = value
+            continue
         if not isinstance(node, dict) or parts[-1] not in node:
             raise CollisionError(422, f"overrides.{group}: unknown key {key!r}")
         old = node[parts[-1]]
@@ -266,6 +300,9 @@ def apply_overrides(config: dict, overrides: dict, group: str) -> dict:
             raise CollisionError(422, f"overrides.{group}: {key!r} is a section; name a value inside it")
         if old is not None and _kind(value) != _kind(old):
             raise CollisionError(422, f"overrides.{group}: {key!r} must be a {_kind(old)}, not a {_kind(value)}")
+        allowed = PENDING_KEYS.get(group, {}).get(key)
+        if allowed is not None and not _pending(group, key, value):          # v26.2.11: the keys of PENDING_KEYS keep their allowed values
+            raise CollisionError(422, f"overrides.{group}: {key!r} must be one of {list(allowed)}")
         node[parts[-1]] = value
     return out
 
