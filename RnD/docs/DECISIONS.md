@@ -1268,3 +1268,5 @@ The Chest-0004 run was wiped by the version bump before a collision re-run with 
 5. (O22) **Gravity horizon** is the default on sensor runs: speech differs from the image horizon (Chest-0004 98 vs 92 speech in W1's A/B); roll correction is off, its sign unverified.
 6. (O23) **Heading where nothing can check it:** Chest-0004 400-454 s, gyro -330 deg vs flow -175 deg with no usable GPS; one gyro-to-video offset (-0.10 s) for all clips.
 7. (O24) **Heading switch changed the speech:** Chest-0004 90 / 167 (flow) -> 94 / 217 (imu) speech / beeps, mostly ~30 more building beeps; unreviewed.
+
+**Follow-up (2026-11-04):** note 4 (emoji markers) reverted at the user's request (not working for them); the map draws the dot / diamond markers again.
