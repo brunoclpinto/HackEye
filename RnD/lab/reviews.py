@@ -34,7 +34,7 @@ MAX_NOTE = 2000
 MAX_TEXT = 300
 NEARBY_SECONDS = 3.0
 TYPES = ("speech", "beeps")
-_EVENT_KEYS = ("t", "text", "role", "trackId", "urgency", "clock", "type", "tEnd", "label", "minSteps")
+_EVENT_KEYS = ("t", "text", "role", "trackId", "urgency", "clock", "type", "tEnd", "label", "minSteps", "clockText", "predicted")
 
 _lock = threading.Lock()
 
@@ -189,6 +189,8 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
         ann["t"] = ev_t
         ann["event"] = {k: ev[k] for k in _EVENT_KEYS if k in ev}
         ann["event"]["t"] = ev_t
+        if "predicted" in ann["event"] and not isinstance(ann["event"]["predicted"], dict):
+            del ann["event"]["predicted"]                    # v26.2.12: only the predictive-speech block (a dict) is kept
         if "type" in ev:
             _check_type(ev["type"])
         if "tEnd" in ev:

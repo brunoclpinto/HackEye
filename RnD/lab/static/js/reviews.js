@@ -8,7 +8,7 @@
 // reverts the local change. Rows are patched in place; only run/filter/add/
 // delete/time changes re-render the whole list, so a focused note never loses
 // its caret.
-import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole } from "./util.js";
+import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole, beepRepeats } from "./util.js";
 import { api } from "./api.js";
 import { orderCandidates, fillFor } from "./autofill.js";
 
@@ -86,8 +86,8 @@ export class Reviews {
   }
 
   /** run: run.json (needs id, collisionVersion) or null; notes: its speech + beeps events sorted by t. */
-  setRun(run, notes) {
-    this.run = run; this.notes = notes ?? [];
+  setRun(run, notes, tones) {
+    this.run = run; this.notes = notes ?? []; this.tones = tones ?? [];
     this._reindex(); this.render();
   }
   setRoles(roles) { this.roles = roles; this.render(); }
@@ -221,9 +221,26 @@ export class Reviews {
       li.dataset.kind = ev.kind ?? "collision";
       top.append(tb, bell, badge);
       if (ev.tEnd > ev.t) top.append(el("span", "rv-dur mono", fmtDur(ev.tEnd - ev.t)));
+      // v26.2.12: the number of repeats (tones inside the episode) and their interval
+      const rep = beepRepeats(ev, this.tones);
+      if (rep.n) {
+        const r = el("span", "rv-rep mono", `× ${rep.n}`);
+        r.title = `${rep.n} tone${rep.n === 1 ? "" : "s"}` + (rep.intervalS ? `, every ${rep.intervalS.toFixed(2)} s` : "");
+        if (rep.intervalS) r.textContent += ` · ${rep.intervalS.toFixed(2)} s`;
+        top.append(r);
+      }
+    } else if (ev.predicted && ev.predicted.dt > 0) {
+      // v26.2.12: a predictive phrase: "said 23.51 · for 25.50" (the second time is the lead item's, t + dt); the first also seeks
+      li.dataset.predicted = "1";
+      const mk = el("span", "rv-pred", "\u23e9"); mk.title = `Predictive: said for where the item will be when the phrase ends (+${(+ev.predicted.dt).toFixed(2)} s)`;
+      const fb = el("button", "rv-time rv-for mono", `for ${fmtTime(ev.t + ev.predicted.dt, 1)}`); fb.type = "button";
+      fb.title = "Seek to the moment the phrase is about"; fb.addEventListener("click", () => this._seek(ev.t + ev.predicted.dt));
+      tb.textContent = `said ${fmtTime(ev.t, 1)}`; tb.title = "Seek to when it was said";
+      top.append(tb, mk, fb, badge);
     } else top.append(tb, badge);
     top.append(this._toggles(a, (v) => this.toggleVerdict(ev, v)));
     const text = el("div", "rv-text" + (a?.verdict === "remove" ? " struck" : ""), ev.text);
+    if (ev.predicted?.textNow) text.title = `Without prediction: ${ev.predicted.textNow}`;
     li.append(top, text);
     const showNote = a || this.expanded.has(rk);
     if (showNote) li.append(this._noteBox(rk, a, a ? a.note : this.drafts.get(rk) ?? "", !a));
@@ -390,7 +407,7 @@ export class Reviews {
       return;
     }
     const snapshot = {};
-    for (const k of ["t", "text", "role", "trackId", "urgency", "clock", "clockText", "type", "tEnd", "label", "minSteps"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
+    for (const k of ["t", "text", "role", "trackId", "urgency", "clock", "clockText", "type", "tEnd", "label", "minSteps", "clockText", "predicted"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
     const run = this.run, rec = this.rec;
     const draft = this.drafts.get(rk) ?? "";
     this.drafts.delete(rk);

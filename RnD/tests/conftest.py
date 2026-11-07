@@ -11,7 +11,7 @@ import pytest  # noqa: E402
 # the reviewed outputs of earlier versions run on the v26.2.9 map settings (``decay: time`` ... see ``worldtracks_fixtures.v2629_configs``);
 # the v26.2.10 behaviour has its own tests (test_worldmap_v26210, test_collision_v26210) and the golden of test_orientation.
 _V2629_MAP = {"decay": "time", "conflictFactor": 1.0, "voteCap": 0.0, "poseAlign": False, "gapCloseM": 0.5, "faceThicknessM": 0.3}
-_CURRENT = ("test_worldmap_v26210", "test_collision_v26210", "test_orientation")
+_CURRENT = ("test_worldmap_v26210", "test_collision_v26210", "test_orientation", "test_collision_v26212_fixture", "test_collision_v26212")
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -38,8 +38,28 @@ def _v2629_map_settings(request):
 # v26.2.11: ``speech.predictive.enabled`` is on by default (the phrase says where the item will be when it ends). Every test that pins the
 # phrases of an earlier version runs with it off: ``collision.load_config`` returns it off for any caller except the modules below (the
 # caller is looked at, because several test modules read the config at import time, before any fixture runs).
-_PREDICTIVE_OK = ("test_orientation", "test_collision_v26210", "test_collision_v26211", "test_worldtracks_v26211", "test_lab_v26211_ui",
-                  "test_sensors_v26211")
+_PREDICTIVE_OK = ("replay", "test_orientation", "test_collision_v26210", "test_collision_v26211", "test_worldtracks_v26211", "test_lab_v26211_ui",
+                  "test_sensors_v26211", "test_collision_v26212_fixture", "test_collision_v26212")
+
+
+# v26.2.12: c2 is the default (map source, IMU heading / cadence, fused horizon) and the new speech / beep rules are on. Every module that pins the
+# phrases of an earlier version runs with the v26.2.11 settings (``V26211_SETTINGS``, same dotted keys the Lab's overrides use) for the same
+# reason as above; the modules below test the v26.2.12 defaults.
+_V26212_OK = ("replay", "test_collision_v26212", "test_collision_v26212_fixture", "test_lab_reviews_v26212", "test_sensors_v26212")
+V26211_SETTINGS = {("source", "mode"): "image", ("ego", "headingSource"): "auto", ("ego", "cadenceSource"): "auto", ("horizon", "source"): "gravity",
+                   ("speech", "minVoiceSteps"): 0, ("speech", "thinStableS"): 0, ("speech", "colocatedM"): 0, ("speech", "zoneOnly", "enabled"): False,
+                   ("speech", "reannounce", "enabled"): False, ("speech", "predictive", "maxAdvanceM"): 0, ("speech", "predictive", "clockHoldQuarters"): 0,
+                   ("speech", "predictive", "measuredFloor"): 0, ("distance", "jump", "enabled"): False, ("tree", "enabled"): False,
+                   ("beeps", "follow", "enabled"): False, ("blocked", "enabled"): False, ("ego", "stepLength", "source"): "prior"}
+
+
+def legacy_settings(c: dict) -> dict:
+    for path, v in V26211_SETTINGS.items():
+        d = c
+        for k in path[:-1]:
+            d = d[k]
+        d[path[-1]] = v
+    return c
 
 
 def pytest_configure(config):
@@ -51,5 +71,7 @@ def pytest_configure(config):
         caller = sys._getframe(1).f_globals.get("__name__", "").rsplit(".", 1)[-1]
         if caller not in _PREDICTIVE_OK:
             c["speech"]["predictive"]["enabled"] = False
+        if caller not in _V26212_OK:
+            legacy_settings(c)
         return c
     collision.load_config = _cfg

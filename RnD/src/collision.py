@@ -160,6 +160,17 @@ v26.1.14 (CONTRACTS.md sections 14.1.9, 14.1.11, from the user's request "warn w
   ``exitSeconds`` = out. Tone kinds ``crosswalk-enter`` (one deep, long tone) and ``crosswalk-exit`` (two deep short tones),
   ``tones.crosswalk``; the speech phrases are unchanged.
 
+v26.2.12 (CONTRACTS.md section 7.11d, from the user's review 9 and notes 2026-11-07; every rule is behind a config key)
+------------------------------------------------------------------------------------------------------------------
+* **c2 is the default** (map source, IMU heading / cadence, fused horizon); **the step length comes from the GPS** when it has a good fix long
+  enough (``ego.stepLength``); **voice**: nothing spoken about a beeping item <= 2 steps away (``speech.minVoiceSteps``), thin statics only inside
+  the collision zone (``speech.zoneOnly``), a thin item whose distance jumps stays quiet (``thinStableS``), a static announced before is announced
+  again when its place changed a lot (``speech.reannounce``), co-located collision items are one phrase with the closest one's numbers
+  (``speech.colocatedM``); **predictive**: the advance is capped (``maxAdvanceM``) and the clock does not swing (``clockHoldQuarters``);
+  **distance jumps** cut a vehicle's motion history (``distance.jump``); a pole under a canopy is a **tree** (``tree``); a wall that is being
+  followed starts no new beep episode (``beeps.follow``); **"blocked ahead"** from the map (``blocked``); hazards carry ``bboxFull`` /
+  ``outlineFull`` (the whole component above the horizon too).
+
 Beyond the contract (small constants at the top / config): a track must live
 ``MIN_TRACK_AGE_S`` before it may speak or beep (v26.1.15: not during the first
 ``WARMUP_S`` of a run, where the 2-frame confirmation is the only gate); during that start the horizon
@@ -257,6 +268,7 @@ class CollisionSettings:
     lateral_offset_m: float = 0.0                  # camera centre relative to the body centre (+ = camera right of body)
     object_distance: str = "depth"                 # v26.2.3: "depth" | "ground-contact" | "ground+depth" (distance.objectDistance), see groundfuse
     use_horizon: bool = True                       # v26.2.3: False = no ground ray in any distance / map projection (distance.useHorizon)
+    step_length_user: bool = False                 # v26.2.12: the step length was typed by the user (it wins over the GPS step length)
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -342,7 +354,7 @@ def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | N
         projection=resolve_projection(projection, hfov), distance_source=distance_source,
         depth_level_prior=preset.get("depthLevelPrior"),
         user_height_m=body_h, camera_location=loc, camera_side=side, lateral_offset_m=lat_off,
-        object_distance=object_distance, use_horizon=use_h)
+        object_distance=object_distance, use_horizon=use_h, step_length_user=step_length_m is not None)
 
 
 # --------------------------------------------------------------------------
@@ -921,6 +933,10 @@ class _Item:
     ground_m: float | None = None             # ... its ground ray in depth metres (None: not in contact / outside the band)
     srcsel: str = ""                          # (v26.2.11, source.mode "map") where its position came from: "map" | "track" | "image"; "" = image mode
     track_motion: tuple | None = None         # (source "track") (own speed towards us along the line of sight, sideways velocity, velocity across the line of sight) m/s, from its world track
+    tree: bool = False                        # (v26.2.12) a "pole" whose top meets a vegetation canopy: a tree trunk (label "tree", family vegetation)
+    unstable: bool = False                    # (v26.2.12) its distance jumped within the last ``speech.thinStableS``: a thin item stays unspoken
+    jumped: bool = False                      # (v26.2.12) its distance jumped THIS frame (measurement glitch): no motion history, no coasting from it
+    full_ref: tuple | None = None             # (v26.2.12) (labelled full-class grid, the component's slices, its label): the whole component incl. rows above the horizon
     pred_v: tuple | None = None               # (v26.2.11, predictive speech) a trusted mover's world velocity in our frame (forward, right) m/s
 
     def __post_init__(self) -> None:
@@ -1064,6 +1080,11 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict, 
     split_on = bool(split_cfg.get("enabled", False))
     split_names = frozenset(split_cfg.get("classes", ("person", "rider")))
     full_cache: dict = {}
+    tree_cfg = config.get("tree") or {}
+    tree_pole = tree_cfg.get("poleClass", "pole")
+    veg_id = ids.names.index(tree_cfg.get("canopyClass", "nature vegetation")) if tree_cfg.get("canopyClass", "nature vegetation") in ids.names else None
+    if veg_id is None:
+        tree_cfg = {}
     for group in ITEM_GROUPS:
         for cid in ids.items[group]:
             if cid >= len(present) or present[cid] == 0:
@@ -1078,15 +1099,18 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict, 
                 if rr.size < min_pixels:
                     continue
                 pieces = [(rr + sl[0].start, cc + sl[1].start, comp, sl[1].start, sl[0].start)]
+                if cid not in full_cache:                                      # the same class without the horizon cut: heads above it
+                    fl, _ = ndimage.label(grid == cid, structure=_4_CONNECTIVITY)
+                    full_cache[cid] = (fl, ndimage.find_objects(fl))
+                fl, fobj = full_cache[cid]
+                fid = int(fl[rr[0] + sl[0].start, cc[0] + sl[1].start])
+                full_ref = (fl, fobj[fid - 1], fid)                            # v26.2.12: the whole component, rows above the horizon too
                 if split_on and ids.names[cid] in split_names:
-                    if cid not in full_cache:                                  # the same class without the horizon cut: heads above it
-                        fl, _ = ndimage.label(grid == cid, structure=_4_CONNECTIVITY)
-                        full_cache[cid] = (fl, ndimage.find_objects(fl))
-                    fl, fobj = full_cache[cid]
-                    fid = int(fl[rr[0] + sl[0].start, cc[0] + sl[1].start])
                     fsl = fobj[fid - 1]
                     full = (fl[fsl] == fid, fsl[1].start, fsl[0].start)
-                    pieces = _split_people(comp, sl[0].start, sl[1].start, geo, split_cfg, dmap, min_pixels, full) or pieces
+                    split = _split_people(comp, sl[0].start, sl[1].start, geo, split_cfg, dmap, min_pixels, full)
+                    if split:
+                        pieces, full_ref = split, None          # a piece of a group: its own shape (the whole group is not its outline)
                 for rr, cc, shape_mask, sc0, sr0 in pieces:
                     in_lane_region = geo.lane_region[rr, cc]
                     in_lane = geo.lane[rr, cc]
@@ -1128,6 +1152,8 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict, 
                         cover = float(np.count_nonzero((rr == row) & in_lane)) / float(lane_row.sum())
                     x = (col + 0.5) / gw
                     bearing = bearing_deg(x, geo.hfov_deg, geo.projection)
+                    is_tree = (tree_cfg.get("enabled", False) and group == "static" and ids.names[cid] == tree_pole and full_ref is not None
+                               and _tree_trunk(grid, veg_id, full_ref, tree_cfg))
                     main = _Item(
                         group=group, class_name=ids.names[cid],
                         bbox=[cc.min() / gw, rr.min() / gh, (cc.max() + 1) / gw, (rr.max() + 1) / gh],
@@ -1140,13 +1166,29 @@ def detect_items(grid: np.ndarray, ids: ClassIds, geo: _FrameGeo, config: dict, 
                         area_m2=rr.size * (dist / geo.f) ** 2,
                         people=ids.names[cid] in ids.people, fast=ids.names[cid] in ids.fast, thin=ids.names[cid] in ids.thin,
                         landmark=ids.names[cid] in ids.landmark, base_row=int(row), base_col=int(col),
-                        shape=(shape_mask, sc0, sr0))
+                        shape=(shape_mask, sc0, sr0), full_ref=full_ref, tree=bool(is_tree))
+                    if is_tree:
+                        main.thin = False
                     items.append(main)
                     if group == "static" and ids.names[cid] in lane_base_classes and (not lane_hit or along):
                         part = _lane_part_item(main, rr, cc, geo, config)
                         if part is not None:
                             items.append(part)
     return items
+
+
+def _tree_trunk(grid: np.ndarray, veg_id: int, full_ref: tuple, cfg: dict) -> bool:
+    """v26.2.12 (review 9, 18.34 s: a tree trunk at the curb was called a pole): a ``pole`` component whose TOP meets a vegetation canopy: in the
+    ``gapRows`` rows above its top row (and the top row itself) at least ``minOverlap`` of the pole's columns have a vegetation pixel."""
+    fl, fsl, fid = full_ref
+    mask = fl[fsl] == fid
+    cols = np.flatnonzero(mask.any(axis=0)) + fsl[1].start
+    if not cols.size:
+        return False
+    top = fsl[0].start
+    lo = max(0, top - int(cfg.get("gapRows", 2)) - 1)
+    band = grid[lo:top + 1, cols] == veg_id
+    return float(band.any(axis=0).mean()) >= float(cfg.get("minOverlap", 0.5))
 
 
 def _lane_part_item(main: _Item, rr: np.ndarray, cc: np.ndarray, geo: _FrameGeo,
@@ -1234,6 +1276,12 @@ class _Track:
     ghost_src: "_Item | None" = None          # a static danger that may be followed on in the map once the image loses it (v26.2.1)
     ghost_t0: float | None = None             # since when it has been a ghost
     still_t0: float | None = None             # since when |own along speed| < standingMps without a break (v26.1.12)
+    d_prev: float | None = None               # (v26.2.12) the previous frame's measured distance and when: a jump in it is a measurement glitch
+    d_prev_t: float = -math.inf
+    df_prev: float | None = None              # ... the same for the final distance (after the map / solid snap)
+    df_prev_t: float = -math.inf
+    jump_t: float = -math.inf                 # ... the last frame whose distance jumped (the motion history is cut, a thin item stays quiet)
+    said: tuple | None = None                 # (v26.2.12) (distance m, clock quarter, steps, t) of the last danger phrase for this track (re-announcement)
 
 
 def _closing_mps(history: list[tuple[float, float]], horizon: float, camera_height_m: float, gh: int, f: float,
@@ -2369,7 +2417,7 @@ class _Coast:
             vrel = (v[0] - ev * s_, v[1] - ev * c_)               # relative to us, world axes
             closing = -((dx * vrel[0] + dy * vrel[1]) / max(rng, 1e-6))
             bearing = math.degrees(math.atan2(right, fwd))
-            g = replace(it0, coasting=True, shape=None, clipped=True, speak=False, distance_m=fwd, lateral_m=right, bearing=bearing,
+            g = replace(it0, coasting=True, shape=None, full_ref=None, clipped=True, speak=False, distance_m=fwd, lateral_m=right, bearing=bearing,
                         clock=clock_from_bearing(bearing), clock_q=clock_quarter(bearing), clock_text=clock_text(clock_quarter(bearing)),
                         pan=_pan_from_bearing(bearing), closing=closing, closing_raw=closing, map_cells=0, map_world=None, image_dl=None,
                         srcsel="track" if e is not None else it0.srcsel)
@@ -2441,6 +2489,22 @@ class SpeechPolicy:
         self.pred_wps = float(pr.get("wordsPerSecond", 2.8))
         self.pred_min_steps = float(pr.get("minSteps", 1))
         self.pred_passed = float(pr.get("passedM", 0.3))
+        self.pred_max_adv = float(pr.get("maxAdvanceM", 0.0))          # v26.2.12: the most a phrase may advance an item (0 = no cap)
+        self.pred_clock_hold = int(pr.get("clockHoldQuarters", 0))     # ... the spoken clock stays the current one when the predicted differs by more (0 = off)
+        self.pred_meas_floor = float(pr.get("measuredFloor", 0.0))      # ... the advance speed = the measured ego speed, at least this share of the cadence speed (0 = cadence only)
+        self.ego_meas: float | None = None       # measured ego speed (m/s) from the static witnesses' closing speed, set by the driver
+        self.lane_half = float(config["geometry"]["laneHalfWidthM"])
+        self.min_voice = float(self.cfg.get("minVoiceSteps", 0))         # v26.2.12: a beeping item this close to us is not spoken (the beeps say it)
+        zo = self.cfg.get("zoneOnly") or {}                              # v26.2.12: thin statics are spoken only inside the collision zone
+        self.zone_on = bool(zo.get("enabled", False))
+        self.zone_classes = frozenset(zo.get("classes", ()))
+        self.zone_half = float(zo.get("halfWidthM", 0.0))                # (0 = only a collision item counts as inside; else also |lateral| <= this)
+        ra = self.cfg.get("reannounce") or {}                            # v26.2.12: a static announced before whose place changed a lot
+        self.reann_on = bool(ra.get("enabled", False))
+        self.reann_quarters = int(ra.get("clockQuarters", 4))
+        self.reann_steps = float(ra.get("growSteps", 3.0))
+        self.reann_gap_s = float(ra.get("minGapS", 1.0))
+        self.coloc_m = float(self.cfg.get("colocatedM", 0.0))            # v26.2.12: co-located collision items are said once, the closest one's numbers
         self.speech_rate = 1.0                   # the sound profile's speechRate (set by the driver)
         self.ego_u: float | None = None          # our ground speed (m/s), None = unknown (no prediction); set by the driver each frame
         self.pred_stats = {"phrases": 0, "changed": 0, "dropped": 0}
@@ -2594,16 +2658,50 @@ class SpeechPolicy:
         """The item as it is ``dt`` seconds from now: we walk ``ego_u`` m/s straight ahead, a static-like item stays, a mover with a trusted
         world track keeps its velocity (``pred_v``). None = passed (forward < ``passedM``)."""
         u = self.ego_u or 0.0
+        if self.pred_meas_floor > 0 and self.ego_meas is not None:      # v26.2.12 (review 9, 23.51 s): the speed the items really close at
+            u = min(u, max(self.ego_meas, self.pred_meas_floor * u))
         vf, vr = it.pred_v if it.pred_v is not None else (0.0, 0.0)
         f0 = it.distance_m
         f, r = f0 + (vf - u) * dt, it.lateral_m + vr * dt
         if f < self.pred_passed:
-            return None
+            return None                                  # passed by the end of the phrase (judged on the uncapped advance)
+        if self.pred_max_adv > 0 and f0 - f > self.pred_max_adv:
+            f = f0 - self.pred_max_adv                  # (the cap moves the item along its line of approach only)
         bearing = math.degrees(math.atan2(r, f))
         cq = clock_quarter(bearing)
+        if self.pred_clock_hold > 0 and abs(cq - it.clock_q) > self.pred_clock_hold:
+            cq = it.clock_q                              # no swing across the dial: "pole at 1:15" for a pole that is dead ahead
+            bearing = it.bearing
         steps = it.steps * f / f0 if f0 > 1e-6 else it.steps
         return replace(it, distance_m=f, lateral_m=r, bearing=bearing, clock=clock_from_bearing(bearing), clock_q=cq, clock_text=clock_text(cq),
                        steps=max(steps, self.pred_min_steps))
+
+    def _voice(self, it: _Item | None) -> _Item | None:
+        """v26.2.12 (``speech.minVoiceSteps``, review 9, 0.17 s: "too close for voice notice, beeps will handle this one"): an item that is beeping
+        (a collision danger / final) and whose spoken steps (the predicted ones when the phrase is predicted) are at most ``minVoiceSteps`` is left out
+        of the phrase; the beeps stay. None = dropped."""
+        if it is None or self.min_voice <= 0:
+            return it
+        if it.collision and it.role in ("danger", "final") and self._n(it.steps) <= self.min_voice + 1e-9:
+            return None
+        return it
+
+    def _reannounce(self, t: float, it: _Item, tr: "_Track") -> bool:
+        """v26.2.12 (``speech.reannounce``, review 9, 13.0 s): a static collision item announced before is announced again when its spoken place
+        changed a lot: its clock moved >= ``clockQuarters`` (4 = two half-hours) while it is a collision now, or its distance grew by >= ``growSteps``
+        steps (it now means another part of the wall: "building at 12:45 in 2" -> "building at 12 in 9")."""
+        if not self.reann_on or it.group != "static" or not it.speak or not it.collision or not tr.danger_done or tr.said is None:
+            return False
+        d0, q0, s0, t0 = tr.said
+        if t - t0 < self.reann_gap_s - 1e-9:
+            return False
+        return abs(it.clock_q - q0) >= self.reann_quarters or it.steps - s0 >= self.reann_steps
+
+    def _zone_ok(self, it: _Item) -> bool:
+        """v26.2.12 (``speech.zoneOnly``, review 9, 1.17 / 23.51 s: "not within the collision zone"): a thin static (pole, sign, light, obstacle,
+        manhole cover) is spoken only when it is a collision item NOW (inside the lane as the role rules judge it: the current position, not the
+        predicted one)."""
+        return not self.zone_on or it.class_name not in self.zone_classes or it.collision or abs(it.lateral_m) <= self.zone_half
 
     def _compose(self, build, lead: _Item | None, wrap=None):
         """(text, predicted info) of a phrase. ``build(view)`` -> list of (items, text) segments, ``view(item)`` -> the item to say (None =
@@ -2612,7 +2710,7 @@ class SpeechPolicy:
         position at ``t + dt_i`` (an item passed by then is dropped). ``wrap(text)`` adds the phrase template. Without prediction (off, our
         speed unknown) the first text."""
         wrap = wrap or (lambda t: t)
-        parts = build(lambda it: it)
+        parts = build(lambda it: self._voice(it))
         text = wrap(", ".join(t for _, t in parts)) if parts else None
         if not self.pred_on or self.ego_u is None or text is None:
             return text, None
@@ -2630,7 +2728,7 @@ class SpeechPolicy:
         by_id = {id(it): it for grp, _ in parts for it in grp}
         for k, it in by_id.items():
             views[k] = self._view(it, dts[k])
-        parts2 = build(lambda it: views.get(id(it), it))
+        parts2 = build(lambda it: self._voice(views.get(id(it), it)))
         text2 = wrap(", ".join(t for _, t in parts2)) if parts2 else None
         self.pred_stats["phrases"] += 1
         self.pred_stats["dropped"] += sum(1 for v in views.values() if v is None)
@@ -2721,8 +2819,9 @@ class SpeechPolicy:
         # 1. final: once per track, ignores the global gap
         for it in danger:
             tr = tracks[it.track_id]
-            if it.urgency == "final" and not tr.final_done and it.speak:
+            if it.urgency == "final" and not tr.final_done and it.speak and not it.unstable:
                 tr.final_done = tr.danger_done = True
+                tr.said = (it.distance_m, it.clock_q, it.steps, t)
                 tr.approach_done = tr.approach_done or self._kind(it, "final") == "approach"
                 tr.thin_done = tr.thin_done or it.thin
                 self.memory_if_spoken(t, it)
@@ -2741,17 +2840,41 @@ class SpeechPolicy:
         # 2./3. danger, features and the notice for thin objects, one phrase: danger leads, then features, then thin
         # v26.1.12 (review 5, 76.5 s): a mover announced before is announced again, once, when it turns to "approaching" on a
         # collision course ("moving away" at 63 s, then walking towards us); this is the only re-announcement
-        pend_d = [i for i in danger if i.speak and (not tracks[i.track_id].danger_done
-                                        or (not tracks[i.track_id].approach_done and self._kind(i, "danger") == "approach"))
-                  and t - self.danger_label_t.get(i.label, -math.inf) >= self.LABEL_COOLDOWN_S
+        reann = {i.track_id for i in danger if self._reannounce(t, i, tracks[i.track_id])}      # v26.2.12
+        pend_d = [i for i in danger if i.speak and not i.unstable and (not tracks[i.track_id].danger_done
+                                        or (not tracks[i.track_id].approach_done and self._kind(i, "danger") == "approach")
+                                        or i.track_id in reann)
+                  and (t - self.danger_label_t.get(i.label, -math.inf) >= self.LABEL_COOLDOWN_S or i.track_id in reann)
                   and not self._motion_pending(t, i, tracks)]
+        dropped_close: list[_Item] = []
+        if self.coloc_m > 0 and len(pend_d) > 1:      # v26.2.12 (review 9, 13.0 s: "2 markers within the collision zone, use the closest one"): said once
+            chosen: list[_Item] = []
+            for i in sorted(pend_d, key=lambda i: i.distance_m):
+                if i.group == "static" and i.collision and any(c.group == "static" and c.collision and
+                                                               math.hypot(i.distance_m - c.distance_m, i.lateral_m - c.lateral_m) <= self.coloc_m
+                                                               for c in chosen):
+                    dropped_close.append(i)
+                else:
+                    chosen.append(i)
+            if dropped_close:
+                gone = {id(i) for i in dropped_close}
+                pend_d = [i for i in pend_d if id(i) not in gone]
         pend_f = sorted((i for i in items if i.role == "feature" and ok(i) and not tracks[i.track_id].feature_done
                          and self._feature_allowed(t, i)),
                         key=lambda i: (i.class_name not in self.landmarks, i.steps))   # crosswalks before curbs
         pend_t = [i for i in items if i.thin and i.present_run >= self.confirm and not tracks[i.track_id].thin_done
-                  and i.steps <= self.thin_range[0] and abs(i.lateral_m) <= self.thin_range[1] and not self.stationary]
+                  and i.steps <= self.thin_range[0] and abs(i.lateral_m) <= self.thin_range[1] and not self.stationary
+                  and self._zone_ok(i) and not i.unstable]
         in_danger = {i.track_id for i in pend_d}
         note = [i for i in pend_t if i.track_id not in in_danger]
+        if self.coloc_m > 0 and note and pend_d:       # a thin notice co-located with a closer danger item in the phrase is the same marker
+            near = [i for i in note if i.collision and any(
+                c.group == "static" and c.collision and c.distance_m <= i.distance_m
+                and math.hypot(i.distance_m - c.distance_m, i.lateral_m - c.lateral_m) <= self.coloc_m for c in pend_d)]
+            if near:
+                dropped_close.extend(near)
+                gone = {id(i) for i in near}
+                note = [i for i in note if id(i) not in gone]
         if not self.thin_armed:
             for i in note:                      # covered by the earlier notice: not named, but not new either
                 self._register(t, i, tracks, named=False)
@@ -2759,6 +2882,11 @@ class SpeechPolicy:
         if pend_d or pend_f or note:
             if not self._gap_ok(t, priority=True, danger=bool(pend_d)):
                 return None
+            for i in dropped_close:                         # co-located with a closer item that is said: consumed with it
+                tracks[i.track_id].danger_done = True
+                tracks[i.track_id].thin_done = tracks[i.track_id].thin_done or i.thin
+                tracks[i.track_id].said = (i.distance_m, i.clock_q, i.steps, t)
+                self._register(t, i, tracks, danger=True)
             entries: list[tuple[str, list[_Item]]] = []      # (kind, same-label items)
             for kind, pool in (("danger", pend_d), ("feature", pend_f)):
                 by: dict[tuple, list[_Item]] = {}
@@ -2791,6 +2919,7 @@ class SpeechPolicy:
                         self.feature_label_t[i.label] = (t, self.travel_steps + i.steps)
                     else:
                         tr.danger_done = True
+                        tr.said = (i.distance_m, i.clock_q, i.steps, t)
                         tr.approach_done = tr.approach_done or kind == "approach"
                         tr.thin_done = tr.thin_done or i.thin
                         self.danger_label_t[i.label] = t
@@ -2800,7 +2929,7 @@ class SpeechPolicy:
             voiced: list[tuple[str, list[_Item]]] = []
             for kind, grp in entries:
                 is_danger = kind not in ("feature", "thin")
-                vg = [i for i in grp if not self._seen_before(i, named=(kind != "thin"), approach=(kind == "approach"), danger=is_danger)]
+                vg = [i for i in grp if i.track_id in reann or not self._seen_before(i, named=(kind != "thin"), approach=(kind == "approach"), danger=is_danger)]
                 if vg:
                     voiced.append((kind, vg))
                     for i in vg:
@@ -2852,7 +2981,7 @@ class SpeechPolicy:
         cands: dict[str, _Item] = {}                 # one per label, the nearest
         for it in pool:
             if (it.role == "context" or (self.summary and self.first_summary and it.summary_ok)) \
-                    and it.label in self.context_speak:
+                    and it.label in self.context_speak and self._zone_ok(it):
                 key = self._key(it)
                 if not self._known(key) and (key not in cands or it.distance_m < cands[key].distance_m):
                     cands[key] = it
@@ -3237,6 +3366,19 @@ def item_outline(it: _Item, gh: int, gw: int) -> list[list[float]] | None:
     return [[round(x / gw, 4), round(y / gh, 4)] for x, y in poly]
 
 
+def item_full(it: _Item, gh: int, gw: int) -> tuple[list[float], list[list[float]] | None] | None:
+    """v26.2.12: (bboxFull, outlineFull) of the item's whole connected component, the rows above the horizon included (the item itself is
+    judged below it); None without a shape (ghost / coasting items)."""
+    if it.full_ref is None:
+        return None
+    fl, fsl, fid = it.full_ref
+    mask = fl[fsl] == fid
+    r0, c0 = fsl[0].start, fsl[1].start
+    bbox = [round(c0 / gw, 4), round(r0 / gh, 4), round((c0 + mask.shape[1]) / gw, 4), round((r0 + mask.shape[0]) / gh, 4)]
+    poly = simplify_polygon([(x + c0, y + r0) for x, y in trace_outline(mask)])
+    return bbox, [[round(x / gw, 4), round(y / gh, 4)] for x, y in poly]
+
+
 def _mute_solid(it: _Item, smap: "_StaticMap | None") -> None:
     """``insideSolid.mode`` "suppress" (the v26.2.2 first design, kept for A/B): an item inside / behind a wall face gets no role, speech, beeps or
     proximity sound. The shipped mode "snap" corrects its position instead (``_StaticMap.snap_solid``)."""
@@ -3251,6 +3393,11 @@ def _hazard_json(it: _Item, gh: int = 0, gw: int = 0) -> dict:
         outline = item_outline(it, gh, gw)
         if outline:
             out["outline"] = outline
+        full = item_full(it, gh, gw)
+        if full is not None:
+            out["bboxFull"] = full[0]
+            if full[1]:
+                out["outlineFull"] = full[1]
     return out
 
 
@@ -3321,6 +3468,7 @@ class _StaticMap:
         self.cell = ob.cell
         self.step_len = step_len
         self.corr_full = (ob.fwd > 0.0) & (np.abs(ob.right) <= lane_half + float(roles.get("mapCorridorMarginM", 0.0)))   # the corridor the map judges
+        self.lane_half = lane_half
         self.min_conf = int(math.ceil(float(roles.get("mapMinConf", 0.7)) * 255.0 - 1e-9))
         self.ghost_conf = int(math.ceil(float(roles.get("mapGhostMinConf", 0.3)) * 255.0 - 1e-9))     # the image already confirmed the item
         self.rad = max(0, int(round(float(roles.get("mapFootprintRadiusM", 0.3)) / ob.cell)))
@@ -3608,7 +3756,7 @@ class _StaticMap:
         fwd, right, n, _ = self._corridor_cells(np.ones((pr1 - pr0, pc1 - pc0), dtype=bool), lut, pr0, pc0, full=True)
         if n < 1:
             return None
-        g = replace(src, ghost=True, shape=None, clipped=True, map_source="map")
+        g = replace(src, ghost=True, shape=None, full_ref=None, clipped=True, map_source="map")
         self._apply(g, fwd, right, n)
         return g
 
@@ -3627,6 +3775,72 @@ class _StaticMap:
         d = float(fwd[k])
         return {"nearestM": round(d, 2), "nearestSteps": round(d / self.step_len, 1),
                 "className": self.classes_name(int(self.classes[k]))}
+
+    def blocked_ahead(self, bcfg: dict) -> dict | None:
+        """v26.2.12 (``blocked``, review 9, 21.17 s: "inform of blocking area ahead and towards which direction the sidewalk continues"): the lane
+        ahead within ``aheadM`` is blocked when solid cells (``solidClasses``, confidence >= the map's min) cover >= ``widthFrac`` of its width (the
+        lane's lateral bins that hold a solid cell); the free direction is the ray within +-``angleDeg`` with the longest run (>= ``minClearM``) of
+        walkable cells (``walkableClasses``) not interrupted by solid cells. Returns {share, clearM, bearingDeg, clock, label, fwd, right} or None."""
+        if self.classes is None:
+            return None
+        ob = self.ob
+        if "_blk" not in self.__dict__:
+            names = self._names
+            self._blk = (np.array([n in set(bcfg.get("solidClasses", ())) for n in names] + [False] * (256 - len(names))),
+                         np.array([n in set(bcfg.get("walkableClasses", ())) for n in names] + [False] * (256 - len(names))))
+        solid_lut, walk_lut = self._blk
+        ahead_m = float(bcfg.get("aheadM", 3.0))
+        lane_half = self.lane_half
+        solid = solid_lut[self.classes] & (self.conf >= self.min_conf)
+        strip = (ob.fwd > float(bcfg.get("minAheadM", 0.4))) & (ob.fwd <= ahead_m) & (np.abs(ob.right) <= lane_half)
+        nb = max(2, int(round(2 * lane_half / 0.1)))
+        bins = np.clip(((ob.right[strip] + lane_half) / (2 * lane_half) * nb).astype(np.int64), 0, nb - 1)
+        hit = np.zeros(nb, dtype=bool)
+        hit[bins[solid[strip]]] = True
+        share = float(hit.mean())
+        if share < float(bcfg.get("widthFrac", 0.7)):
+            return None
+        walk = walk_lut[self.classes] & (self.conf >= int(float(bcfg.get("walkMinConf", 0.3)) * 255))
+        best = None
+        step = float(bcfg.get("angleStepDeg", 10.0))
+        max_ang = float(bcfg.get("angleDeg", 60.0))
+        for ang in np.arange(-max_ang, max_ang + 1e-6, step):
+            a = math.radians(ang)
+            k = np.arange(1, int(8.0 / ob.cell))
+            rr = np.rint(ob.orow - math.cos(a) * k).astype(np.int64)
+            cc = np.rint(ob.oc + math.sin(a) * k).astype(np.int64)
+            ok = (rr >= 0) & (rr < ob.size) & (cc >= 0) & (cc < ob.size)
+            if not ok.all():
+                k, rr, cc = k[ok], rr[ok], cc[ok]
+            blocked = solid[rr, cc]
+            first_block = int(np.argmax(blocked)) if blocked.any() else len(k)
+            wk = walk[rr, cc]
+            # the free run: from 0.5 m out, the walkable cells before the first solid cell (gaps of unknown cells up to 0.3 m allowed)
+            run = 0
+            gap = 0
+            for j in range(int(0.5 / ob.cell), first_block):
+                if wk[j]:
+                    run, gap = j + 1, 0
+                else:
+                    gap += 1
+                    if gap * ob.cell > 0.3:
+                        break
+            clear = run * ob.cell
+            if abs(ang) >= float(bcfg.get("minAngleDeg", 15.0)) and clear >= float(bcfg.get("minClearM", 2.0)) and (best is None or clear > best[0] + 1e-9
+                                                              or (abs(clear - best[0]) <= 1e-9 and abs(ang) < abs(best[1]))):
+                best = (clear, float(ang))
+        cf, cr = round(float(ob.fwd[strip & solid].mean()), 2), round(float(ob.right[strip & solid].mean()), 2)
+        if best is None:
+            return {"share": round(share, 2), "free": None, "cfwd": cf, "cright": cr}
+        clear, ang = best
+        a = math.radians(ang)
+        cq = clock_quarter(ang)
+        j_end = max(0, int(clear / ob.cell) - 1)
+        end_r, end_c = int(np.rint(ob.orow - math.cos(a) * (j_end + 1))), int(np.rint(ob.oc + math.sin(a) * (j_end + 1)))
+        end_name = self._names[int(self.classes[end_r, end_c])] if (0 <= end_r < ob.size and 0 <= end_c < ob.size and int(self.classes[end_r, end_c]) < len(self._names)) else None
+        return {"share": round(share, 2), "free": True, "endClass": end_name,
+                "cfwd": round(float(ob.fwd[strip & solid].mean()), 2), "cright": round(float(ob.right[strip & solid].mean()), 2), "clearM": round(clear, 1), "bearingDeg": ang, "clockQ": cq, "clock": clock_text(cq),
+                "fwd": round(math.cos(a) * clear, 2), "right": round(math.sin(a) * clear, 2)}
 
     def classes_name(self, cid: int) -> str:
         return self._names[cid] if cid < len(self._names) else str(cid)
@@ -3782,6 +3996,29 @@ def _sensor_heading(sser: dict, stat: np.ndarray | None, ego_cfg: dict) -> None:
         info["gpsUpdates"] = ginfo["updates"]
 
 
+def _followed_wall(it: _Item, t: float, state: dict, cfg: dict) -> bool:
+    """v26.2.12 (``beeps.follow``, review 9, 21.0 s: "previous beeps already identified the building, I use it as a guide with my cane"): True =
+    this beep driver is a wall the user is walking along, so it does not start a NEW beep episode. A building / wall / fence face on one side
+    (left: clock <= 11:30, right: >= 12:30) that had a beep episode within the last ``quietS`` seconds with the same family on the same side and a
+    lateral within ``lateralM`` of that episode's (matched by family + side + lateral, not by track id: the same wall under a new track) is
+    followed. A face at the centre (11:45-12:15) or within ``nearSteps`` of us still beeps; a beep running on (<= ``gapS`` since the last real beep
+    of that wall) is the same episode and goes on. The memory is the last real beep, so a wall followed for longer than ``followQuietS`` beeps again."""
+    if it.class_name not in cfg.get("classes", ()):
+        return False
+    side = "left" if it.clock_q <= -2 else "right" if it.clock_q >= 2 else None
+    if side is None or it.steps <= float(cfg.get("nearSteps", 1.0)):
+        return False
+    key = (it.family or it.label, side)
+    st = state.get(key)
+    if st is not None and t - st["t_real"] <= float(cfg.get("gapS", 1.5)):          # the episode is running: it goes on
+        st["t_real"] = st["t"] = t
+        return False
+    if st is not None and t - st["t"] <= float(cfg.get("followQuietS", 6.0)) and abs(it.lateral_m - st["lat"]) <= float(cfg.get("lateralM", 0.4)):
+        return True                                    # (not refreshed: the memory is the last REAL episode, so a wall hugged for long beeps again)
+    state[key] = {"t": t, "t_real": t, "lat": it.lateral_m}
+    return False
+
+
 def _trusted_track(wtracks, tid: int, t: float) -> dict | None:
     e = wtracks.lookup(tid, t)
     return e if (e is not None and e["trusted"]) else None
@@ -3890,6 +4127,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     step_len = settings.step_length_m if settings.step_length_m is not None else float(
         ego_cfg.get("priorStepLengthM", default_step))
     step_len0 = step_len
+    sl_cfg = ego_cfg.get("stepLength") or {}
+    step_source = "user" if getattr(settings, "step_length_user", False) else "prior"
+    step_windows_s = 0.0
+    step_info = None
     gps_cfg = ego_cfg.get("gps") or {}
     gps_scale = GpsSpeedScale(gps_cfg) if (sensors is not None and ego_cfg.get("sensors", True) and gps_cfg.get("enabled", True)
                                            and gps_cfg.get("speedScale", False)) else None
@@ -3977,13 +4218,24 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         else:      # auto
             stat_s, stationary_source = _auto_stationary(flow_stat, sser["stat_imu"])
         _sensor_heading(sser, stat_s, ego_cfg)
-        if h_src in ("auto", "imu"):
-            use_gps = bool((ego_cfg.get("gps") or {}).get("course", True)) and bool((ego_cfg.get("gps") or {}).get("enabled", True))
+        if h_src in ("auto", "imu", "gyro"):
+            # v26.2.12: "auto" and "imu" are the gyro heading WITH the slow GPS course correction (ego.gps.course) -- the resolved label says
+            # "imu+gps" when at least one GPS update was applied; "gyro" is the pure gyro heading (label "imu")
+            use_gps = (h_src != "gyro" and bool((ego_cfg.get("gps") or {}).get("course", True))
+                       and bool((ego_cfg.get("gps") or {}).get("enabled", True)))
             hcum_s = sser["heading_gps"] if use_gps else sser["heading_imu"]
             heading_source = "imu+gps" if use_gps and sser["info"].get("gpsUpdates") else "imu"
         else:
             hcum_s = flow_hcum if flow_hcum is not None else sser["heading_imu"]
         mser = (mt_s, cad_s, hcum_s, stat_s)
+        # v26.2.12 (O18): the step length from the GPS (median of GPS speed / step cadence over the moving, good-fix samples); a typed one wins
+        if sl_cfg.get("source", "auto") == "auto" and not getattr(settings, "step_length_user", False):
+            gst = sensor_lib.gps_step_length(sser["s"], mt_s, cad_s, stat_s, {**(ego_cfg.get("gps") or {}), **sl_cfg})
+            if gst is not None:
+                step_len = step_len0 = gst["stepM"]
+                gps_scale = None                       # the slow GPS speed scale would count the same correction twice
+                step_source, step_windows_s = "gps", round(gst["windowsS"], 1)
+                step_info = {k: round(v, 3) if isinstance(v, float) else v for k, v in gst.items()}
     ego = _Ego()
     surface = _SurfaceTracker(config["surfaces"])
     crosswalk = _CrosswalkTracker(config["crosswalk"])
@@ -4003,6 +4255,17 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         import worldmap
         smap = _StaticMap(worldmap, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode, wcfg=worldmap_config)
     map_ms: list[float] = []
+    jump_cfg = config.get("distance", {}).get("jump") or {}
+    stable_s = float(config["speech"].get("thinStableS", 0.0))
+    follow_cfg = config.get("beeps") or {}
+    follow: dict = {}                          # (family, side) -> {"t": last activity, "t_real": last real beep, "lat": the episode's lateral}
+    follow_cfg = {**follow_cfg, **(follow_cfg.get("follow") or {})}
+    blk_cfg = config.get("blocked") or {}
+    blk_run, blk_last_t, blk_pos = 0, -math.inf, None
+    meas_hist: list[tuple[float, float]] = []
+    meas_win = float((config["speech"].get("predictive") or {}).get("measuredWindowS", 1.5))
+    reset_classes = frozenset(jump_cfg.get("resetClasses", ("vehicle", "rider")))
+    tree_cfg_run = config.get("tree") or {}
     src_cfg = config.get("source") or {}                   # v26.2.11: where the items' positions come from
     map_mode = str(src_cfg.get("mode", "image")) == "map" and smap is not None
     src_counts = {"map": 0, "track": 0, "image": 0}
@@ -4249,6 +4512,25 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 tr.closing = None if raw_c is None else ds * raw_c
                 it.closing = tr.closing
 
+        # 4c. (v26.2.12) a distance that jumps between consecutive frames (review 9, 24.5 s: the top of a skip read 5.6 -> 2.65 -> 2.17 -> 0.96 m
+        # with a frozen box) is a measurement glitch: no closing speed from the history across it, no coasting from it, and a thin item stays
+        # unspoken for ``speech.thinStableS``
+        if jump_cfg.get("enabled", False):
+            for it in items:
+                tr = tracks[it.track_id]
+                d_before, d_before_t = tr.d_prev, tr.d_prev_t
+                tr.d_prev, tr.d_prev_t = it.distance_m, t
+                if (d_before is not None and not it.clipped and t - d_before_t <= jump_cfg.get("maxGapS", 0.4) + 1e-9
+                        and min(d_before, it.distance_m) <= float(jump_cfg.get("nearM", 1e9))
+                        and abs(it.distance_m - d_before) > max(float(jump_cfg.get("minM", 1.0)), float(jump_cfg.get("frac", 0.4)) * d_before)):
+                    tr.jump_t = t
+                    if it.class_name in reset_classes:           # a vehicle / rider: no speed from a history across the glitch
+                        it.jumped = True
+                        tr.history.clear(); tr.dhist.clear(); tr.lhist.clear()
+                        tr.along_s, tr.mstate, tr.still_t0 = None, None, None
+                        it.closing = it.closing_raw = None
+                        tr.closing = None
+
         # 5. ego
         ego.cadence = cadence
         ego.update_speed([it.closing_raw for it in items
@@ -4400,6 +4682,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             it.steps = steps_to(it.distance_m, step_len)
             base = labels.get(it.class_name, it.class_name.replace("-", " "))
             it.family = base
+            if it.tree:                                  # v26.2.12: a trunk in a tree pit: spoken "tree", the family of the vegetation
+                base = str(tree_cfg_run.get("label", "tree"))
+                it.family = labels.get(tree_cfg_run.get("canopyClass", "nature vegetation"), "vegetation")
             it.label = parked_labels.get(it.class_name, base) if (it.group == "moving" and it.moving is False) else base
             if _not_approaching(it, ego.speed) and it.group != "moving":
                 it.along_path = True
@@ -4434,6 +4719,20 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 # of ``_SurfaceTracker`` does the rest
                 tr.under_last = t                      # contact in the bottom rows inside the lane: under our feet
 
+        # (v26.2.12) the FINAL distance (after the map / solid snap) jumping is a glitch too: a thin item stays unspoken for ``thinStableS``
+        if jump_cfg.get("enabled", False):
+            for it in items:
+                if it.coasting or it.ghost:
+                    continue
+                tr = tracks[it.track_id]
+                df, df_t = tr.df_prev, tr.df_prev_t
+                tr.df_prev, tr.df_prev_t = it.distance_m, t
+                if (df is not None and not it.clipped and t - df_t <= jump_cfg.get("maxGapS", 0.4) + 1e-9
+                        and min(df, it.distance_m) <= float(jump_cfg.get("nearM", 1e9))
+                        and abs(it.distance_m - df) > max(float(jump_cfg.get("minM", 1.0)), float(jump_cfg.get("frac", 0.4)) * df)):
+                    tr.jump_t = t
+                it.unstable = (it.thin or it.tree) and t - tr.jump_t < stable_s - 1e-9
+
         # confirmation: how many consecutive analysed frames each track has held its role
         seen_tracks = set()
         for it in items:
@@ -4445,7 +4744,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             tr.prox_run = tr.prox_run + 1 if it.proximity else 0
             it.prox_run = tr.prox_run
             seen_tracks.add(it.track_id)
-            coast.observe(it, t, world)
+            if it.jumped:
+                coast.hist.pop(it.track_id, None)            # the glitch is not a position to extrapolate from
+            else:
+                coast.observe(it, t, world)
         if smap is not None:
             for it in items:
                 if it.group != "static":
@@ -4509,12 +4811,39 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             policy.travel_steps += ego_speed * dt / step_len
         policy.stationary = stationary
         policy.ego_u = ego_speed
+        if policy.pred_meas_floor > 0:           # v26.2.12: the speed the static witnesses really close at (over the last measuredWindowS)
+            w_now = [it.closing for it in items if _speed_witness(it) and it.closing is not None and 0.0 <= it.closing <= ego_cfg["speedMaxMps"]]
+            if w_now:
+                meas_hist.append((t, float(np.median(w_now))))
+            meas_hist[:] = [h for h in meas_hist if h[0] >= t - meas_win - 1e-9]
+            policy.ego_meas = float(np.median([h[1] for h in meas_hist])) if len(meas_hist) >= 3 else None
         speech = policy.step(t, items, tracks, surface_known)
+        if speech is None and blk_cfg.get("enabled", False) and smap is not None and not stationary and ego_speed and world.theta is not None:
+            blk = smap.blocked_ahead(blk_cfg)
+            blk_run = blk_run + 1 if blk is not None else 0
+            if blk is not None and blk_run >= int(blk_cfg.get("confirmFrames", 2)) and t - blk_last_t >= float(blk_cfg.get("cooldownS", 5.0)) \
+                    and policy._gap_ok(t, priority=True):
+                th_ = math.radians(world.theta)
+                bx = world.x + math.sin(th_) * blk["cfwd"] + math.cos(th_) * blk["cright"]
+                by = world.y + math.cos(th_) * blk["cfwd"] - math.sin(th_) * blk["cright"]
+                if blk_pos is None or math.hypot(bx - blk_pos[0], by - blk_pos[1]) > float(blk_cfg.get("sameSpotM", 3.0)):
+                    lab = (blk_cfg.get("walkableLabels") or {}).get(blk.get("endClass"), "sidewalk")
+                    txt = (blk_cfg["templates"]["free"].format(label=lab, clock=blk["clock"]) if blk.get("free")
+                           else blk_cfg["templates"]["none"])
+                    speech = policy._event(t, "feature", txt, None)
+                    speech["blocked"] = {k: blk[k] for k in ("share", "clearM", "bearingDeg", "clock", "endClass", "cfwd", "cright") if k in blk}
+                    blk_last_t, blk_pos = t, (bx, by)
+        elif speech is not None:
+            blk_run = 0
+        elif blk_cfg.get("enabled", False):
+            blk_run = 0
         if speech:
             events.append(speech)
 
         beeping = [it for it in items if it.role == "danger" and it.collision and it.settled
                    and it.role_run >= policy.confirm and it.steps <= config["tones"].get("maxSteps", roles["dangerSteps"])]
+        if follow_cfg.get("enabled", False) and beeping:
+            beeping = [it for it in beeping if not _followed_wall(it, t, follow, follow_cfg)]
         # a stream of beeps (>= 2 frames in a row) is danger activity; a single pass-by beep is not (review 8, 6.2 s: the building at 2
         # steps right after the first beep of a passing person was a wanted context phrase)
         beep_run = beep_run + 1 if beeping else 0
@@ -4566,8 +4895,10 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         "version": version,
         "projection": projection, "distanceSource": source,
         "settings": {"mount": settings.mount, "hfovDeg": settings.hfov_deg,
-                     "cameraHeightM": settings.camera_height_m, "stepLengthM": settings.step_length_m,
+                     "cameraHeightM": settings.camera_height_m,
                      "laneHalfWidthM": lane_half, "priorStepLengthM": step_len0,
+                     "stepLengthM": step_len0 if step_source == "gps" else settings.step_length_m, "stepLengthSource": step_source, "gpsStepWindowsS": step_windows_s,
+                     **({"gpsStep": step_info} if step_info else {}),
                      "userHeightM": settings.user_height_m, "cameraLocation": settings.camera_location,
                      "cameraSide": settings.camera_side, "lateralOffsetM": lat_off,
                      "objectDistance": getattr(settings, "object_distance", "depth"), "useHorizon": bool(getattr(settings, "use_horizon", True))},
@@ -4584,7 +4915,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         hazards_doc["settings"].update({"headingSource": heading_source, "cadenceSource": cadence_source,
                                         "stationarySource": stationary_source, "horizonSource": hz_source,
                                         "gyroBiasDegPerS": sser["info"].get("biasDegPerS"), "gyroBiasSource": sser["info"].get("biasSource"),
-                                        "gpsUpdates": sser["info"].get("gpsUpdates", 0)})
+                                        "gpsUpdates": sser["info"].get("gpsUpdates", 0) if heading_source == "imu+gps" else 0})
     if coast.on:
         for tid in list(coast.active):
             coast._end(tid, float(times[-1]) if n else 0.0, "end")

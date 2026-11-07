@@ -253,9 +253,9 @@ def _events_hash(**ov) -> str:
 # Goldens of the v26.2.11 defaults on chest0004_review7 (window 0, depth). Every older golden is pinned with predictive off (tests/conftest.py),
 # so none of them moved; these two pin the new behaviour.
 # image + predictive on (each item timed to the end of its own mention): the phrases carry the positions at the end of the phrase (+ the `predicted` block); see CONTRACTS 7.11c
-GOLDEN_IMAGE_PREDICTIVE = "6abedb3c721ec97f1e0956f2d39ce8a31971569c650e3a7c145a20f88dd2dfd0"
+GOLDEN_IMAGE_PREDICTIVE = "740080162bfc9f4f12b04d3a337f7c71ca0eec10dee3cd1056bf647345233810"   # v26.2.12 re-pin (was 6abedb3c...): the default speech rate is 1.25 (the phrase is shorter, so the predicted positions are nearer), nothing else; the v26.2.12 rules are off for this module (tests/conftest.py)
 # map source + predictive on: map statics / track movers; the beeps of poles and signs beside the path come from the map region's corridor cells
-GOLDEN_MAP_PREDICTIVE = "608ea76d4570ba232589b0e286acd1c9ae9180278079f26c3d2e0d2429356d19"
+GOLDEN_MAP_PREDICTIVE = "83a44100559be16006563302cb0d757e9f8e5122cb2f677255e46fcbb992def5"   # v26.2.12 re-pin (was 608ea76d...): speech rate 1.25 as above
 
 
 def test_goldens_of_the_new_defaults_v26211():

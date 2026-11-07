@@ -243,21 +243,25 @@ def test_rerun_form_overrides_are_sent_and_the_row_shows_tags_and_the_effective_
     try:
         open_lab(page, rq["recording"], t=5, run=_run())
         page.wait_for_selector(f"{GROUP}[data-run='{_run()}'] .coll-row")
-        page.select_option("#ovSource", "map")
-        page.select_option("#ovPredictive", "off")
-        page.select_option("#ovHeading", "imu")
-        page.select_option("#ovHorizon", "fused")
-        page.select_option("#ovCadence", "image")
-        cid = _rerun(page); made.append(cid)
-        got = next(c for c in api(f"/api/runs/{_run()}/collisions") if c["id"] == cid)
-        assert got["overrides"] == {"collision": {"source.mode": "map", "speech.predictive.enabled": False, "ego.headingSource": "imu",
-                                                  "horizon.source": "fused", "ego.cadenceSource": "image"}}
-        tags = page.locator(f"{_row(cid)} .coll-ovtag").all_inner_texts()
-        assert tags == ["source map", "predictive off", "heading imu", "horizon fused", "cadence image"], tags
-        # the default option is marked "(default)" (no separate "config default" entry); choosing it sends nothing
+        # v26.2.12: the defaults follow the config, so pick, per control, the first value that is NOT the default
         cfg = api("/api/config/collision")
         defaults = {"#ovSource": cfg["source"]["mode"], "#ovPredictive": "on" if cfg["speech"]["predictive"]["enabled"] else "off",
                     "#ovHeading": cfg["ego"]["headingSource"], "#ovHorizon": cfg["horizon"]["source"], "#ovCadence": cfg["ego"]["cadenceSource"]}
+        keys = {"#ovSource": ("source.mode", "source"), "#ovPredictive": ("speech.predictive.enabled", "predictive"),
+                "#ovHeading": ("ego.headingSource", "heading"), "#ovHorizon": ("horizon.source", "horizon"), "#ovCadence": ("ego.cadenceSource", "cadence")}
+        want, tags_want = {}, []
+        for sel, (key, short) in keys.items():
+            opts = page.eval_on_selector_all(f"{sel} option", "(os) => os.map((o) => o.value)")
+            v = next(o for o in opts if o != defaults[sel])
+            page.select_option(sel, v)
+            want[key] = {"on": True, "off": False}.get(v, v)
+            tags_want.append(f"{short} {v}")
+        cid = _rerun(page); made.append(cid)
+        got = next(c for c in api(f"/api/runs/{_run()}/collisions") if c["id"] == cid)
+        assert got["overrides"] == {"collision": want}
+        tags = page.locator(f"{_row(cid)} .coll-ovtag").all_inner_texts()
+        assert tags == tags_want, tags
+        # the default option is marked "(default)" (no separate "config default" entry); choosing it sends nothing
         for sel, dv in defaults.items():
             labels = page.locator(f"{sel} option").all_inner_texts()
             assert not any("config default" in t for t in labels), labels

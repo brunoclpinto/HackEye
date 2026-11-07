@@ -82,3 +82,11 @@ export function toast(msg, kind = "error", ms = 6000) {
   host.appendChild(el);
   setTimeout(() => el.remove(), ms);
 }
+
+/** v26.2.12: the repeats of a beeps episode: tones of its kind with t in [t, tEnd] -> {n, intervalS} (intervalS = median gap, null for < 2). */
+export function beepRepeats(ev, tones) {
+  const ts = (tones ?? []).filter((x) => x.kind === ev.kind && x.t >= ev.t - 1e-6 && x.t <= (ev.tEnd ?? ev.t) + 1e-6).map((x) => x.t).sort((a, b) => a - b);
+  if (ts.length < 2) return { n: ts.length, intervalS: null };
+  const gaps = ts.slice(1).map((t, i) => t - ts[i]).sort((a, b) => a - b);
+  return { n: ts.length, intervalS: gaps[Math.floor(gaps.length / 2)] };
+}

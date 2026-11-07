@@ -476,3 +476,36 @@ def gps_course_offset(s: dict, ht, heading, cfg: dict) -> tuple[np.ndarray, dict
     out = np.where(k >= 0, np.asarray(ev_v)[np.maximum(k, 0)], 0.0)
     info["meanOffsetDeg"] = round(float(np.mean(out)), 2)
     return out, info
+
+
+def gps_step_length(s: dict, mt, cadence, stationary, cfg: dict) -> dict | None:
+    """v26.2.12 (O18, ``ego.stepLength``): the user's step length from the GPS: the median of (GPS 2D speed / step cadence) over the samples with a
+    good fix (fix >= ``minFix``, DOP <= ``maxDop``), a known cadence >= ``minCadenceHz`` (``mt`` / ``cadence`` / ``stationary``: the pass's
+    time base, step cadence and stationary flags) and a speed >= ``minSpeedMps`` (a moving user), clamped to ``rangeM``. Needs ``minS`` seconds of
+    such samples (GPS sample time summed). Returns {"stepM", "windowsS", "samples", "p10", "p90", "raw"} or None (no GPS / not enough)."""
+    if not s or "gps" not in s or len(s.get("gps_t", ())) < 10:
+        return None
+    mt = np.asarray(mt, dtype=float)
+    cadence = np.asarray(cadence, dtype=float)
+    gt = np.asarray(s["gps_t"], dtype=float)
+    good = gps_good(s, int(cfg.get("minFix", 3)), float(cfg.get("maxDop", 2.5)))
+    if not good.any() or len(mt) < 2:
+        return None
+    k = np.clip(np.searchsorted(mt, gt), 1, len(mt) - 1)
+    k = np.where(np.abs(mt[k - 1] - gt) <= np.abs(mt[k] - gt), k - 1, k)
+    ok = good & (np.abs(mt[k] - gt) <= 0.25) & (gt >= mt[0]) & (gt <= mt[-1])
+    cad = cadence[k]
+    spd = np.asarray(s["gps"][:, 3], dtype=float)
+    stat = np.zeros(len(gt), dtype=bool) if stationary is None else np.asarray(stationary, dtype=bool)[k]
+    ok &= np.isfinite(cad) & (cad >= float(cfg.get("minCadenceHz", 1.0))) & ~stat & (spd >= float(cfg.get("minSpeedMps", 0.5)))
+    if not ok.any():
+        return None
+    dt = float(np.median(np.diff(gt))) if len(gt) > 1 else 0.055
+    windows_s = float(ok.sum()) * dt
+    if windows_s < float(cfg.get("minS", 10.0)):
+        return None
+    ratio = spd[ok] / cad[ok]
+    lo, hi = (float(v) for v in cfg.get("rangeM", [0.5, 1.1]))
+    raw = float(np.median(ratio))
+    return {"stepM": min(hi, max(lo, raw)), "raw": raw, "windowsS": windows_s, "samples": int(ok.sum()),
+            "p10": float(np.percentile(ratio, 10)), "p90": float(np.percentile(ratio, 90))}

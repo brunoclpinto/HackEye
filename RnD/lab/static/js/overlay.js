@@ -73,9 +73,10 @@ export class Overlay {
     if (!f || !this.layers.hazards) return null;
     let best = null, bestA = Infinity;
     for (const h of f.hazards ?? []) {
-      const [x0, y0, x1, y1] = h.bbox;
+      const [x0, y0, x1, y1] = fullBox(h);
       if (x < x0 || x > x1 || y < y0 || y > y1) continue;
-      if (this.outlines && h.outline?.length >= 3 && !pointInPolygon(x, y, h.outline)) continue;
+      const poly = fullOutline(h);
+      if (this.outlines && poly?.length >= 3 && !pointInPolygon(x, y, poly)) continue;
       const a = (x1 - x0) * (y1 - y0);
       if (a < bestA) { best = h; bestA = a; }
     }
@@ -415,8 +416,8 @@ export class Overlay {
   /** v26.2.10: the selected item's whole outline (or box), highlighted, followed by its track id. */
   drawSelected(h) {
     const { ctx, cw, ch } = this;
-    const [x0, y0, x1, y1] = h.bbox;
-    const poly = this.outlines && h.outline?.length >= 3 ? h.outline : null;
+    const [x0, y0, x1, y1] = fullBox(h);
+    const ol = fullOutline(h), poly = this.outlines && ol?.length >= 3 ? ol : null;
     ctx.save();
     ctx.lineJoin = "round";
     for (const [w, col] of [[7, "#000000"], [3.5, "#ffe14d"]]) {
@@ -442,8 +443,8 @@ export class Overlay {
     const col = legacy ? (h.urgency === "imminent" ? ROLE_COLOR.final : ROLE_COLOR.danger)
       : role === "danger" && h.urgency === "final" ? ROLE_COLOR.final : ROLE_COLOR[role] ?? ROLE_COLOR.none;
     const dim = role === "none";
-    const [x0, y0, x1, y1] = h.bbox;
-    const poly = this.outlines && h.outline?.length >= 3 ? h.outline : null; // v26.1.8: contour of the item's own mask
+    const [x0, y0, x1, y1] = fullBox(h);
+    const ol = fullOutline(h), poly = this.outlines && ol?.length >= 3 ? ol : null; // v26.1.8: contour of the item's own mask
     let X = x0 * cw, Y = y0 * ch;
     ctx.save();
     ctx.lineWidth = dim ? 1 : 3;
@@ -494,6 +495,10 @@ export class Overlay {
     ctx.restore();
   }
 }
+
+/** v26.2.12: an item's whole box / outline including the rows above the horizon (`bboxFull` / `outlineFull`); older runs: the plain ones. */
+export const fullBox = (h) => h.bboxFull ?? h.bbox;
+export const fullOutline = (h) => h.outlineFull ?? h.outline;
 
 /** Ray casting: is the normalised point inside the polygon [[x, y], ...]? */
 function pointInPolygon(x, y, poly) {

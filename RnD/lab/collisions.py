@@ -263,7 +263,7 @@ def validate_overrides(overrides) -> dict:
 # accepted when it is listed here with one of its allowed values (it is then created); once the config has it, the normal checks apply.
 PENDING_KEYS = {
     "collision": {"source.mode": ("image", "map"), "speech.predictive.enabled": (True, False),
-                  "ego.headingSource": ("auto", "imu", "flow"), "horizon.source": ("image", "gravity", "fused"),
+                  "ego.headingSource": ("auto", "imu", "gyro", "flow"), "horizon.source": ("image", "gravity", "fused"),
                   "ego.cadenceSource": ("auto", "imu", "image")},
     "worldmap": {},
 }

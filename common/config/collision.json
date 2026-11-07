@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.11",
+  "version": "v26.2.12",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -16,9 +16,9 @@
       "head":  {"label": "Head",          "heightRatio": 1.0,  "heightOffsetM": 0.05, "horizon": 0.48, "sideOffsetM": 0.07}
     }
   },
-  "source": {"mode": "image", "imageNetSteps": 3.0, "imageNetFrames": 2, "regionPadM": 2.0, "regionMinCells": 2, "maxTrackJumpM": 3.0,
+  "source": {"mode": "map", "imageNetSteps": 3.0, "imageNetFrames": 2, "regionPadM": 2.0, "regionMinCells": 2, "maxTrackJumpM": 3.0,
              "maxTrackJumpFrac": 0.35, "coastFromTracks": true},
-  "horizon": {"source": "gravity", "gravityWeight": 0.5, "levelTauS": 30.0},
+  "horizon": {"source": "fused", "gravityWeight": 0.5, "levelTauS": 30.0},
   "geometry": {
     "defaultStepLengthM": 0.70,
     "laneHalfWidthM": 0.60,
@@ -84,6 +84,15 @@
     "utility-cover": "manhole"
   },
   "contextSpeak": ["obstacle", "building"],
+  "beeps": {"follow": {"enabled": true, "followQuietS": 6.0, "lateralM": 0.4, "nearSteps": 1.0, "gapS": 1.5,
+                       "classes": ["building", "barrier", "barrier wall", "barrier fence", "barrier guard-rail", "divider"]}},
+  "blocked": {"enabled": true, "aheadM": 3.0, "minAheadM": 0.4, "widthFrac": 0.7, "confirmFrames": 2, "cooldownS": 5.0, "sameSpotM": 3.0,
+              "angleDeg": 60.0, "angleStepDeg": 10.0, "minAngleDeg": 15.0, "minClearM": 2.0, "walkMinConf": 0.3,
+              "solidClasses": ["building", "barrier", "barrier wall", "barrier fence", "barrier guard-rail", "sidewalk-obstacle", "divider"],
+              "walkableClasses": ["flat sidewalk", "flat pedestrian-area", "crosswalk"],
+              "walkableLabels": {"flat sidewalk": "sidewalk", "flat pedestrian-area": "sidewalk", "crosswalk": "crosswalk"},
+              "templates": {"free": "blocked ahead, {label} continues at {clock}", "none": "blocked ahead"}},
+  "tree": {"enabled": true, "poleClass": "pole", "canopyClass": "nature vegetation", "gapRows": 2, "minOverlap": 0.5, "label": "tree"},
   "parkedLabels": {"vehicle": "parked car"},
   "minComponentFraction": 0.0004,
   "personSplit": {"enabled": true, "classes": ["person", "rider"], "personWidthM": 0.55, "splitWidthFactor": 1.4, "splitDepthJumpM": 0.6,
@@ -125,7 +134,8 @@
     "vehicleApproachingMps": 2.0, "maxWalkingMps": 2.0,
     "contextAfterDangerSeconds": 2.5, "panSettleSeconds": 1.0
   },
-  "distance": {"depthLowestRowsFrac": 0.25, "depthWitnessMaxBearingDeg": 40,
+  "distance": {"jump": {"enabled": true, "nearM": 15.0, "resetClasses": ["vehicle", "rider"], "frac": 0.4, "minM": 1.0, "maxGapS": 0.4},
+               "depthLowestRowsFrac": 0.25, "depthWitnessMaxBearingDeg": 40,
                "depthLevelRange": [0.3, 5.0], "depthLevelMinSamples": 30, "anchorMinCells": 150, "anchorEmaSeconds": 0.4, "anchorHoldSeconds": 2.0, "anchorHorizon": "fixed", "depthRayModel": "lens",
                "initialAnchorFrames": 6, "initialAnchorMinFrames": 3, "recalibrateOnPathChange": false,
                "depthLevelPrior": "ground",
@@ -145,9 +155,10 @@
     "minStepHz": 1.4, "harmonicMinRatio": 0.25,
     "speedMinTracks": 1, "speedMaxMps": 6.0, "speedEma": 0.3, "stepLengthRangeM": [0.3, 1.8],
     "calibrationWindowSeconds": 20.0, "calibrationMinSamples": 12, "calibrationEmaMinSeconds": 3.0, "calibrationEmaSeconds": 40.0,
+    "stepLength": {"source": "auto", "minS": 60.0, "rangeM": [0.5, 1.1], "minCadenceHz": 1.0, "minSpeedMps": 0.5},
     "priorStepLengthM": 0.70, "scalePrior": null, "scalePriorSeconds": 30.0, "scaleMaxChangePerSecond": 0.25, "scaleRange": [0.5, 4.0], "calibrationMinRawSpeed": 0.2,
     "stationary": {"medianSeconds": 1.0, "enterPx": 0.8, "leavePx": 1.0, "enterSeconds": 1.5, "leaveSeconds": 1.0},
-    "sensors": true, "headingSource": "auto", "cadenceSource": "auto", "stationarySource": "auto", "onePose": "auto", "gravityTauS": 0.5, "rollCorrect": false,
+    "sensors": true, "headingSource": "imu", "cadenceSource": "imu", "stationarySource": "auto", "onePose": "auto", "gravityTauS": 0.5, "rollCorrect": false,
     "imu": {"yawSign": -1.0, "yawGravityTauS": 1.0, "accelUpAxis": 0, "accelRightAxis": 1, "accelForwardAxis": 2, "pitchSign": -1.0, "rollSign": -1.0,
             "timeOffsetS": -0.10, "biasMinStationaryS": 2.0, "biasLowFraction": 0.2, "activityWindowS": 1.0, "cadenceRateHz": 60.0,
             "stationary": {"medianSeconds": 0.3, "enterPx": 0.5, "leavePx": 0.8, "enterSeconds": 1.5, "leaveSeconds": 1.0}},
@@ -187,7 +198,11 @@
   "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
   "speech": {
     "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0, "contextMaxItems": 3, "summaryHoldSeconds": 0.5,
-    "predictive": {"enabled": true, "startLatencyS": 0.2, "wordsPerSecond": 2.8, "minSteps": 1, "passedM": 0.3, "maxMoverMps": 12.0},
+    "predictive": {"enabled": true, "startLatencyS": 0.2, "wordsPerSecond": 2.8, "minSteps": 1, "passedM": 0.3, "maxMoverMps": 12.0,
+                   "maxAdvanceM": 1.5, "clockHoldQuarters": 2, "measuredFloor": 0.5, "measuredWindowS": 1.5},
+    "minVoiceSteps": 2, "thinStableS": 0.5, "colocatedM": 1.5,
+    "zoneOnly": {"enabled": true, "halfWidthM": 0.0, "classes": ["pole", "sign", "traffic-sign", "traffic-light", "traffic-light pedestrians", "sidewalk-obstacle", "utility-cover"]},
+    "reannounce": {"enabled": true, "clockQuarters": 4, "growSteps": 3.0, "minGapS": 1.0},
     "maxEntries": 3, "peopleMotionWaitSeconds": 1.5, "peopleMotionWaitSteps": 6, "priorityMinGapSeconds": 1.0, "thinRearmSeconds": 8.0, "featureLabelGapSeconds": 6.0, "featureNewCrossingSteps": 5,
     "featureLabelOverrides": {"crosswalk": {"gapSeconds": 20, "newCrossingSteps": 20}, "curb": {"gapSeconds": 20, "newCrossingSteps": 24}},
     "templates": {
@@ -223,7 +238,7 @@
       "crosswalk-out":    {"label": "Crosswalk out",                   "pitchHz": 330,  "durationMs": 200, "intervalS": 0.12},
       "proximity":        {"label": "Person approaching (soft)",       "pitchHz": 440,  "durationMs": 120, "intervalS": 1.2}
     },
-    "speechRate": 1.0,
+    "speechRate": 1.25,
     "soundRanges": {"pitchHz": [150, 2000], "durationMs": [20, 1500], "intervalS": [0.05, 5.0], "speechRate": [0.5, 2.0]}
   }
 }

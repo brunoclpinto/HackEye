@@ -70,5 +70,10 @@ def hazards_hash(doc: dict) -> str:
         d.pop(k, None)
     for f in d["frames"]:
         f.pop("worldTracks", None)
+        for h in f["hazards"]:                       # v26.2.12: the whole component of an item incl. the rows above the horizon (the Lab's selection)
+            h.pop("bboxFull", None)
+            h.pop("outlineFull", None)
+    for k in ("stepLengthSource", "gpsStepWindowsS", "gpsStep"):      # v26.2.12: where the step length came from
+        d["settings"].pop(k, None)
     d["version"] = "X"
     return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()

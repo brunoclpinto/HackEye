@@ -47,7 +47,24 @@ def clip_table(s: dict, path: str, cfg: dict) -> dict:
         out["shutterMs"] = [round(float(np.percentile(s["shut"], 5)) * 1000, 2), round(float(np.percentile(s["shut"], 95)) * 1000, 2)]
         out["isoGain"] = [round(float(np.percentile(s["isog"], 5)), 2), round(float(np.percentile(s["isog"], 95)), 2)]
     out["hilights"] = sensors.hilights(path)
+    out["gpsStep"] = gps_step_row(s, cfg)
     return out
+
+
+def gps_step_row(s: dict, gcfg: dict) -> dict | None:
+    """v26.2.12 (O18): the GPS step length of the clip as the collision pass computes it (``sensors.gps_step_length`` on the accelerometer
+    cadence and the IMU stationary flags, whole clip), or None without a good fix long enough."""
+    import collision
+    if "gps" not in s or len(s.get("gps_t", ())) < 10:
+        return None
+    dur = float(min(s["gyro_t"][-1], s["accl_t"][-1]))
+    mt = np.arange(0.0, dur, 1.0 / 24.0)
+    ecfg = collision.load_config()["ego"]
+    sser = collision._sensor_series(s, None, mt, ecfg, 118.0)
+    if sser is None:
+        return None
+    r = sensors.gps_step_length(sser["s"], sser["mt"], sser["cad"], sser["stat_imu"], {**gcfg, **(ecfg.get("stepLength") or {})})
+    return None if r is None else {k: round(v, 3) if isinstance(v, float) else v for k, v in r.items()}
 
 
 def _wrap(d):

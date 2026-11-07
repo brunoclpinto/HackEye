@@ -913,7 +913,7 @@ def test_resolution_select_and_run_badge(page):
     open_lab(page, SHORT_REC)
     texts = page.eval_on_selector_all("#profileSel option", "os => os.map(o => o.textContent)")
     assert texts == ["544p · 960×544", "576p · 1024×576", "608p · 1056×608", "640p · 1120×640",
-                     "672p · 1184×672", "704p · 1248×704", "736p · 1280×736"]
+                     "672p · 1184×672", "704p · 1248×704", "736p · 1280×736 (default)"]
     assert page.input_value("#profileSel") == "736p"
     assert page.inner_text("label:has(#profileSel)").startswith("Resolution")
     model = next(m["path"] for m in api("/api/models")["models"] if m["default"])
@@ -1006,7 +1006,7 @@ def test_depth_run_toggle_and_image(page):
     open_lab(page, SHORT_REC)
     labels = page.eval_on_selector_all("#depthSel option", "os => os.map(o => [o.value, o.textContent])")
     assert labels[0] == ["none", "Off"] and ["da3-small", "DA3 Small"] in labels and ["da3-base", "DA3 Base"] in labels
-    assert ["da2-metric-outdoor-small", "DA2 Metric Outdoor S"] in labels and ["unidepth-v2-s", "UniDepth v2 S"] in labels
+    assert ["da2-metric-outdoor-small", "DA2 Metric Outdoor S (default)"] in labels and ["unidepth-v2-s", "UniDepth v2 S"] in labels
     assert not any(v == "da3-metric-large" for v, _ in labels)
     assert page.input_value("#depthSel") == "da2-metric-outdoor-small"   # DA2 + initial anchor is the default
     known = {r["id"] for r in api("/api/runs")}
@@ -1536,7 +1536,7 @@ def test_portrait_left_run_window_overlay_and_label(page):
         page.select_option("#orientSel", "portrait")
         page.select_option("#sideSel", "left")
         texts = page.eval_on_selector_all("#profileSel option", "os => os.map(o => o.textContent)")
-        assert texts[-1] == "736p · 736×1280" and texts[0] == "544p · 544×960"
+        assert texts[-1] == "736p · 736×1280 (default)" and texts[0] == "544p · 544×960"
         page.fill("#rangeEnd", "6")
         page.click("#analyseBtn")
         page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('736×1280')", timeout=180_000)
@@ -1613,7 +1613,7 @@ def test_sound_tuner_is_in_the_middle_section_with_a_row_per_kind(page, sounds_g
     assert page.input_value(_row("crosswalk-in", "durationMs")) == "600"
     assert page.is_disabled(_row("crosswalk-in", "intervalS")) and not page.is_disabled(_row("crosswalk-out", "intervalS"))
     assert page.inner_text('#sndRows tr[data-kind="collision-left"] [data-o="pitchHz"]') == "660 Hz"
-    assert page.input_value("#sndSpeech") == "1" and "1.00" in page.inner_text("#sndSpeechOut")
+    assert page.input_value("#sndSpeech") == "1.25" and "1.25" in page.inner_text("#sndSpeechOut") and page.inner_text("#sndSpeechDef") == "(default)"   # v26.2.12 default
     assert page.locator("#sndSpeechTest").count() == 1 and page.is_hidden("#sndApply")
 
 
@@ -1635,7 +1635,7 @@ def test_sound_changes_persist_through_the_api_and_across_a_reload(page, sounds_
     assert page.input_value("#sndSpeech") == "1.5" and page.inner_text('#sndRows tr[data-kind="collision-left"] [data-o="pitchHz"]') == f"{_hz(500)} Hz"
     page.click("#sndReset")
     page.wait_for_function("() => document.querySelector('#sndStatus').textContent.includes('Defaults')")
-    assert page.input_value(_row("collision-left", "durationMs")) == "80" and api("/api/sounds")["speechRate"] == 1.0
+    assert page.input_value(_row("collision-left", "durationMs")) == "80" and api("/api/sounds")["speechRate"] == 1.25
 
 
 def test_the_test_button_plays_the_chosen_frequency_inside_the_click(page, sounds_guard):

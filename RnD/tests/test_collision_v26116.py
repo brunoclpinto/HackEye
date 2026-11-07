@@ -27,7 +27,7 @@ SOUNDS = TONES["sounds"]
 # ---- config -----------------------------------------------------------------------------------
 
 def test_version_and_the_default_sounds():
-    assert CONFIG["version"] == "v26.2.11"
+    assert CONFIG["version"] == "v26.2.12"
     s = SOUNDS
     assert set(s) == set(col.SOUND_KINDS) == {"collision-left", "collision-center", "collision-right", "crosswalk-in", "crosswalk-out", "proximity"}
     assert (s["collision-center"]["pitchHz"], s["collision-center"]["durationMs"], s["collision-center"]["intervalS"]) == (880, 80, 0.5)
@@ -37,7 +37,7 @@ def test_version_and_the_default_sounds():
     assert (s["proximity"]["pitchHz"], s["proximity"]["durationMs"], s["proximity"]["intervalS"]) == (440, 120, 1.2)
     assert s["collision-center"]["intervalS"] == col._tone_interval(TONES["maxSteps"], TONES["bySteps"])      # the interval at 5 steps
     assert len({s[k]["pitchHz"] for k in ("collision-left", "collision-center", "collision-right", "proximity")}) == 4
-    assert TONES["speechRate"] == 1.0 and TONES["soundRanges"]["speechRate"] == [0.5, 2.0] and TONES["soundRanges"]["pitchHz"] == [150, 2000]
+    assert TONES["speechRate"] == 1.25 and TONES["soundRanges"]["speechRate"] == [0.5, 2.0] and TONES["soundRanges"]["pitchHz"] == [150, 2000]
 
 
 def test_the_new_role_numbers():
@@ -107,7 +107,7 @@ def test_resolve_sounds_clamps_and_ignores_what_it_does_not_know():
     assert left["pitchHz"] == 2000 and left["durationMs"] == 80 and left["intervalS"] == 0.05
     assert r["kinds"]["crosswalk-in"]["intervalS"] is None and "bogus" not in r["kinds"]      # unused field stays unused
     assert r["speechRate"] == 2.0
-    assert col.resolve_sounds(TONES, None) == col.resolve_sounds(TONES, {}) and col.resolve_sounds(TONES)["speechRate"] == 1.0
+    assert col.resolve_sounds(TONES, None) == col.resolve_sounds(TONES, {}) and col.resolve_sounds(TONES)["speechRate"] == 1.25
     assert col.resolve_sounds(TONES, {"speechRate": 0.1})["speechRate"] == 0.5
 
 

@@ -44,7 +44,16 @@ def _read() -> dict:
         doc = json.loads(_path().read_text())
     except (OSError, ValueError):
         doc = {}
-    return doc if isinstance(doc, dict) else {}
+    if not isinstance(doc, dict):
+        return {}
+    # v26.2.12: a stored speechRate equal to the (new) default is no override any more
+    try:
+        dflt = float(_col().load_config()["tones"].get("speechRate", 1.0))
+    except Exception:
+        dflt = None
+    if dflt is not None and _is_num(doc.get("speechRate")) and abs(doc["speechRate"] - dflt) < 1e-9:
+        del doc["speechRate"]
+    return doc
 
 
 def _is_num(v) -> bool:

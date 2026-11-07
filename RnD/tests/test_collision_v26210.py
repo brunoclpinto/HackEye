@@ -45,7 +45,7 @@ def _cfg(**over):
 def test_config():
     ps = col.load_config()["personSplit"]
     assert ps["enabled"] is True and ps["personWidthM"] == 0.55 and ps["splitWidthFactor"] == 1.4 and ps["splitDepthJumpM"] == 0.6
-    assert col.load_config()["version"] == "v26.2.11"
+    assert col.load_config()["version"] == "v26.2.12"
 
 
 def test_three_people_standing_together_are_three_items_and_off_is_one():

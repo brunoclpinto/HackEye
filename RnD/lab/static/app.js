@@ -947,7 +947,7 @@ async function loadRunData(run0, cid) {
   audio.setEvents(S.events);
   refreshAudioEvents();
   timeline.set(run, S.events);
-  reviews.setRun(run, S.notes);
+  reviews.setRun(run, S.notes, S.tones);
   return run;
 }
 

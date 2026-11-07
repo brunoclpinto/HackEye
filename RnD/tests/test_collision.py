@@ -1015,9 +1015,9 @@ def test_output_documents_are_serializable_and_complete():
     json.dumps(doc)
     json.dumps(ev)
     assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames", "coast", "worldTracksSettings"}
-    assert doc["version"] == "v26.2.11" == ev["version"]
+    assert doc["version"] == "v26.2.12" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM",
-                                  "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM", "objectDistance", "useHorizon"}      # v26.2.3: the object distance / horizon switch
+                                  "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM", "objectDistance", "useHorizon", "stepLengthSource", "gpsStepWindowsS"}      # v26.2.3: the object distance / horizon switch
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150
     frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards", "corridor"}    # v26.2.1: corridor = the nearest object on the world map in the walking corridor
@@ -1038,7 +1038,7 @@ def test_output_documents_are_serializable_and_complete():
             # v26.2.1: a static item reports where it was judged ("source", "mapCells"); a map measurement keeps the image's (imageDistanceM...)
             map_keys = {"source", "mapCells"} if h["group"] == "static" else set()
             # v26.2.2: faceEdge (the face / edge test of a static item with corridor cells), insideSolid / solidCorrected / rawDistanceM (snapped), coasting
-            assert set(h) - {"imageDistanceM", "imageLateralM", "faceEdge", "insideSolid", "solidCorrected", "rawDistanceM", "coasting"} == hazard_keys | map_keys | ({"outline"} if h["role"] != "none" else set())
+            assert set(h) - {"imageDistanceM", "imageLateralM", "faceEdge", "insideSolid", "solidCorrected", "rawDistanceM", "coasting"} == hazard_keys | map_keys | ({"outline", "bboxFull", "outlineFull"} if h["role"] != "none" else set())
             assert h["role"] in ("danger", "feature", "context", "none")
             assert h["urgency"] in ("none", "danger", "final")
             seen_hazard = True

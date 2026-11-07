@@ -9,6 +9,7 @@ import collision as col
 from lab import recordings, server, sounds, versioning
 
 TONES = col.load_config()["tones"]
+DEFAULT_RATE = TONES["speechRate"]
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ def test_defaults_come_from_the_config_and_no_file_is_written(client):
     left, cin = _kind(d, "collision-left"), _kind(d, "crosswalk-in")
     assert (left["pitchHz"], left["durationMs"], left["intervalS"]) == (660, 80, 0.5)
     assert cin["intervalS"] is None and cin["default"]["pitchHz"] == 330
-    assert d["speechRate"] == 1.0 and d["ranges"]["pitchHz"] == [150, 2000] and d["updatedAt"] is None
+    assert d["speechRate"] == DEFAULT_RATE == d["defaultSpeechRate"] == 1.25 and d["ranges"]["pitchHz"] == [150, 2000] and d["updatedAt"] is None
     assert not path.exists()
 
 
@@ -67,19 +68,19 @@ def test_the_unused_interval_of_crosswalk_in_is_ignored(client):
 
 def test_putting_the_defaults_or_deleting_removes_the_file(client):
     c, path = client
-    c.put("/api/sounds", json={"speechRate": 1.25})
+    c.put("/api/sounds", json={"speechRate": 1.5})
     assert path.exists()
-    c.put("/api/sounds", json={"kinds": {}, "speechRate": 1.0})
+    c.put("/api/sounds", json={"kinds": {}, "speechRate": DEFAULT_RATE})
     assert not path.exists()
     c.put("/api/sounds", json={"speechRate": 0.75})
     assert path.exists()
     d = c.delete("/api/sounds").json()
-    assert not path.exists() and d["speechRate"] == 1.0
+    assert not path.exists() and d["speechRate"] == DEFAULT_RATE
 
 
 def test_the_profile_survives_a_version_wipe(client, tmp_path):
     c, path = client
-    c.put("/api/sounds", json={"speechRate": 1.25})
+    c.put("/api/sounds", json={"speechRate": 1.5})
     root = path.parent.parent
     (root / "runs" / "abc").mkdir(parents=True)
     (root / "runs" / "abc" / "run.json").write_text("{}")
@@ -88,4 +89,16 @@ def test_the_profile_survives_a_version_wipe(client, tmp_path):
     vf.write_text("v26.1.16\n")
     res = versioning.apply_version_policy(root, vf)
     assert res["wiped"] and not (root / "runs" / "abc").exists()
-    assert path.exists() and json.loads(path.read_text())["speechRate"] == 1.25
+    assert path.exists() and json.loads(path.read_text())["speechRate"] == 1.5
+
+
+def test_a_stored_speech_rate_equal_to_the_default_is_no_override(client):
+    """v26.2.12: the default became 1.25; an older file holding exactly that value reads as 'default' (and profile() passes none)."""
+    c, path = client
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"kinds": {}, "speechRate": DEFAULT_RATE}))
+    assert sounds.profile()["speechRate"] is None
+    d = c.get("/api/sounds").json()
+    assert d["speechRate"] == DEFAULT_RATE
+    path.write_text(json.dumps({"kinds": {}, "speechRate": 1.0}))     # a deliberate other value stays
+    assert sounds.profile()["speechRate"] == 1.0 and c.get("/api/sounds").json()["speechRate"] == 1.0

@@ -2,7 +2,7 @@
 
 One entry per version: what prompted it (usually the user's review in the Lab), the decisions made with the user, the implementation choices and deviations workers made, known limitations, and the measured result. The current rules live in [`../lab/CONTRACTS.md`](../lab/CONTRACTS.md); this file explains **why** they are what they are.
 
-**Ground truth.** The user's Lab reviews are kept as regression fixtures in [`../tests/fixtures/`](../tests/fixtures/) (`4929_review1`–`6`, `chest0002_crosswalk`, `chest0004_review7`, `chest0004_review8`; `.npz` + `.json` each) and replayed by `tests/test_collision_regression.py` and the per-version tests. A version bump wipes the Lab, so the fixtures are the permanent record.
+**Ground truth.** The user's Lab reviews are kept as regression fixtures in [`../tests/fixtures/`](../tests/fixtures/) (`4929_review1`–`6`, `chest0002_crosswalk`, `chest0004_review7`, `chest0004_review8`, `chest0004_review9`; `.npz` + `.json` each) and replayed by `tests/test_collision_regression.py` and the per-version tests. A version bump wipes the Lab, so the fixtures are the permanent record.
 
 **How we work** (user decisions, standing):
 - **Versioning:** `v<YY>.<major>.<minor>`, with the minor dropped when 0. v26.1 is collision detection, and v26.1.x are improvements within it. `RnD/VERSION` holds the current version.
@@ -1270,3 +1270,31 @@ The Chest-0004 run was wiped by the version bump before a collision re-run with 
 7. (O24) **Heading switch changed the speech:** Chest-0004 90 / 167 (flow) -> 94 / 217 (imu) speech / beeps, mostly ~30 more building beeps; unreviewed.
 
 **Follow-up (2026-11-04):** note 4 (emoji markers) reverted at the user's request (not working for them); the map draws the dot / diamond markers again.
+
+## v26.2.12 — c2 as the default, GPS step length, speech and beeps only inside the lane, walls being followed stay quiet, "blocked ahead", Lab notes (plan [`plans/v26.2.12.md`](plans/v26.2.12.md); user Notes 2026-11-07 + review 9; approved "O18: always go with sensors when they are available, so gps. go for it"; Lab version bumped and wiped: run `5fda5626e808` removed; `collision.json` v26.2.12, `worldmap.json` unchanged)
+
+**Why.** The user's Notes (verbatim in the plan): 1 beep repeats not shown; 2 make c2 the default; 3 objects above the horizon not selectable; 4 1.25x default speech speed; 5 mark predicted phrases with when they start and when they apply (clickable), and take into account that not knowing which phrases were predicted likely affected the review. O18 decided: GPS step length whenever available. Review 9 (run `5fda5626e808` c2, Chest-center-0004, reviewed 0-26 s: 16 ✓, 1 ✗, 5 ⊘, 2 added) saved as fixture `chest0004_review9` (window 0-30 s; motion to 150 s and the GPMF sensors to 156 s because the gyro bias and GPS course need the long span; depth unquantised for exact replay; annotations carry `predicted`). Replay with v26.2.11 rules reproduces the stored c2 events exactly (8 speech / 17 beeps / 39 tones).
+
+**Diagnosis (Opus, frames + hazards).** 18.34 "pole" = a tree trunk at the curb labelled pole, distance jumping 0.70 → 4.8 m; 23.51 "pole at 1:15 in 1 step" = predictive over-advance of ~2 m (cadence speed 1.29 m/s vs measured 0.75 m/s); 25.10 "vehicle" = the top of a parked skip, depth jumps 7.3/5.6/6.1 m gave a fake 3-7 m/s closing speed; 21.00 = the wall the user was following re-beeped as a new track (265 → 800); 13.00 = the scaffold ahead was the same track already announced as the wall beside the user.
+
+**What was built (Sonnet workers W0 fixture, W1 collision, W2 Lab; Opus planning and review).** Every rule has a config key (CONTRACTS 7.11d).
+- **Defaults = c2:** `source.mode` map, `ego.headingSource` imu (gyro + slow GPS course pull, labelled `imu+gps` once a GPS update applies: that is why c2 said `imu+gps`; new `gyro` = gyro only), `horizon.source` fused, `ego.cadenceSource` imu; `tones.speechRate` 1.25.
+- **O18:** `ego.stepLength.source` auto: median(GPS speed / cadence) over good-fix moving samples, clamped 0.5-1.1 m, needs ≥ 60 s (plan said 10 s; 10 s gave 0.5 m on Chest-0004/0005); replaces `ego.gps.speedScale` for that run; typed value wins. Resolved `stepLengthSource` gps|prior|user. Per clip: Chest-0002 0.84, 0003 0.82, 0006 0.83, 0008 0.85, Head-0001 0.81, 0003-0009 0.83-0.85, Head-0010/0011 0.70 (noisy); Chest-0004/0005 keep the prior.
+- **Speech:** `speech.minVoiceSteps` 2 (beeped items ≤ 2 steps are not spoken); `speech.zoneOnly` (thin statics spoken only when `collision` on the current position); `speech.colocatedM` 1.5 + `speech.reannounce` (co-located collision items said once with the closest one's numbers; a static re-announced when it moves ≥ 4 quarter-hours while in the lane or grows ≥ 3 steps); `tree` (pole under a canopy = tree); `speech.thinStableS` 0.5 after a distance jump; `distance.jump` (> max(1 m, 40 %) between frames resets vehicle/rider closing history; unknown-motion vehicles use the static lane); predictive `maxAdvanceM` 1.5, `clockHoldQuarters` 2, `measuredFloor` 0.5.
+- **Beeps:** `beeps.follow`: no new episode for a building / wall / fence face on the same side within ±0.4 m lateral and 6 s of the last episode; centre or ≤ 1 step still beeps.
+- **Blocked ahead:** `blocked` (map): lane within 3 m ≥ 70 % solid and walkable ground free within ±60° → "blocked ahead, sidewalk continues at 11".
+- **Hazards:** items carry `bboxFull` / `outlineFull` (whole component, rows above the horizon); events unchanged by it.
+- **Lab (W2):** beep rows "× N · interval"; predicted phrases ⏩ "said t · for t+dt" (both seek), tooltip = the unpredicted text, `predicted` kept in reviews and the export; outlines and hit tests use the full geometry; 1.25 marked "(default)" in the tuner, a stored speed equal to the default dropped.
+
+**Review 9 after (replay, rate 1.25):** 0.17 ⊘ gone (beep stays); 1.17 ⊘ gone; 18.34 ✗ gone; 21.00 ⊘ gone; 23.51 ⊘ gone ("pole at 12:15 in 3" now at 22.84); 25.10 ⊘ gone; 13.00 added → "building at 12 in 7"; 21.17 added **not met**; ✓ kept 13 identical, 1.84 "in 6" → "in 7", 11.66 "12:45 in 2" → "12:30 in 3", 22.84 beep 5→3 → 11:45 5→2, 25.29 ✓ beep merged into the 22.84 episode.
+
+**Other fixtures (27 windows + review 9, 168 ticks)** speech / beeps / blocked / exact / label / ✗-⊘ still said: v26.2.11 image 198 / 137 / 0 / 17 / 50 / 3; map only 211 / 176 / 0 / 21 / 53 / 6; **new defaults 199 / 167 / 7 / 15 / 48 / 0**. Leave-one-out: without zoneOnly 222 speech, 55 label ticks; without follow 174 beeps. ~30 ms/frame. Tests: 764 unit pass; older modules run on v26.2.11 settings via conftest; v26.2.11 goldens re-pinned for the speech rate.
+
+**Known / possible issues.**
+1. (O25) Thin notices beside the path are gone: 7 older fixture ticks (pre-v26.2) lost; consistent with the user's "not within collision zone".
+2. (O26) "Blocked ahead" did not fire at 21.17 (the fence covers only the right half of the lane: 13 / 286 cells); its 7 firings elsewhere are unreviewed.
+3. (O27) The lane follows the camera axis, not the walking direction; the tree trunk is silenced only by the distance-jump rule.
+4. (O28) The measured advance rests on a depth closing rate that reads low, so prediction can under-advance.
+5. (O29) Review 9: two numbers moved by more than a step; one ✓ beep merged.
+6. (O30) GPS step 0.70 m on Head-0010/0011 unverified; `minS` 60 is a deviation from the plan.
+7. Distance-jump resets on vehicles ≤ 15 m can delay an early "approaching" warning.
