@@ -1298,3 +1298,26 @@ The Chest-0004 run was wiped by the version bump before a collision re-run with 
 5. (O29) Review 9: two numbers moved by more than a step; one ✓ beep merged.
 6. (O30) GPS step 0.70 m on Head-0010/0011 unverified; `minS` 60 is a deviation from the plan.
 7. Distance-jump resets on vehicles ≤ 15 m can delay an early "approaching" warning.
+
+## v26.2.12 follow-up — "blocked" fires for an obstacle on the walkway (O26), no version bump (plan [`plans/v26.2.12-followup-blocked.md`](plans/v26.2.12-followup-blocked.md); user 2026-11-09: "\"blocked ahead\" not present at all, correct it on current version since its part of previous request. the review at given timestamp is a required validation blocker ... do not bump version, delete current run and do a run when you finish"; VERSION, `collision.json` and `worldmap.json` versions unchanged; the user's run `5fda5626e808` (0-454 s, c1) deleted and re-run with the same request (0-454 s, same id `5fda5626e808`, c1))
+
+**Feedback.** Review 9, 21.17 s (added): "Sidewalk blocked at 11:45 continues 12:15", "Inform of blocking area ahead and towards which direction sidewalk continues." The user's 0-454 s run on v26.2.12 had no "blocked" phrase before 252 s.
+
+**Diagnosis (Opus).** At 21.17 s a skip stands on the sidewalk ~6 m ahead (labelled `barrier wall`, sometimes `sidewalk-obstacle`), the free sidewalk continues right of it. (1) `aheadM` 3 m was too short (the skip sat at 6.0-7.6 m from 20.0 to 21.3 s). (2) The fused map kept only 1-16 cells of it, at right -1.6..-1.2 m: 8-25 % of the lane; the frame's own bases saw it in the lane but flickered (0-58 %), their union over 0.7 s covered 83-92 %. (3) `minAngleDeg` 15 forbade 12:15 and the longest run, not the smallest turn, was chosen. (4) The phrase did not say where the blockage is. Reaching 8 m with every solid class would also fill the lane with the buildings the user walks along (17.8-18.5 s, 25.3-27.3 s), so walls keep the 3 m rule.
+
+**Decisions.**
+- Two kinds: **wall** (`wallClasses` building / fence / guard-rail, map cells, 3 m, 70 %: as before) and **obstacle on the walkway** (`obstacle.classes` barrier / barrier wall / sidewalk-obstacle / divider: map cells plus the object bases of the last 0.7 s dead-reckoned to the pose, 6.5 m, 50 %).
+- Free direction: rays every 7.5° (not 0°), the smallest turn whose walkable run reaches 0.5 m past the blockage with nothing solid within 0.1 m.
+- The user's wording: "sidewalk blocked at 11:45, continues 12:15" (blockage clock = evidence centroid; label = the walkable class under the user).
+- Opus addition after the worker: **one phrase per blockage** (`clearS` 2 s: a new phrase only after the blockage was gone for 2 s). The worker's version said the low sea wall at Chest-0002's crossings three times in 10 s ("crosswalk blocked at 12" at 38/44/49 s).
+
+**Worker deviations.** `freeHalfWidthM` 0.1, not 0.25 (at 0.25 the scaffold fence 0.4 m right blocked the 12:15 ray); the confirm run counts frames of the same kind (an obstacle frame bridged a wall run and fired a wall phrase at 16.83 s); goldens `GOLDEN_IMAGE` / `GOLDEN_MAP` updated (only the 15.83 s phrase text differs on review 7).
+
+**Numbers.** Review 9 (replay with sensors, 1.25x): one "blocked" phrase in 0-30 s, 20.67 s "sidewalk blocked at 11:45, continues 12:15" (target 21.17 s, the window is ±0.7 s). `collision_score` all fixtures: ticks 168 / exact 15 / label 48 unchanged; "blocked" firings 7 -> 39 (worker) -> fewer with `clearS` (Chest-0002 fixtures 4929_review4/6 + crosswalk: 19 -> 12). Of the old 7, six keep their time with the new text, chest0002_crosswalk 51.18 s is gone.
+
+### Known / possible issues (shipped on purpose; user rule: don't block)
+1. (O31) Obstacle firings on low walls and posts are unreviewed: mostly `barrier wall` (the sea wall at the end of crossings and along the promenade, the posts near the fitness bars at 286-297 s on Chest-0002), often without a free direction ("sidewalk blocked at 12").
+2. The review-9 phrase comes 0.5 s early (20.67 vs 21.17 s, ~7 m / 9 steps ahead); tighter settings (widthFrac 0.6-0.7, aheadM 5.5-6, recentS 0.5) push it to 22.5 s, outside the window.
+3. Run length changes the result: a 0-30 s Lab run said "sidewalk blocked at 11:45" at 22.51 s (no free direction) plus a wall phrase at 16.67 s "sidewalk blocked at 1:15, continues 11:30"; the 0-454 s run reproduces the fixture (20.67 s with "continues 12:15"). The motion / sensor history past the window matters.
+4. On the 0-454 s Lab run "blocked" is said 17 times (v26.2.12: 9): 76.16, 87.67, 101.84, 138.34, 252.34, 257.34, 293.16, 376.49, 381.83, 392.99, 406.84, 421.84, 436.67, 442.49 s, unreviewed.
+5. The scoring tool runs without sensors, so its review-9 numbers differ from the Lab's (it shows 17.50 / 23.84 s instead of 20.67 s); the replay with sensors is the reference.

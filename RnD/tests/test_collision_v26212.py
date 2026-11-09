@@ -327,11 +327,78 @@ def test_blocked_ahead_needs_70_percent_of_the_lane_and_names_the_free_direction
     assert r is not None and r["free"] is None
 
 
-def test_review9_21_17_lane_is_not_blocked_on_the_map_so_nothing_is_said():
-    """Known issue: at 21.17 the map has the scaffold fence on the right (118 solid cells within 2 m) but only 13 of the 286 lane cells within 3 m: the lane
-    is not 70 % blocked, so no "blocked ahead" is said (the plan's rule); recorded here so a change is seen."""
+def test_review9_21_17_an_obstacle_on_the_walkway_is_blocked_at_11_45_and_continues_right():
+    """v26.2.12 follow-up (O26): the skip on the sidewalk ~6 m ahead (mostly "barrier wall"): the map cells plus the object bases of the last 0.7 s cover
+    >= 50 % of the lane within 6.5 m; the phrase names where it is and where the sidewalk goes on; nothing else is "blocked" in 0-30 s."""
     _, _, ev = replay("chest0004_review9", sounds=SPEECH125)
-    assert not any("blocked" in e.get("text", "") for e in ev["events"])
+    b = [e for e in ev["events"] if e["type"] == "speech" and "blocked" in e.get("text", "") and e["t"] <= 30.0]
+    assert len(b) == 1, [(e["t"], e["text"]) for e in b]
+    assert 20.47 <= b[0]["t"] <= 21.87
+    assert b[0]["text"] == "sidewalk blocked at 11:45, continues 12:15"
+    assert b[0]["blocked"]["kind"] == "obstacle" and b[0]["blocked"]["blockClock"] == "11:45"
+
+
+def _recent(m, pts, pose=(0.0, 0.0, 0.0)):
+    """Object-base points (forward m, right m) seen from the origin pose, kept as world points; ``pose`` is where we are now."""
+    m.obs_hist = [(0.0, np.array([p[1] for p in pts]), np.array([p[0] for p in pts]))]
+    m.pose = pose
+
+
+def test_blocked_obstacle_counts_recent_bases_dead_reckoned_and_needs_half_the_lane():
+    cfg = CONFIG["blocked"]
+    pts = [(5.0, x) for x in np.arange(-0.55, 0.0, 0.1)]                # 6 of the 12 lane bins at 5 m, nothing in the map
+    m = _fake_map()
+    _recent(m, pts)
+    r = m.blocked_ahead(cfg)
+    assert r is not None and r["kind"] == "obstacle" and r["share"] == 0.5 and r["label"] == "sidewalk" and r["blockClock"] in ("12", "11:45")
+    m2 = _fake_map()
+    _recent(m2, pts[:5])                                                  # 5 of 12 bins: not enough
+    assert m2.blocked_ahead(cfg) is None
+    m3 = _fake_map()
+    _recent(m3, pts, pose=(0.0, 4.0, 0.0))                                # walked 4 m: the points are now 1 m ahead (still in the lane strip)
+    r3 = m3.blocked_ahead(cfg)
+    assert r3 is not None and abs(r3["cfwd"] - 1.0) < 0.2
+    m4 = _fake_map()
+    _recent(m4, pts, pose=(0.0, 5.5, 0.0))                                # passed by 0.5 m: gone
+    assert m4.blocked_ahead(cfg) is None
+    m5 = _fake_map()
+    _recent([m5][0], [(7.0, x) for x in np.arange(-0.6, 0.6, 0.1)])       # beyond obstacle.aheadM (6.5 m)
+    assert m5.blocked_ahead(cfg) is None
+
+
+def test_blocked_wall_keeps_the_3_m_reach_and_70_percent():
+    cfg = CONFIG["blocked"]
+    near = _fake_map(solid_cols=(-0.6, 0.6))                              # building at 1.0-3.5 m
+    assert near.blocked_ahead(cfg)["kind"] == "wall"
+    far = _fake_map(solid_cols=(-0.6, 0.6))
+    far.classes[(far.ob.fwd <= 3.5) & (far.ob.fwd > 3.0)] = 1
+    far.classes[(far.ob.fwd > 1.0) & (far.ob.fwd <= 3.0)] = 1             # the building only from 3.1 m on
+    far.classes[(far.ob.fwd > 3.05) & (far.ob.fwd < 3.5) & (abs(far.ob.right) <= 0.6)] = 0
+    assert far.blocked_ahead(cfg) is None
+    bar = _fake_map(solid_cols=(-0.6, 0.6))                               # a "barrier" at 3 m is the obstacle kind (6.5 m reach), not a wall
+    bar.classes[bar.classes == 0] = 3
+    assert bar.blocked_ahead(cfg)["kind"] == "obstacle"
+
+
+def test_blocked_free_direction_is_the_smallest_angle_past_the_blockage():
+    cfg = CONFIG["blocked"]
+    m = _fake_map(solid_cols=(-0.6, 0.0))                                 # the left half of the lane is a wall; the walkable ground is also to the right (right < 1.0)
+    m.classes[(m.ob.fwd > 0.9) & (m.ob.fwd < 3.6) & (m.ob.right >= -0.6) & (m.ob.right <= 0.6)] = 1
+    m.classes[(m.ob.fwd > 1.0) & (m.ob.fwd < 3.5) & (m.ob.right >= -0.6) & (m.ob.right <= 0.6) & (m.ob.right < 0.0)] = 0
+    m.classes[(m.ob.fwd > 1.0) & (m.ob.fwd < 3.5) & (m.ob.right >= 0.0) & (m.ob.right <= 0.6)] = 0         # whole lane: blocked
+    r = m.blocked_ahead(cfg)
+    assert r["free"] and abs(r["bearingDeg"]) in (30.0, 37.5, 45.0) and r["bearingDeg"] < 0
+    # never straight ahead, and the step is 7.5 deg
+    assert r["bearingDeg"] % 7.5 == 0 and r["bearingDeg"] != 0
+
+
+def test_blocked_phrase_names_where_it_is_blocked_and_where_it_continues():
+    t = CONFIG["blocked"]["templates"]
+    assert t["free"].format(label="sidewalk", clock="11:45", free="12:15") == "sidewalk blocked at 11:45, continues 12:15"
+    assert t["none"].format(label="sidewalk", clock="11:45") == "sidewalk blocked at 11:45"
+    m = _fake_map(solid_cols=(-0.6, 0.6))
+    r = m.blocked_ahead(CONFIG["blocked"])
+    assert r["blockClock"] == "12" and r["label"] == "sidewalk"
 
 
 # -- 10. predictive speech: the advance is capped and the clock does not swing -----------------------------------------------------------------
@@ -478,9 +545,9 @@ def _events_hash(**ov) -> str:
 
 
 # image source + predictive, every v26.2.12 rule on, speech rate 1.25 (the fixture has no sensors: the c2 heading / cadence / horizon sources do not apply)
-GOLDEN_IMAGE = "08e9bf7332fad10d5ea0431783ef4792ed41d87ca2eb45d5ea89e0b351cdd6cc"
+GOLDEN_IMAGE = "db471b9fa75034fe1539ec9314938e55d57642647e33befa710ee8d4832faa6a"
 # the new default (map source) + predictive, every v26.2.12 rule on, speech rate 1.25
-GOLDEN_MAP = "41785d0c506b7b8d3df5d11ccfed6920e71ef968957c30d55b6e03386cde4fda"
+GOLDEN_MAP = "5fa473cec608ddad94fb317bbb3975d2ca5ba3312c22bd9545490aeaedca8956"
 
 
 def test_goldens_of_the_new_defaults_v26212():

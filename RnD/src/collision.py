@@ -3495,6 +3495,16 @@ class _StaticMap:
             if self.wm.kind[cid] == self.object_kind:
                 self.fam.setdefault(labels.get(name, name.replace("-", " ")), np.zeros(256, dtype=bool))[cid] = True
         self._names = list(class_names)
+        bk = config.get("blocked") or {}                                        # v26.2.12 follow-up (O26): obstacle-class base points of the last recentS s
+        ocfg = bk.get("obstacle") or {}
+        self.obs_lut = np.zeros(256, dtype=bool)
+        for cid, name in enumerate(class_names):
+            if name in set(ocfg.get("classes", ())):
+                self.obs_lut[cid] = True
+        self.obs_recent_s = float(ocfg.get("recentS", 0.7))
+        self.obs_on = bool(bk.get("enabled", False)) and bool(self.obs_lut.any())
+        self.obs_hist: list[tuple[float, np.ndarray, np.ndarray]] = []       # (t, world x, world y) of the base points
+        self.times = times
         fe = roles.get("faceEdge") or {}
         self.fe_cfg = faceedge.settings(fe) if fe.get("enabled") else None      # v26.2.2 phase A: diagnostics only, default off
         self.fe_lines: dict | None = None
@@ -3524,6 +3534,26 @@ class _StaticMap:
         col = ob.oc + np.rint(lat / ob.cell).astype(np.int64)
         ok = (row >= 0) & (row < ob.size) & (col >= 0) & (col < ob.size)
         self.b_rr, self.b_cc, self.b_row, self.b_col = rr[ok], cc[ok], row[ok], col[ok]
+        if self.obs_on:                    # v26.2.12 follow-up (O26): keep the obstacle-class bases in world coordinates for a short while
+            t = float(self.times[i])
+            cls = grid[self.b_rr, self.b_cc]
+            m = self.obs_lut[np.minimum(cls, 255)]
+            fwd = (ob.orow - self.b_row[m]) * ob.cell
+            right = (self.b_col[m] - ob.oc) * ob.cell
+            x, y, th = self.pose
+            s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
+            self.obs_hist.append((t, x + s_ * fwd + c_ * right, y + c_ * fwd - s_ * right))
+            self.obs_hist = [h for h in self.obs_hist if h[0] >= t - self.obs_recent_s - 1e-9]
+
+    def recent_obstacle_points(self) -> tuple[np.ndarray, np.ndarray]:
+        """The obstacle-class base points of the last ``recentS`` s in the current ego frame (forward m, right m): the world points, seen from the pose now."""
+        if not getattr(self, "obs_hist", None):
+            return np.zeros(0), np.zeros(0)
+        x, y, th = self.pose
+        s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
+        wx = np.concatenate([h[1] for h in self.obs_hist]) - x
+        wy = np.concatenate([h[2] for h in self.obs_hist]) - y
+        return wx * s_ + wy * c_, wx * c_ - wy * s_
 
     # -- solid areas (v26.2.2) -----------------------------------------------------------------------------
     def solid_border(self, fwd: float, right: float) -> tuple[float, float] | None:
@@ -3777,34 +3807,93 @@ class _StaticMap:
                 "className": self.classes_name(int(self.classes[k]))}
 
     def blocked_ahead(self, bcfg: dict) -> dict | None:
-        """v26.2.12 (``blocked``, review 9, 21.17 s: "inform of blocking area ahead and towards which direction the sidewalk continues"): the lane
-        ahead within ``aheadM`` is blocked when solid cells (``solidClasses``, confidence >= the map's min) cover >= ``widthFrac`` of its width (the
-        lane's lateral bins that hold a solid cell); the free direction is the ray within +-``angleDeg`` with the longest run (>= ``minClearM``) of
-        walkable cells (``walkableClasses``) not interrupted by solid cells. Returns {share, clearM, bearingDeg, clock, label, fwd, right} or None."""
+        """v26.2.12 (``blocked``, review 9, 21.17 s: "inform of blocking area ahead and towards which direction the sidewalk continues"), follow-up (O26):
+        the lane (+-lane half width) ahead is blocked by (A) a wall (``wallClasses``, fused map cells, within ``aheadM``) covering >= ``widthFrac`` of its
+        lateral bins, or (B) an obstacle on the walkway (``obstacle.classes``: the fused map's cells plus the object-base points of the last ``recentS`` s,
+        dead-reckoned to now) within ``obstacle.aheadM`` covering >= ``obstacle.widthFrac``. The free direction is the ray (every ``angleStepDeg`` within
+        +-``angleDeg``, not 0) with the smallest |angle| whose walkable run reaches past the blockage + 0.5 m (and >= ``minClearM``) with no solid
+        cell / obstacle evidence within ``freeHalfWidthM`` of it. Returns {kind, share, free, label, blockClock, clock, bearingDeg, clearM, cfwd, cright, ...}
+        or None."""
         if self.classes is None:
             return None
         ob = self.ob
         if "_blk" not in self.__dict__:
             names = self._names
-            self._blk = (np.array([n in set(bcfg.get("solidClasses", ())) for n in names] + [False] * (256 - len(names))),
-                         np.array([n in set(bcfg.get("walkableClasses", ())) for n in names] + [False] * (256 - len(names))))
-        solid_lut, walk_lut = self._blk
-        ahead_m = float(bcfg.get("aheadM", 3.0))
+            lut = lambda key: np.array([n in set(bcfg.get(key, ())) for n in names] + [False] * (256 - len(names)))      # noqa: E731
+            self._blk = (lut("solidClasses"), lut("walkableClasses"), lut("wallClasses"),
+                         np.array([n in set((bcfg.get("obstacle") or {}).get("classes", ())) for n in names] + [False] * (256 - len(names))))
+        solid_lut, walk_lut, wall_lut, obs_lut = self._blk
         lane_half = self.lane_half
-        solid = solid_lut[self.classes] & (self.conf >= self.min_conf)
-        strip = (ob.fwd > float(bcfg.get("minAheadM", 0.4))) & (ob.fwd <= ahead_m) & (np.abs(ob.right) <= lane_half)
+        min_ahead = float(bcfg.get("minAheadM", 0.4))
+        ocfg = bcfg.get("obstacle") or {}
+        conf_ok = self.conf >= self.min_conf
         nb = max(2, int(round(2 * lane_half / 0.1)))
-        bins = np.clip(((ob.right[strip] + lane_half) / (2 * lane_half) * nb).astype(np.int64), 0, nb - 1)
-        hit = np.zeros(nb, dtype=bool)
-        hit[bins[solid[strip]]] = True
-        share = float(hit.mean())
-        if share < float(bcfg.get("widthFrac", 0.7)):
+
+        def lane_share(f: np.ndarray, r: np.ndarray, reach: float) -> tuple[float, np.ndarray]:
+            m = (f > min_ahead) & (f <= reach) & (np.abs(r) <= lane_half)
+            hit = np.zeros(nb, dtype=bool)
+            hit[np.clip(((r[m] + lane_half) / (2 * lane_half) * nb).astype(np.int64), 0, nb - 1)] = True
+            return float(hit.mean()), m
+
+        kind = None
+        wmask = wall_lut[self.classes] & conf_ok
+        share, m = lane_share(ob.fwd[wmask], ob.right[wmask], float(bcfg.get("aheadM", 3.0)))
+        reach = float(bcfg.get("aheadM", 3.0))
+        pf = pr = np.zeros(0)
+        omask = None
+        if share >= float(bcfg.get("widthFrac", 0.7)):
+            kind = "wall"
+            ef, er = ob.fwd[wmask], ob.right[wmask]
+        else:
+            reach = float(ocfg.get("aheadM", 6.5))
+            omask = obs_lut[self.classes] & conf_ok
+            pf, pr = self.recent_obstacle_points()
+            ef, er = np.concatenate([ob.fwd[omask], pf]), np.concatenate([ob.right[omask], pr])
+            share, m = lane_share(ef, er, reach)
+            if share >= float(ocfg.get("widthFrac", 0.5)):
+                kind = "obstacle"
+        if kind is None:
             return None
+        lf, lr = ef[m], er[m]                                              # the evidence inside the lane
+        near, far = float(lf.min()), float(lf.max())
+        wide = (ef > min_ahead) & (ef <= min(reach, near + 1.5)) & (np.abs(er) <= lane_half + 1.5)
+        cf, cr = float(ef[wide].mean()), float(er[wide].mean())
+        block_q = clock_quarter(math.degrees(math.atan2(cr, cf)))
+        # the label: the walkable class under the user (the lane 0.5-2 m ahead, majority)
+        lab = "sidewalk"
+        under = (ob.fwd > 0.5) & (ob.fwd <= 2.0) & (np.abs(ob.right) <= lane_half) & walk_lut[self.classes]
+        if under.any():
+            ids, cnt = np.unique(self.classes[under], return_counts=True)
+            lab = (bcfg.get("walkableLabels") or {}).get(self._names[int(ids[int(np.argmax(cnt))])], lab)
+        out = {"kind": kind, "share": round(share, 2), "label": lab, "cfwd": round(cf, 2), "cright": round(cr, 2),
+               "blockQ": block_q, "blockClock": clock_text(block_q)}
+        # the solid map cells and the obstacle evidence, grown by freeHalfWidthM: what a free ray must not touch
+        solid = solid_lut[self.classes] & conf_ok
+        if omask is None:
+            pf, pr = self.recent_obstacle_points()
+        if pf.size:
+            rr_ = np.rint(ob.orow - pf / ob.cell).astype(np.int64)
+            cc_ = np.rint(ob.oc + pr / ob.cell).astype(np.int64)
+            okp = (rr_ >= 0) & (rr_ < ob.size) & (cc_ >= 0) & (cc_ < ob.size)
+            solid = solid.copy()
+            solid[rr_[okp], cc_[okp]] = True
+        g = int(math.ceil(float(bcfg.get("freeHalfWidthM", 0.25)) / ob.cell - 1e-9))
+        if g > 0:
+            pad = np.pad(solid, g)
+            grown = np.zeros_like(solid)
+            n = ob.size
+            for dy in range(2 * g + 1):
+                for dx in range(2 * g + 1):
+                    grown |= pad[dy:dy + n, dx:dx + n]
+            solid = grown
         walk = walk_lut[self.classes] & (self.conf >= int(float(bcfg.get("walkMinConf", 0.3)) * 255))
         best = None
-        step = float(bcfg.get("angleStepDeg", 10.0))
+        step = float(bcfg.get("angleStepDeg", 7.5))
         max_ang = float(bcfg.get("angleDeg", 60.0))
+        min_clear = float(bcfg.get("minClearM", 2.0))
         for ang in np.arange(-max_ang, max_ang + 1e-6, step):
+            if abs(ang) < 1e-6:
+                continue
             a = math.radians(ang)
             k = np.arange(1, int(8.0 / ob.cell))
             rr = np.rint(ob.orow - math.cos(a) * k).astype(np.int64)
@@ -3826,20 +3915,19 @@ class _StaticMap:
                     if gap * ob.cell > 0.3:
                         break
             clear = run * ob.cell
-            if abs(ang) >= float(bcfg.get("minAngleDeg", 15.0)) and clear >= float(bcfg.get("minClearM", 2.0)) and (best is None or clear > best[0] + 1e-9
-                                                              or (abs(clear - best[0]) <= 1e-9 and abs(ang) < abs(best[1]))):
+            need = max(min_clear, (far + 0.5) / math.cos(a))
+            if clear >= need - 1e-9 and (best is None or abs(ang) < abs(best[1]) - 1e-9
+                                         or (abs(abs(ang) - abs(best[1])) <= 1e-9 and clear > best[0] + 1e-9)):
                 best = (clear, float(ang))
-        cf, cr = round(float(ob.fwd[strip & solid].mean()), 2), round(float(ob.right[strip & solid].mean()), 2)
         if best is None:
-            return {"share": round(share, 2), "free": None, "cfwd": cf, "cright": cr}
+            return {**out, "free": None}
         clear, ang = best
         a = math.radians(ang)
         cq = clock_quarter(ang)
         j_end = max(0, int(clear / ob.cell) - 1)
         end_r, end_c = int(np.rint(ob.orow - math.cos(a) * (j_end + 1))), int(np.rint(ob.oc + math.sin(a) * (j_end + 1)))
         end_name = self._names[int(self.classes[end_r, end_c])] if (0 <= end_r < ob.size and 0 <= end_c < ob.size and int(self.classes[end_r, end_c]) < len(self._names)) else None
-        return {"share": round(share, 2), "free": True, "endClass": end_name,
-                "cfwd": round(float(ob.fwd[strip & solid].mean()), 2), "cright": round(float(ob.right[strip & solid].mean()), 2), "clearM": round(clear, 1), "bearingDeg": ang, "clockQ": cq, "clock": clock_text(cq),
+        return {**out, "free": True, "endClass": end_name, "clearM": round(clear, 1), "bearingDeg": ang, "clockQ": cq, "clock": clock_text(cq),
                 "fwd": round(math.cos(a) * clear, 2), "right": round(math.sin(a) * clear, 2)}
 
     def classes_name(self, cid: int) -> str:
@@ -4261,7 +4349,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     follow: dict = {}                          # (family, side) -> {"t": last activity, "t_real": last real beep, "lat": the episode's lateral}
     follow_cfg = {**follow_cfg, **(follow_cfg.get("follow") or {})}
     blk_cfg = config.get("blocked") or {}
-    blk_run, blk_last_t, blk_pos = 0, -math.inf, None
+    blk_run, blk_last_t, blk_pos, blk_kind = 0, -math.inf, None, None
+    blk_seen_t, blk_open = -math.inf, False         # follow-up (O26): one phrase per blockage; it ends after clearS s without one
     meas_hist: list[tuple[float, float]] = []
     meas_win = float((config["speech"].get("predictive") or {}).get("measuredWindowS", 1.5))
     reset_classes = frozenset(jump_cfg.get("resetClasses", ("vehicle", "rider")))
@@ -4820,19 +4909,23 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         speech = policy.step(t, items, tracks, surface_known)
         if speech is None and blk_cfg.get("enabled", False) and smap is not None and not stationary and ego_speed and world.theta is not None:
             blk = smap.blocked_ahead(blk_cfg)
-            blk_run = blk_run + 1 if blk is not None else 0
-            if blk is not None and blk_run >= int(blk_cfg.get("confirmFrames", 2)) and t - blk_last_t >= float(blk_cfg.get("cooldownS", 5.0)) \
+            blk_run = blk_run + 1 if blk is not None and blk["kind"] == blk_kind else (1 if blk is not None else 0)      # confirmed as one kind
+            blk_kind = blk["kind"] if blk is not None else None
+            if t - blk_seen_t > float(blk_cfg.get("clearS", 2.0)):
+                blk_open = False
+            if blk is not None:
+                blk_seen_t = t
+            if blk is not None and not blk_open and blk_run >= int(blk_cfg.get("confirmFrames", 2)) and t - blk_last_t >= float(blk_cfg.get("cooldownS", 5.0)) \
                     and policy._gap_ok(t, priority=True):
                 th_ = math.radians(world.theta)
                 bx = world.x + math.sin(th_) * blk["cfwd"] + math.cos(th_) * blk["cright"]
                 by = world.y + math.cos(th_) * blk["cfwd"] - math.sin(th_) * blk["cright"]
                 if blk_pos is None or math.hypot(bx - blk_pos[0], by - blk_pos[1]) > float(blk_cfg.get("sameSpotM", 3.0)):
-                    lab = (blk_cfg.get("walkableLabels") or {}).get(blk.get("endClass"), "sidewalk")
-                    txt = (blk_cfg["templates"]["free"].format(label=lab, clock=blk["clock"]) if blk.get("free")
-                           else blk_cfg["templates"]["none"])
+                    txt = (blk_cfg["templates"]["free"].format(label=blk["label"], clock=blk["blockClock"], free=blk["clock"]) if blk.get("free")
+                           else blk_cfg["templates"]["none"].format(label=blk["label"], clock=blk["blockClock"]))
                     speech = policy._event(t, "feature", txt, None)
-                    speech["blocked"] = {k: blk[k] for k in ("share", "clearM", "bearingDeg", "clock", "endClass", "cfwd", "cright") if k in blk}
-                    blk_last_t, blk_pos = t, (bx, by)
+                    speech["blocked"] = {k: blk[k] for k in ("kind", "share", "clearM", "bearingDeg", "clock", "blockClock", "endClass", "cfwd", "cright") if k in blk}
+                    blk_last_t, blk_pos, blk_open = t, (bx, by), True
         elif speech is not None:
             blk_run = 0
         elif blk_cfg.get("enabled", False):
