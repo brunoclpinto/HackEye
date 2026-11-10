@@ -1,5 +1,5 @@
 """Per fixture window: speech / beeps counts and the user's ticks matched, per named variant of the config (v26.2.11: source image|map x predictive;
-v26.2.12 and v26.2.13: the new rules one at a time, see ``variants()``).
+v26.2.12, v26.2.13 and v26.2.14: the new rules one at a time, see ``variants()``).
 
     python tools/collision_score.py [variant ...] [--rows] [--json out.json]      (run it in the Lab container: cd /rnd && python tools/collision_score.py)
 
@@ -69,14 +69,21 @@ NEW13_OFF = {"beeps.follow.windowS": 0, "speech.knownWall.enabled": False, "spee
 LEAVE_ONE_OUT13 = {"ratio": "beeps.follow.windowS", "known": "speech.knownWall.enabled", "away": "speech.away.enabled", "passing": "beeps.passing.enabled"}
 
 
+# v26.2.14: the movers' own motion, the width rule of the "blocked" obstacle kind, the whole component of every hazards item
+NEW14_OFF = {"motion.enabled": False, "blocked.obstacle.minWidthM": 0.0, "output.fullAllItems": False}
+LEAVE_ONE_OUT14 = {"motion": "motion.enabled", "width": "blocked.obstacle.minWidthM", "full": "output.fullAllItems"}
+
+
 def variants() -> dict[str, dict]:
-    out = {"v26.2.11": {**V26211, **NEW13_OFF}, "v26.2.12": dict(NEW13_OFF), "new": {}, "new@1.0": {"tones.speechRate": 1.0},
-           "mapOnly": {**NEW_OFF, **NEW13_OFF, "tones.speechRate": 1.0}}
+    out = {"v26.2.11": {**V26211, **NEW13_OFF, **NEW14_OFF}, "v26.2.12": {**NEW13_OFF, **NEW14_OFF}, "v26.2.13": dict(NEW14_OFF), "new": {},
+           "new@1.0": {"tones.speechRate": 1.0}, "mapOnly": {**NEW_OFF, **NEW13_OFF, **NEW14_OFF, "tones.speechRate": 1.0}}
     for k, d in LEAVE_ONE_OUT.items():
         key = next(iter(d.values()))
         out[f"new-{k}"] = {key: NEW_OFF[key]}
     for k, key in LEAVE_ONE_OUT13.items():
         out[f"new-{k}"] = {key: NEW13_OFF[key]}
+    for k, key in LEAVE_ONE_OUT14.items():
+        out[f"new-{k}"] = {key: NEW14_OFF[key]}
     return out
 
 
@@ -92,6 +99,12 @@ def run_variant(overrides: dict, names=None):
         s = meta["settings"]
         ticks = [a for a in meta.get("annotations", []) if a.get("verdict") == "correct" and a.get("event", {}).get("type", "speech") in ("speech", "beeps")]
         bads = [a for a in meta.get("annotations", []) if a.get("verdict") in ("remove", "incorrect") and a.get("event", {}).get("type", "speech") in ("speech", "beeps")]
+        cut = meta.get("implicitCorrectBefore")         # v26.2.14: the user's rule: reviewing a later item marks the earlier unreviewed ones correct
+        if cut is not None:
+            seen = [a["t"] for a in meta.get("annotations", []) if a.get("kind") == "verdict"]
+            stored = next((v for k, v in meta.items() if k.startswith("systemEvents")), [])
+            ticks += [{"t": e["t"], "event": e} for e in stored if e["type"] in ("speech", "beeps") and e["t"] < cut
+                      and (e["type"] != "beeps" or str(e.get("kind", "")).startswith("collision")) and not any(abs(e["t"] - x) <= 0.7 for x in seen)]
         for i, w in enumerate(meta["windows"]):
             cfg = collisions.apply_overrides(col.load_config(), {"collision": overrides}, "collision")
             wcfg = worldmap.load_config()

@@ -939,6 +939,11 @@ class _Item:
     full_ref: tuple | None = None             # (v26.2.12) (labelled full-class grid, the component's slices, its label): the whole component incl. rows above the horizon
     pred_v: tuple | None = None               # (v26.2.11, predictive speech) a trusted mover's world velocity in our frame (forward, right) m/s
     followed: bool = False                    # (v26.2.13) a wall the user walks along (its distance does not close at the walking speed): no beep episode, no phrase
+    own: tuple | None = None                  # (v26.2.14) the mover's own ground velocity (forward, right) m/s in our frame and its sigma, see _OwnMotion
+    own_ok: bool = False                      # ... the estimate is usable (enough frames, sigma small): the motion words come from it, not from the closing rate
+    own_closing: float | None = None          # ... the rate the gap shrinks at: our speed minus its forward speed
+    near_pass: bool = False                   # ... an approaching mover that passes within ``motion.nearPassM`` of us within ``motion.nearPassS``: a collision danger
+    from_side: str = ""                       # ... "right" / "left": it comes across our path from that side (own lateral speed >= ``motion.sideMps``)
 
     def __post_init__(self) -> None:
         if self.clock_q is None:
@@ -2279,7 +2284,7 @@ def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_
             # beep, and only on a real collision course: |lateral| (standing / unknown) or the predicted |lateral| at the
             # meeting (moving) within ``beepLateralM``. Unknown motion or a measured approach at arm's length no longer beeps.
             if it.moving is True:
-                course = _on_collision_course(it, roles) and not it.receding
+                course = (_on_collision_course(it, roles) and not it.receding) or it.near_pass     # v26.2.14: or it passes within nearPassM by its own motion
             else:
                 course = lat <= roles.get("beepLateralM", lane_half_m)
             near_steps = it.steps < roles.get("peopleSpeakMinSteps", 0.0)
@@ -2287,7 +2292,7 @@ def _assign_role(it: _Item, span: tuple[float, float] | None, roles: dict, lane_
                 if not near_steps and lat <= roles.get("peopleSpeakLateralM", lane_half_m):
                     it.role, it.collision = "danger", course
                 elif near_steps and course:
-                    it.role, it.collision, it.speak = "danger", True, False
+                    it.role, it.collision, it.speak = "danger", True, it.near_pass     # (a near-pass mover is said as it closes, see SpeechPolicy.step)
             # v26.1.13 follow-up (the user chose "a softer sound for an approaching person nearby"): a person / animal measured
             # approaching, within ``proximitySteps`` and ``proximityLateralM``, not on a collision course: the soft proximity
             # sound. Not a role (speech and context are untouched); riders and vehicles are spoken early and beep on a course.
@@ -2469,6 +2474,7 @@ class SpeechPolicy:
         self.last_t: float | None = None
         self.last_prio_t: float | None = None
         self.last_danger_t: float | None = None                 # last danger / final phrase (v26.1.15)
+        self.last_say_t: float | None = None                    # last phrase that was really spoken (v26.2.14)
         self.last_beep_t: float | None = None                   # last frame with a collision beep driver (v26.1.16, set by the driver)
         self.after_danger_s = float(config["roles"].get("contextAfterDangerSeconds", 0.0))
         self.memory: dict[str, float] = {}                      # context label (family) -> last seen
@@ -2524,6 +2530,13 @@ class SpeechPolicy:
         self.speech_rate = 1.0                   # the sound profile's speechRate (set by the driver)
         self.ego_u: float | None = None          # our ground speed (m/s), None = unknown (no prediction); set by the driver each frame
         self.pred_stats = {"phrases": 0, "changed": 0, "dropped": 0}
+        mo = config.get("motion") or {}                                  # v26.2.14: movers by their own motion (see _OwnMotion)
+        self.motion_on = bool(mo.get("enabled", False))
+        self.mo_again_steps = float(mo.get("againSteps", 2.0))           # a near-pass mover is said again when its steps dropped by this much ...
+        self.mo_again_gap = float(mo.get("againGapS", 1.5))              # ... since its last phrase, at least this long ago
+        self.cut_cfg = mo.get("cut") or {}
+        self.ahead_cfg = mo.get("ahead") or {}
+        self.mover_state: dict[int, dict] = {}   # track id -> {"out_t", "cut_t", "cut_run", "ahead_t0", "ahead_done", "fired_t", "away_t"}
 
     # -- memory ----------------------------------------------------------
     def clear_context(self, t: float | None = None) -> None:
@@ -2618,8 +2631,10 @@ class SpeechPolicy:
     def _text(self, template: str, it: _Item | None = None, label: str = "") -> str:
         if it is None:
             return self.cfg["templates"][template].format(label=label)
-        if template == "approach" and it.fast:
+        if template == "approach" and it.fast and not it.own_ok:
             return self._fmt("approachFast", label=it.label, clock=it.clock_text, steps=None)
+        if template == "approach" and it.from_side and "approachSide" in self.cfg["templates"]:      # v26.2.14: "vehicle approaching from right at 12:30 in 5"
+            return self._fmt("approachSide", label=it.label, clock=it.clock_text, steps=self._steps_txt(it), side=it.from_side)
         return self._fmt(template, label=it.label, clock=it.clock_text, steps=self._steps_txt(it))
 
     @staticmethod
@@ -2636,6 +2651,8 @@ class SpeechPolicy:
         their speed the number means nothing), a person walking away is "moving away", a person (rider: "stopped") measured
         standing is "standing". Anything whose motion is not measured keeps ``base`` ("{label} at {clock} in {steps}")."""
         approach = it.moving is True and not it.receding and (it.approaching or (it.fast and it.role in ("danger", "final")))
+        if it.own_ok:                   # v26.2.14: "approaching" only when its own motion says so (a parked vehicle is not approaching)
+            approach = it.moving is True and it.approaching and not it.receding
         if approach and (it.ego_settled or it.own_fast):
             return "approach"           # v26.1.16: a rider / vehicle on an unsettled ego speed only if it closes faster than we could walk
         if not it.ego_settled:          # v26.1.15 (review 7): a ramping ego speed gives wrong states; the plain phrase, now
@@ -2653,8 +2670,10 @@ class SpeechPolicy:
         clocks = {i.clock_q for i in group}
         steps = self._steps_txt(near)
         if template in self.STATE_WORDS:
-            if template == "approach" and near.fast:
+            if template == "approach" and near.fast and not near.own_ok:
                 return self._fmt("approachFast", label=near.label, clock=self._join_clocks(group), steps=None)
+            if template == "approach" and len(group) == 1 and near.from_side and "approachSide" in self.cfg["templates"]:
+                return self._fmt("approachSide", label=near.label, clock=self._join_clocks(group), steps=steps, side=near.from_side)
             if len(clocks) == 1 or template in ("approach", "receding"):
                 return self._fmt(template, label=near.label, clock=self._join_clocks(group), steps=steps)
             return self._fmt("multi", label=f"{near.label} {self.STATE_WORDS[template]}", clocks=self._join_clocks(group), steps=steps)
@@ -2712,6 +2731,21 @@ class SpeechPolicy:
         if t - t0 < self.reann_gap_s - 1e-9:
             return False
         return abs(it.clock_q - q0) >= self.reann_quarters or it.steps - s0 >= self.reann_steps
+
+    def _closing_again(self, t: float, it: _Item, tr: "_Track") -> bool:
+        """v26.2.14 (``motion.againSteps`` / ``againGapS``, review 11, 59.16 / 69.34 s: "stops speaking when the person is already on top of me"): an
+        approaching mover that passes within ``nearPassM`` of us (``near_pass``) and was said before is said again when its steps dropped by
+        ``againSteps`` since its last phrase, at least ``againGapS`` s later: "person approaching at 11:30 in 3"."""
+        if not (self.motion_on and it.near_pass and it.speak):
+            return False
+        ref = None                                    # (steps, t) of the last phrase for this mover: its remembered object (fragments of one person), else its track
+        if self._mem and it.mem_id is not None:
+            ref = self.world.entries.get(it.mem_id, {}).get("said")
+        if ref is None and tr.danger_done and tr.said is not None:
+            ref = (tr.said[2], tr.said[3])
+        if ref is None:
+            return False
+        return (ref[0] - it.steps >= self.mo_again_steps - 1e-9 and t - ref[1] >= self.mo_again_gap - 1e-9 and self._kind(it, "danger") == "approach")
 
     def _zone_ok(self, it: _Item) -> bool:
         """v26.2.12 (``speech.zoneOnly``, review 9, 1.17 / 23.51 s: "not within the collision zone"): a thin static (pole, sign, light, obstacle,
@@ -2787,7 +2821,7 @@ class SpeechPolicy:
         last = max((x for x in (self.last_danger_t, self.last_beep_t) if x is not None), default=None)
         return last is not None and t - last < self.after_danger_s - 1e-9
 
-    def _gap_ok(self, t: float, priority: bool = False, danger: bool = False) -> bool:
+    def _gap_ok(self, t: float, priority: bool = False, danger: bool = False, urgent: bool = False) -> bool:
         """Global minimum gap between phrases. A danger/feature phrase (``priority``) waits only the
         shorter ``priorityMinGapSeconds``: it must not queue behind a scene-context phrase. A phrase with a
         danger in it (``danger``, v26.1.15, review 7: a person was held 0.8 s behind a pole) only counts
@@ -2795,6 +2829,8 @@ class SpeechPolicy:
         gap = self.cfg["globalMinGapSeconds"]
         if danger:
             gap = min(gap, self.cfg.get("priorityMinGapSeconds", gap))
+            if urgent:           # v26.2.14: a near-pass mover waits only for the last SPOKEN phrase (a slot consumed silently does not delay it)
+                return self.last_say_t is None or t - self.last_say_t >= gap - 1e-9
             return self.last_danger_t is None or t - self.last_danger_t >= gap - 1e-9
         if priority:
             # only earlier danger/feature phrases count: a context phrase never delays a danger
@@ -2804,6 +2840,8 @@ class SpeechPolicy:
 
     def _event(self, t: float, role: str, text: str, it: _Item | None, urgency: str = "none") -> dict:
         self.last_t = t
+        if text:
+            self.last_say_t = t
         if role in ("danger", "final", "feature"):
             self.last_prio_t = t
         if role in ("danger", "final"):
@@ -2836,6 +2874,7 @@ class SpeechPolicy:
         for it in danger:
             tr = tracks[it.track_id]
             if it.urgency == "final" and not tr.final_done and it.speak and not it.unstable:
+                again = self._closing_again(t, it, tr)
                 tr.final_done = tr.danger_done = True
                 tr.said = (it.distance_m, it.clock_q, it.steps, t)
                 tr.approach_done = tr.approach_done or self._kind(it, "final") == "approach"
@@ -2844,12 +2883,14 @@ class SpeechPolicy:
                 # v26.1.7: a final is only for what was never named. The slot is consumed all the same (the state
                 # machine runs exactly as in v26.1.6, so nothing else moves earlier), but nothing is said: the
                 # parking-sensor beeps carry the proximity.
-                mute = self._seen_before(it, danger=True)        # v26.1.16: only an earlier danger / final for it mutes (not a context phrase)
+                mute = self._seen_before(it, danger=True) and not again       # v26.1.16: only an earlier danger / final for it mutes (not a context phrase)
                 # ... and a never-named context-class thing (vegetation, a wall) reached in the middle of other dangers: its beeps are enough
                 mute = mute or (it.group == "static" and not it.thin and tr.context_seen and not it.mem_named and self._danger_recent(t))
                 mute = mute or it.followed           # v26.2.13: a wall walked along: the slot is consumed, nothing is said
                 if not mute:
                     self._register(t, it, tracks, danger=True)
+                    if self._mem and it.mem_id is not None:
+                        self.world.entries[it.mem_id]["said"] = (it.steps, t)
                 kind = self._kind(it, "final")
                 txt, info = self._compose(lambda v: [] if v(it) is None else [([it], self._text(kind, v(it)))], it)
                 ev = self._event(t, "final", txt or "", it, "final")
@@ -2858,6 +2899,7 @@ class SpeechPolicy:
         # v26.1.12 (review 5, 76.5 s): a mover announced before is announced again, once, when it turns to "approaching" on a
         # collision course ("moving away" at 63 s, then walking towards us); this is the only re-announcement
         reann = {i.track_id for i in danger if self._reannounce(t, i, tracks[i.track_id])}      # v26.2.12
+        reann |= {i.track_id for i in danger if self._closing_again(t, i, tracks[i.track_id])}     # v26.2.14: a mover passing close, said again as it closes
         pend_d = [i for i in danger if i.speak and not i.unstable and (not tracks[i.track_id].danger_done
                                         or (not tracks[i.track_id].approach_done and self._kind(i, "danger") == "approach")
                                         or i.track_id in reann)
@@ -2907,7 +2949,7 @@ class SpeechPolicy:
                 self._register(t, i, tracks, named=False)
             note = []                           # said already; a noticed thin object keeps it quiet
         if pend_d or pend_f or note:
-            if not self._gap_ok(t, priority=True, danger=bool(pend_d)):
+            if not self._gap_ok(t, priority=True, danger=bool(pend_d), urgent=self.motion_on and any(i.near_pass for i in pend_d)):
                 return None
             for i in dropped_close:                         # co-located with a closer item that is said: consumed with it
                 tracks[i.track_id].danger_done = True
@@ -2962,6 +3004,8 @@ class SpeechPolicy:
                     for i in vg:
                         self._register(t, i, tracks, approach=(kind == "approach"), danger=is_danger)
                         self.note_wall(t, i)
+                        if is_danger and self._mem and i.mem_id is not None:
+                            self.world.entries[i.mem_id]["said"] = (i.steps, t)
             for i in cover:
                 self._register(t, i, tracks, named=False)
             if not voiced:
@@ -3099,8 +3143,8 @@ class SpeechPolicy:
                 st["still_t0"] = None
             if it.role == "danger":
                 st["dan_q"] = it.clock_q               # (the clock it is spoken at: where it was last a danger)
-            if it.role == "danger" and it.collision:
-                st.update(col_t=t, leave_t0=None)
+            if it.role == "danger" and (it.collision or (self.motion_on and it.own_ok and it.receding)):
+                st.update(col_t=t, leave_t0=None)      # (v26.2.14: a person walking away ahead is no collision course now, but it still "moves away" when it leaves the lane)
                 continue
             if t - st["col_t"] > float(a.get("recentS", 2.0)) + 1e-9:
                 st["leave_t0"] = None
@@ -3146,6 +3190,72 @@ class SpeechPolicy:
             st["fired_t"], st["leave_t0"], st["col_t"] = t, None, -math.inf
             return self._event(t, "danger", text, it, "danger")
         return None
+
+    # -- "cutting in front" / "moving away" ahead (v26.2.14) -------------------------
+    def motion_speech(self, t: float, items: list[_Item]) -> dict | None:
+        """v26.2.14 (``motion.cut`` / ``motion.ahead``, review 11, 141.0 / 149.37 s), from a person's own velocity (``_OwnMotion``).
+
+        * "person cutting in front" (final, once per track per ``cooldownS``): a person within ``maxSteps`` steps whose own lateral motion
+          (>= ``minLatMps``, towards our line) takes it into the lane within ``withinS`` s, and who was outside the lane (or at its edge) a moment ago
+          (``recentOutS``), for ``confirmFrames`` frames;
+        * "person moving away at 12 in 4" (danger): a person in the lane within ``maxSteps`` steps who walks the same way (own speed away from us
+          >= ``minAwayMps``, lateral speed <= ``maxLatMps``) and whose gap is steady or growing (closing <= ``maxCloseMps``) for ``stableS`` s: once
+          per spell in the lane."""
+        if not self.motion_on:
+            return None
+        cut, ah = self.cut_cfg, self.ahead_cfg
+        lane = self.lane_half
+        seen = set()
+        fire = None
+        for it in items:
+            if it.group != "moving" or it.class_name != "person" or it.coasting or it.ghost or not it.settled:
+                continue
+            tid = it.track_id
+            seen.add(tid)
+            st = self.mover_state.setdefault(tid, {"out_t": -math.inf, "out_since": None, "cut_run": 0, "cut_fired": -math.inf,
+                                                   "ahead_t0": None, "ahead_done": False, "ahead_fired": -math.inf})
+            lat = it.lateral_m
+            if abs(lat) > lane + float(cut.get("outMarginM", 0.15)):
+                st["out_t"] = t
+                st["out_since"] = t if st["out_since"] is None else st["out_since"]
+                if t - st["out_since"] >= float(ah.get("rearmOutS", 1.0)) - 1e-9:
+                    st["ahead_done"] = False
+            else:
+                st["out_since"] = None
+            vf, vr, _ = it.own if (it.own_ok and it.own) else (None, None, None)
+            if vf is None or self.stationary:
+                st["cut_run"], st["ahead_t0"] = 0, None
+                continue
+            rng = max(math.hypot(it.distance_m, lat), 1e-6)
+            into = (lat * vr < 0 and abs(vr) >= float(cut.get("minLatMps", 0.3))
+                    and abs(lat + vr * float(cut.get("withinS", 1.5))) <= lane and abs(lat) <= lane + float(cut.get("edgeM", 0.5))
+                    and t - st["out_t"] <= float(cut.get("recentOutS", 2.5)) and it.steps <= float(cut.get("maxSteps", 4.0)))
+            st["cut_run"] = st["cut_run"] + 1 if into else 0
+            away = (it.distance_m * vf + lat * vr) / rng
+            ahead = (abs(lat) <= lane and it.steps <= float(ah.get("maxSteps", 5.0)) and away >= float(ah.get("minAwayMps", 0.4))
+                     and abs(vr) <= float(ah.get("maxLatMps", 0.3)) and it.own_closing is not None and it.own_closing <= float(ah.get("maxCloseMps", 0.3)))
+            if ahead:
+                st["ahead_t0"] = t if st["ahead_t0"] is None else st["ahead_t0"]
+            else:
+                st["ahead_t0"] = None
+            if fire is not None:
+                continue
+            if st["cut_run"] >= int(cut.get("confirmFrames", 2)) and t - st["cut_fired"] >= float(cut.get("cooldownS", 10.0)) - 1e-9:
+                fire = ("cut", it, st)
+            elif (st["ahead_t0"] is not None and t - st["ahead_t0"] >= float(ah.get("stableS", 1.0)) - 1e-9 and not st["ahead_done"]
+                  and t - st["ahead_fired"] >= float(ah.get("cooldownS", 10.0)) - 1e-9):
+                fire = ("ahead", it, st)
+        for tid in [k for k in self.mover_state if k not in seen and t - max(self.mover_state[k]["out_t"], self.mover_state[k]["cut_fired"]) > 10.0]:
+            del self.mover_state[tid]
+        if fire is None or not self._gap_ok(t, priority=True, danger=True):
+            return None
+        kind, it, st = fire
+        if kind == "cut":
+            st["cut_fired"], st["cut_run"] = t, 0
+            st["ahead_done"] = False                      # (what follows the cut-in: the person settles in front)
+            return self._event(t, "final", self.cfg["templates"].get("cut", "{label} cutting in front").format(label=it.label), it, "final")
+        st["ahead_fired"], st["ahead_done"] = t, True
+        return self._event(t, "danger", self._fmt("receding", label=it.label, clock=it.clock_text, steps=self._steps_txt(it)), it, "danger")
 
     def memory_if_spoken(self, t: float, it: _Item) -> None:
         """A danger/final call that names a context label counts as having referenced it."""
@@ -3513,12 +3623,15 @@ def _mute_solid(it: _Item, smap: "_StaticMap | None") -> None:
     it.role, it.urgency, it.collision, it.summary_ok, it.proximity, it.speak = "none", "none", False, False, False, False
 
 
-def _hazard_json(it: _Item, gh: int = 0, gw: int = 0) -> dict:
+def _hazard_json(it: _Item, gh: int = 0, gw: int = 0, full_all: bool = False) -> dict:
     out = _hazard_dict(it)
-    if it.role != "none" and gh and gw:
-        outline = item_outline(it, gh, gw)
-        if outline:
-            out["outline"] = outline
+    if gh and gw and (it.role != "none" or full_all):
+        if it.role != "none":
+            outline = item_outline(it, gh, gw)
+            if outline:
+                out["outline"] = outline
+        # v26.2.14 (``output.fullAllItems``) (review 11, Lab note 1: "not able to click on objects above the horizon line"): the whole component of EVERY item that has a shape, not
+        # only of those with a role (a no-role building was cut at the horizon, so it could not be selected above it)
         full = item_full(it, gh, gw)
         if full is not None:
             out["bboxFull"] = full[0]
@@ -3546,6 +3659,9 @@ def _hazard_dict(it: _Item) -> dict:
             **({"insideSolid": True} if it.inside_solid else {}),
             **({"solidCorrected": True, "rawDistanceM": round(it.raw_distance_m, 2)} if it.solid_corrected else {}),
             **({"faceEdge": it.face_edge} if it.face_edge else {}),
+            **({"ownMps": list(it.own)} if it.own else {}),
+            **({"fromSide": it.from_side} if it.from_side else {}),
+            **({"nearPass": True} if it.near_pass else {}),
             **({"distanceSource": it.dist_source, "rawDepthM": _r(it.raw_depth_m, 2), "groundM": _r(it.ground_m, 2)} if it.dist_source else {})}
 
 
@@ -3630,6 +3746,10 @@ class _StaticMap:
         self.obs_recent_s = float(ocfg.get("recentS", 0.7))
         self.obs_on = bool(bk.get("enabled", False)) and bool(self.obs_lut.any())
         self.obs_hist: list[tuple[float, np.ndarray, np.ndarray]] = []       # (t, world x, world y) of the base points
+        self.obs_min_w = float(ocfg.get("minWidthM", 0.0))                   # v26.2.14: the obstacle kind needs one obstacle this wide ...
+        self.obs_min_w_frames = int(ocfg.get("minWidthFrames", 2))           # ... seen in this many of the recent frames
+        self.obs_widths: list[tuple[float, float]] = []                      # (t, lateral extent m of the frame's obstacle-class bases within reach)
+        self.obs_reach = float(ocfg.get("aheadM", 6.5))
         self.times = times
         fe = roles.get("faceEdge") or {}
         self.fe_cfg = faceedge.settings(fe) if fe.get("enabled") else None      # v26.2.2 phase A: diagnostics only, default off
@@ -3670,6 +3790,9 @@ class _StaticMap:
             s_, c_ = math.sin(math.radians(th)), math.cos(math.radians(th))
             self.obs_hist.append((t, x + s_ * fwd + c_ * right, y + c_ * fwd - s_ * right))
             self.obs_hist = [h for h in self.obs_hist if h[0] >= t - self.obs_recent_s - 1e-9]
+            near = (fwd > 0.0) & (fwd <= self.obs_reach) & (np.abs(right) <= self.lane_half + 1.0)
+            self.obs_widths.append((t, float(right[near].max() - right[near].min()) if near.sum() >= 2 else 0.0))
+            self.obs_widths = [w for w in self.obs_widths if w[0] >= t - self.obs_recent_s - 1e-9]
 
     def recent_obstacle_points(self) -> tuple[np.ndarray, np.ndarray]:
         """The obstacle-class base points of the last ``recentS`` s in the current ego frame (forward m, right m): the world points, seen from the pose now."""
@@ -3993,6 +4116,10 @@ class _StaticMap:
             lab = (bcfg.get("walkableLabels") or {}).get(self._names[int(ids[int(np.argmax(cnt))])], lab)
         out = {"kind": kind, "share": round(share, 2), "label": lab, "cfwd": round(cf, 2), "cright": round(cr, 2),
                "blockQ": block_q, "blockClock": clock_text(block_q)}
+        # v26.2.14 (``blocked.obstacle.minWidthM``, review 11, 87.67 s: "not at all, it's a small obstacle"): the obstacle kind is only SAID when one obstacle was
+        # seen at least this wide (the lateral extent of the frame's obstacle bases) in >= ``minWidthFrames`` of the recent frames
+        min_w = getattr(self, "obs_min_w", 0.0)
+        out["wideOk"] = kind != "obstacle" or min_w <= 0 or sum(1 for _, w in self.obs_widths if w >= min_w - 1e-9) >= self.obs_min_w_frames
         # the solid map cells and the obstacle evidence, grown by freeHalfWidthM: what a free ray must not touch
         solid = solid_lut[self.classes] & conf_ok
         if omask is None:
@@ -4331,6 +4458,146 @@ def _passing_close(it: _Item, cfg: dict) -> bool:
             and abs(it.lateral_m) <= float(cfg.get("lateralM", 1.5)) and it.steps <= float(cfg.get("maxSteps", 4.0)))
 
 
+class _OwnMotion:
+    """v26.2.14 (``motion``, review 11, 59.16 / 69.34 / 70.84 / 233.5 s): the own ground velocity of a mover (person, rider, vehicle, animal) from its OWN positions.
+
+    Every frame the item's position is put on the dead-reckoned world plane (our pose integrated from the ego speed and heading, as ``_WorldMemory``
+    does); the last ``windowS`` s of one mover (a track; a new track that appears where a lost one was a moment ago continues its history: fragments of
+    one person) are fitted with a line per axis (Theil-Sen: the median of the pairwise slopes, outliers do not count), the sigma of the slope from the
+    scatter about the line. The velocity is then turned into our frame (forward, right). ``None`` until ``minPoints`` frames spanning ``minSpanS`` s."""
+
+    def __init__(self, cfg: dict):
+        self.on = bool(cfg.get("enabled", False))
+        self.cfg = cfg
+        self.win = float(cfg.get("windowS", 1.2))
+        self.min_pts = int(cfg.get("minPoints", 4))
+        self.min_span = float(cfg.get("minSpanS", 0.6))
+        self.link_m = float(cfg.get("linkM", 1.5))
+        self.link_s = float(cfg.get("linkS", 0.7))
+        self.floor = float(cfg.get("scatterFloorM", 0.12))
+        self.hist: dict[int, list[tuple[float, float, float]]] = {}
+        self.last: dict[int, float] = {}
+        self.x = self.y = 0.0
+        self.theta: float | None = None
+        self.known = False
+        self.cache: dict[int, tuple | None] = {}
+
+    def advance(self, t: float, dt: float, speed: float | None, heading: float | None) -> None:
+        """Our pose of this frame; ``known`` False when the speed or the heading is not known (nothing is observed then)."""
+        self.cache.clear()
+        if heading is None:
+            self.theta, self.known = None, False
+            return
+        if speed is not None:
+            mid = heading if self.theta is None else 0.5 * (self.theta + heading)
+            self.x += speed * dt * math.sin(math.radians(mid))
+            self.y += speed * dt * math.cos(math.radians(mid))
+        self.theta = heading
+        self.known = speed is not None
+
+    def _world(self, it: _Item) -> tuple[float, float]:
+        th = math.radians(self.theta or 0.0)
+        return (self.x + math.sin(th) * it.distance_m + math.cos(th) * it.lateral_m,
+                self.y + math.cos(th) * it.distance_m - math.sin(th) * it.lateral_m)
+
+    def observe(self, it: _Item, t: float) -> None:
+        if not self.known or (it.clipped and not it.from_depth) or it.jumped:
+            return
+        tid = it.track_id
+        wx, wy = self._world(it)
+        h = self.hist.get(tid)
+        if h is None:                      # a new track: the fragment of a mover lost a moment ago continues its history
+            best, best_d = None, self.link_m
+            for oid, oh in self.hist.items():
+                if oid != tid and t - self.last.get(oid, -math.inf) <= self.link_s and oh:
+                    d = math.hypot(oh[-1][1] - wx, oh[-1][2] - wy)
+                    if d <= best_d:
+                        best, best_d = oid, d
+            h = list(self.hist[best]) if best is not None else []
+        h.append((t, wx, wy))
+        self.hist[tid] = [p for p in h if p[0] >= t - self.win - 1e-9]
+        self.last[tid] = t
+        if len(self.hist) > 300:
+            for oid in [o for o, lt in self.last.items() if t - lt > 5.0]:
+                self.hist.pop(oid, None)
+                self.last.pop(oid, None)
+
+    @staticmethod
+    def _slope(ts: np.ndarray, xs: np.ndarray) -> float | None:
+        i, j = np.triu_indices(len(ts), 1)
+        ok = (ts[j] - ts[i]) >= 0.25
+        return float(np.median((xs[j][ok] - xs[i][ok]) / (ts[j][ok] - ts[i][ok]))) if ok.any() else None
+
+    def estimate(self, tid: int, t: float) -> tuple[float, float, float] | None:
+        """(forward m/s, right m/s, sigma m/s) in our frame now, or None."""
+        h = self.hist.get(tid)
+        if not h or self.theta is None or h[-1][0] != t or len(h) < self.min_pts or h[-1][0] - h[0][0] < self.min_span - 1e-9:
+            return None
+        if tid in self.cache:
+            return self.cache[tid]
+        ts = np.array([p[0] for p in h])
+        sxx = float(((ts - ts.mean()) ** 2).sum())
+        v, sg = [], 0.0
+        for k in (1, 2):
+            xs = np.array([p[k] for p in h])
+            s_ = self._slope(ts, xs)
+            if s_ is None or sxx <= 0:
+                self.cache[tid] = None
+                return None
+            r = xs - (s_ * ts + float(np.median(xs - s_ * ts)))
+            scale = max(1.4826 * float(np.median(np.abs(r - np.median(r)))), self.floor)
+            v.append(s_)
+            sg = max(sg, scale / math.sqrt(sxx))
+        th = math.radians(self.theta)
+        out = (v[0] * math.sin(th) + v[1] * math.cos(th), v[0] * math.cos(th) - v[1] * math.sin(th), sg)
+        self.cache[tid] = out
+        return out
+
+    def classify(self, it: _Item, t: float, u: float | None, words: bool = True) -> None:
+        """Set the item's own velocity and, when it is usable, the motion words (``moving`` / ``approaching`` / ``receding``), the side it comes from and
+        the near-pass flag. ``u``: our forward speed (None = unknown). Too few frames leave the closing-rate states as they were; a NOISY estimate
+        (sigma > ``sigmaMaxMps``) leaves them for a person but takes the motion words from a rider / vehicle (their distances flicker: the review-11
+        parked car read 4 m/s towards us)."""
+        c = self.cfg
+        est = self.estimate(it.track_id, t)
+        if est is None:
+            return
+        vf, vr, sg = est
+        it.own = (round(vf, 3), round(vr, 3), round(sg, 3))
+        vehicle = it.class_name == "vehicle"
+        if sg > float(c.get("sigmaMaxMps", 0.5)):
+            if it.fast and words:
+                it.moving, it.approaching, it.receding, it.own_ok = None, False, False, True
+            return
+        it.own_ok = True
+        if u is not None:
+            it.own_closing = u - vf
+        if not words:                                  # our own speed is not settled yet (the start, a hard pan): the velocity is kept, the words are not changed
+            return
+        mins = c.get("minSpeedMps") or {}
+        vmin = float(mins.get("vehicle" if vehicle else "person", 0.8 if vehicle else 0.4))
+        speed = math.hypot(vf, vr)
+        rng = max(math.hypot(it.distance_m, it.lateral_m), 1e-6)
+        toward = -(it.distance_m * vf + it.lateral_m * vr) / rng
+        if speed >= vmin and speed >= float(c.get("sigmaK", 1.0)) * sg:
+            # a rider / vehicle: the depth distances of a parked car read 2-4 m/s towards us (review 11: 36 / 44 / 51 / 67 s), so its own motion can take
+            # the motion words away but never give them; it only confirms the closing-rate state (``vehicleApproachingMps``)
+            it.moving = True if not it.fast else (True if it.moving is True else it.moving)
+            it.approaching = toward >= 0.7 * vmin and (not it.fast or it.approaching)
+            it.receding = toward <= -0.7 * vmin and (not it.fast or it.receding)
+            if abs(vr) >= float(c.get("sideMps", 0.5)) and vr * it.lateral_m < 0.0:
+                it.from_side = "right" if it.lateral_m > 0 else "left"
+            if it.approaching and u is not None and (u - vf) >= float(c.get("nearPassMinClosingMps", 0.3)):
+                t_pass = it.distance_m / (u - vf)
+                it.near_pass = t_pass <= float(c.get("nearPassS", 4.0)) and abs(it.lateral_m + vr * t_pass) <= float(c.get("nearPassM", 1.3))
+        else:
+            it.approaching = it.receding = False
+            if vehicle:
+                it.moving = False                      # a parked vehicle
+            elif speed < float(c.get("standingMps", 0.3)):
+                it.moving = False                      # standing (between standingMps and the minimum speed the closing-rate state stays)
+
+
 def _trusted_track(wtracks, tid: int, t: float) -> dict | None:
     e = wtracks.lookup(tid, t)
     return e if (e is not None and e["trusted"]) else None
@@ -4574,6 +4841,9 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     follow_cfg = {**follow_cfg, **(follow_cfg.get("follow") or {})}
     wfollow = _WallFollow(follow_cfg)          # v26.2.13: the ratio rule (the distance closes less than the walking speed)
     pass_cfg = follow_cfg.get("passing") or {}  # v26.2.13: soft beeps for a person passing close
+    full_all = bool((config.get("output") or {}).get("fullAllItems", False))
+    mover = _OwnMotion(config.get("motion") or {})     # v26.2.14: the own velocity of the movers
+    policy.motion_on = mover.on
     blk_cfg = config.get("blocked") or {}
     blk_run, blk_last_t, blk_pos, blk_kind = 0, -math.inf, None, None
     blk_seen_t, blk_open = -math.inf, False         # follow-up (O26): one phrase per blockage; it ends after clearS s without one
@@ -4889,6 +5159,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         if t - last_hard_pan_t < roles.get("panSettleSeconds", 0.0) - 1e-9:
             ego_settled = False
         turned = ego.update_heading(heading, t, config["pathChange"], dt)
+        if mover.on:
+            mover.advance(t, dt, 0.0 if stationary else ego_speed, heading)
 
         depth_scale_out = None if depth_maps is None or ds is None else _r(ds * a_now, 4) if relative else ds
         if depth_scale_out is None and depth_maps is not None and plane and anchor.fit is not None and anchor.fit.height_units > 0:
@@ -4962,6 +5234,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             it.cross_mps = _cross_velocity(tr.lhist, ego_motion, roles.get("crossWindowSeconds", 1.0))
             if it.track_motion is not None:                  # (source "track") the world track's velocity instead of the image's
                 it.lat_vel, it.cross_mps = it.track_motion[1], it.track_motion[2]
+            if mover.on and it.group == "moving":
+                mover.observe(it, t)
             if it.group == "static" or it.group == "feature":
                 it.moving = False
             elif it.closing is not None and ego_motion is not None:
@@ -4991,6 +5265,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 it.moving = None if tr.mstate is None else tr.mstate != "still"
                 it.approaching = tr.mstate == "approach"
                 it.receding = tr.mstate == "recede"
+            if mover.on and it.group == "moving" and it.ego_known:      # v26.2.14: the motion words from the mover's own positions (once our speed has settled)
+                mover.classify(it, t, ego_motion if ego_motion is not None else ego_speed, it.ego_settled)
             tr.moving = it.moving
             if smap is not None:
                 smap.snap_solid(it)
@@ -5144,6 +5420,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
         speech = policy.step(t, items, tracks, surface_known)
         if speech is None:
             speech = policy.away_speech(t, items)       # v26.2.13: a danger that left the lane by its own motion
+        if speech is None:
+            speech = policy.motion_speech(t, items)     # v26.2.14: "cutting in front" / "moving away" ahead, from the person's own velocity
         if speech is None and policy.quiet_t == t:
             blk_run = 0
         elif speech is None and blk_cfg.get("enabled", False) and smap is not None and not stationary and ego_speed and world.theta is not None:
@@ -5154,7 +5432,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                 blk_open = False
             if blk is not None:
                 blk_seen_t = t
-            if blk is not None and not blk_open and blk_run >= int(blk_cfg.get("confirmFrames", 2)) and t - blk_last_t >= float(blk_cfg.get("cooldownS", 5.0)) \
+            if blk is not None and not blk_open and blk.get("wideOk", True) and blk_run >= int(blk_cfg.get("confirmFrames", 2)) and t - blk_last_t >= float(blk_cfg.get("cooldownS", 5.0)) \
                     and policy._gap_ok(t, priority=True):
                 th_ = math.radians(world.theta)
                 bx = world.x + math.sin(th_) * blk["cfwd"] + math.cos(th_) * blk["cright"]
@@ -5224,7 +5502,7 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             **({"corridor": corridor_out} if smap is not None else {}),
             **({"faceEdgeLines": smap.fe_lines} if smap is not None and smap.fe_lines else {}),
             **({"worldTracks": wt_out} if wt_out is not None else {}),
-            "hazards": [_hazard_json(it, gh, gw) for it in sorted(items, key=lambda it: it.steps)],
+            "hazards": [_hazard_json(it, gh, gw, full_all) for it in sorted(items, key=lambda it: it.steps)],
         })
 
     tone_events, episodes = _tone_events(frame_collision, times, config["tones"], frame_proximity, cw_marks,

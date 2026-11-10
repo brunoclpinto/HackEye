@@ -201,8 +201,9 @@ export class Reviews {
     const { ev, rk } = it;
     const a = this.vmap.get(this._evKey(ev));
     const role = eventRole(ev);
-    const li = el("li", "rv-row" + (isBeeps(ev) ? " beeps" : "") + (a ? " v-" + a.verdict : ""));
+    const li = el("li", "rv-row" + (isBeeps(ev) ? " beeps" : "") + (a ? " v-" + a.verdict : "") + (a?.auto ? " auto" : ""));
     li.dataset.rk = rk;
+    if (a?.auto) li.title = "counted correct (reviewed later items)";
     li.style.setProperty("--c", roleColor(role));
     const top = el("div", "rv-main");
     const tb = el("button", "rv-time mono", fmtTime(ev.t, 1)); tb.type = "button"; tb.title = "Seek here";
@@ -242,7 +243,7 @@ export class Reviews {
     const text = el("div", "rv-text" + (a?.verdict === "remove" ? " struck" : ""), ev.text);
     if (ev.predicted?.textNow) text.title = `Without prediction: ${ev.predicted.textNow}`;
     li.append(top, text);
-    const showNote = a || this.expanded.has(rk);
+    const showNote = (a && !a.auto) || this.expanded.has(rk);   // v26.2.14: an auto-counted ✓ shows its note box only when opened
     if (showNote) li.append(this._noteBox(rk, a, a ? a.note : this.drafts.get(rk) ?? "", !a));
     return li;
   }
@@ -267,7 +268,7 @@ export class Reviews {
     ta.addEventListener("input", () => {
       const cur = this._annOfRow(rk);
       if (!cur) { this.drafts.set(rk, ta.value); return; }
-      cur.note = ta.value; saved.textContent = "…";
+      cur.note = ta.value; delete cur.auto; saved.textContent = "…";
       this._debounce(rk, () => this._saveFields(cur, { note: ta.value }, saved));
     });
     ta.addEventListener("blur", () => { if (this.timers.has(rk)) this._flush(rk); });
@@ -396,7 +397,7 @@ export class Reviews {
     const cur = this.vmap.get(key);
     if (cur && cur.verdict === verdict) { this._delete(cur); return; }
     if (cur) {
-      cur.verdict = verdict;
+      cur.verdict = verdict; delete cur.auto;       // v26.2.14: the user took over an auto-counted verdict
       this._refreshRow(rk);
       this.h.changed?.();
       this._send(async () => {
@@ -420,7 +421,9 @@ export class Reviews {
       try {
         const res = await api(this._base(), { method: "POST", body: { kind: "verdict", verdict, note: draft, t: ev.t, event: snapshot, runId: run.id, collisionId: run.collisionId ?? undefined, collisionVersion: run.collisionVersion ?? undefined } });
         const localNote = a.note, localVerdict = a.verdict;
-        Object.assign(a, res);
+        const { autoCreated, ...stored } = res;
+        Object.assign(a, stored);
+        this._addAuto(autoCreated);
         a.verdict = localVerdict; a.note = localNote;
         if (localVerdict !== res.verdict) await api(`${this._base()}/${a.id}`, { method: "PUT", body: { verdict: localVerdict } });
         if (localNote !== res.note) await api(`${this._base()}/${a.id}`, { method: "PUT", body: { note: localNote } });
@@ -429,6 +432,14 @@ export class Reviews {
         if (this.rec === rec) await this.reload();
       }
     });
+  }
+
+  /** v26.2.14: the earlier notifications the server counted correct when this one was reviewed (`auto: true`). */
+  _addAuto(list) {
+    if (!list?.length) return;
+    const have = new Set(this.anns.filter((x) => x.kind === "verdict" && x.runId).map((x) => this._annKey(x)));
+    for (const x of list) if (!have.has(this._annKey(x))) this.anns.push(x);
+    this.anns.sort((x, y) => x.t - y.t); this._reindex(); this.render();
   }
 
   _delete(a, confirmMsg) {
@@ -558,7 +569,8 @@ export class Reviews {
     if (this.run) { body.runId = this.run.id; body.collisionId = this.run.collisionId ?? undefined; body.collisionVersion = this.run.collisionVersion ?? undefined; }
     const btn = $("#rvAddSubmit"); btn.disabled = true;
     try {
-      const a = await api(this._base(), { method: "POST", body });
+      const { autoCreated, ...a } = await api(this._base(), { method: "POST", body });
+      this._addAuto(autoCreated);
       this.anns.push(a); this.anns.sort((x, y) => x.t - y.t); this._reindex();
       this.closeAdd(); this.render();
       this.lastT = a.t; this.curIdx = -2; this.highlight(a.t);

@@ -34,7 +34,7 @@ def _danger(tid, label, steps, lateral=0.0, clock=12, collision=True, dist=None,
 # -- 1. defaults = c2 --------------------------------------------------------------------------------------------------------------------------
 
 def test_defaults_are_c2_and_the_new_rules_are_on():
-    assert CONFIG["version"] == "v26.2.13"
+    assert CONFIG["version"] == "v26.2.14"
     assert CONFIG["source"]["mode"] == "map" and CONFIG["horizon"]["source"] == "fused"
     assert CONFIG["ego"]["headingSource"] == "imu" and CONFIG["ego"]["cadenceSource"] == "imu"
     assert CONFIG["tones"]["speechRate"] == 1.25

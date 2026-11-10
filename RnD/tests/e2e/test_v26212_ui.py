@@ -60,7 +60,7 @@ def test_predicted_phrase_has_a_marker_two_clickable_times_and_the_unpredicted_t
         row.locator(".rv-v.correct").click()
     assert json.loads(req.value.post_data)["event"]["predicted"] == PRED       # the stored copy / export: tests/test_lab_reviews_v26212.py
     page.wait_for_timeout(1000)
-    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((LONG_REC, a["id"]) for a in new)
     assert len(new) == 1
     assert not page.errors, page.errors

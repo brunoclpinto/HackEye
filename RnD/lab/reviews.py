@@ -224,6 +224,7 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
     now = _now()
     ann["createdAt"] = ann["updatedAt"] = now
 
+    auto_events = _run_notifications(run["id"], ann["collisionId"]) if run is not None and ann.get("collisionId") else []
     with _lock:
         doc = _load(rec_id)
         if kind == "verdict":
@@ -231,11 +232,48 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
             for other in doc["annotations"]:
                 if other.get("kind") == "verdict" and match_key(other) == key:
                     raise ReviewError(409, f"This event already has a verdict ({other['id']}); update it instead")
+        autos = _auto_correct(doc, run, ann, auto_events) if auto_events else []
         doc["annotations"].append(ann)
+        doc["annotations"].extend(autos)
         doc["annotations"] = _sorted(doc["annotations"])
         _save(rec_id, doc)
-    _log(f"{rec_id}: + {kind} {ann['id']} at t={ann['t']}")
+    _log(f"{rec_id}: + {kind} {ann['id']} at t={ann['t']}" + (f" (+{len(autos)} auto correct)" if autos else ""))
+    if autos:
+        return {**ann, "autoCreated": autos}      # response only; the stored annotation does not carry it
     return ann
+
+
+def _run_notifications(run_id: str, cid: str) -> list[dict]:
+    """Every notification (speech phrase, beeps / soft / crosswalk episode) of one collision run, from its events.json."""
+    from lab import collisions
+    try:
+        events = json.loads((collisions.collision_dir(run_id, cid) / "events.json").read_text()).get("events", [])
+    except (OSError, ValueError):
+        return []
+    return [e for e in events if e.get("type") in TYPES and isinstance(e.get("t"), (int, float)) and isinstance(e.get("text"), str) and e["text"]]
+
+
+def _auto_correct(doc: dict, run: dict, new: dict, events: list[dict]) -> list[dict]:
+    """v26.2.14: reviewing something at time t counts every earlier notification of the same collision run that has no verdict as correct
+    (`auto: true`; the user can change or remove it like any verdict, which drops the flag). Deleting the later verdict keeps them."""
+    taken = {match_key(a) for a in doc["annotations"] if a.get("kind") == "verdict" and a.get("runId")}
+    out = []
+    now = _now()
+    for ev in sorted(events, key=lambda e: e["t"]):
+        if ev["t"] >= new["t"]:
+            break
+        a: dict = {"id": secrets.token_hex(4), "kind": "verdict", "verdict": "correct", "auto": True, "note": "", "t": float(ev["t"]),
+                   "event": {k: ev[k] for k in _EVENT_KEYS if k in ev},
+                   "runId": run["id"], "collisionId": new["collisionId"], "collisionVersion": new.get("collisionVersion"),
+                   "analysisVersion": run.get("analysisVersion"), "modelName": run.get("modelName"), "createdAt": now, "updatedAt": now}
+        if "predicted" in a["event"] and not isinstance(a["event"]["predicted"], dict):
+            del a["event"]["predicted"]
+        key = match_key(a)
+        if key in taken:
+            continue
+        taken.add(key)
+        out.append(a)
+    return out
 
 
 def update(rec_id: str, duration: float, ann_id: str, body: dict) -> dict:
@@ -246,6 +284,8 @@ def update(rec_id: str, duration: float, ann_id: str, body: dict) -> dict:
             raise ReviewError(404, f"Unknown annotation: {ann_id}")
         kind = ann["kind"]
         new = dict(ann)
+        if "auto" in new and ("verdict" in body or "note" in body):
+            del new["auto"]                               # v26.2.14: the user took over an auto-counted verdict
         if "note" in body:
             new["note"] = _check_note(body["note"])
         if "verdict" in body:

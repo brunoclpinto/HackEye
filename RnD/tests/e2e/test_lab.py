@@ -100,7 +100,7 @@ def test_add_twice_at_two_paused_times(page, created_reviews):
     t1 = add_via_ui(page, "e2e first")
     seek(page, 2.2)
     t2 = add_via_ui(page, "e2e second")
-    new = [a for a in annotations(SHORT_REC) if a["id"] not in before]
+    new = [a for a in annotations(SHORT_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((SHORT_REC, a["id"]) for a in new)
     assert (t1, t2) == ("0:01.0", "0:02.2")
     got = {a["text"]: a["t"] for a in new}
@@ -134,7 +134,7 @@ def test_add_twice_with_long_run_loaded(page, created_reviews):
     add_via_ui(page, "e2e long first", "context")
     seek(page, 6.6)
     t2 = add_via_ui(page, "e2e long second", "context")
-    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((LONG_REC, a["id"]) for a in new)
     got = {a["text"]: a["t"] for a in new}
     assert t2 == "0:06.6"
@@ -164,7 +164,7 @@ def test_slow_run_load_does_not_move_the_add_form_time(page, created_reviews):
     page.fill("#rvAddText", "e2e slow load")
     page.click("#rvAddSubmit")
     page.wait_for_function("() => document.querySelector('#rvAddForm').hidden")
-    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((LONG_REC, a["id"]) for a in new)
     assert new[0]["t"] == pytest.approx(6.6, abs=0.06)
 
@@ -386,7 +386,7 @@ def test_beeps_row_renders_and_saves_verdict(page, created_reviews):
     row.locator(".rv-v.correct").click()
     row.locator("textarea").fill("e2e beep note")
     page.wait_for_timeout(1200)       # note autosave (600 ms)
-    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((LONG_REC, a["id"]) for a in new)
     assert len(new) == 1
     a = new[0]
@@ -400,7 +400,7 @@ def test_beeps_row_renders_and_saves_verdict(page, created_reviews):
     assert "v-correct" in row.get_attribute("class")
     # toggling the active one deletes it again
     row.locator(".rv-v.correct").click()
-    page.wait_for_function("() => !document.querySelector('.rv-row.beeps.v-correct')")
+    page.wait_for_function("() => ![...document.querySelectorAll('.rv-row.beeps.v-correct')].some((r) => r.textContent.includes('e2e pole'))")
 
 
 def test_remove_on_beeps_row_silences_its_tones(page, created_reviews):
@@ -595,7 +595,7 @@ def test_add_beeps_entry_and_hear_it_in_preview(page, created_reviews, durations
     page.fill("#rvAddText", "beeps · e2e bollard at 1")
     page.click("#rvAddSubmit")
     page.wait_for_function("() => document.querySelector('#rvAddForm').hidden")
-    new = [a for a in annotations(SHORT_REC) if a["id"] not in before]
+    new = [a for a in annotations(SHORT_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((SHORT_REC, a["id"]) for a in new)
     assert len(new) == 1
     a = new[0]

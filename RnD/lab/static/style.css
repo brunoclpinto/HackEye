@@ -152,6 +152,7 @@ textarea { font: inherit; color: var(--fg); background: var(--panel2); border: 1
 .rv-row:last-child { border-bottom: none; }
 .rv-row.cur { background: var(--panel2); outline: 2px solid var(--accent); outline-offset: -2px; }
 .rv-row.v-correct { background: rgba(74, 222, 128, .08); } .rv-row.v-incorrect { background: rgba(255, 45, 45, .08); } .rv-row.v-remove { background: rgba(245, 197, 24, .08); }
+.rv-row.auto { opacity: .6; } .rv-row.auto.v-correct { background: rgba(74, 222, 128, .04); }  /* v26.2.14: counted correct by a later review */
 .rv-row.cur.v-correct, .rv-row.cur.v-incorrect, .rv-row.cur.v-remove { background: var(--panel2); }
 .rv-row.added { background: rgba(34, 211, 238, .07); border-left: 2px dashed var(--accent); }
 .rv-main { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

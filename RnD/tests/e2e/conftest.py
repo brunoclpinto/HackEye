@@ -140,6 +140,32 @@ def page(browser):
     ctx.close()
 
 
+def _utc_stamp(back_s=2):
+    import datetime
+    return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=back_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@pytest.fixture(autouse=True)
+def _clean_auto_reviews():
+    """v26.2.14: a verdict also counts the earlier unreviewed items correct (auto ✓). After every test, remove the auto ✓ created on the
+    E2E recordings since it started (the user's own reviews live on other recordings), whichever test or UI click caused them."""
+    start = _utc_stamp()
+    yield
+    try:
+        recs = api("/api/reviews/export")["recordings"]
+    except AssertionError:
+        return
+    for r in recs:
+        if r["recording"] not in (LONG_REC, SHORT_REC):
+            continue
+        for a in r["annotations"]:
+            if a.get("auto") and a.get("createdAt", "") >= start:
+                try:
+                    api(f"/api/recordings/{r['recording']}/reviews/{a['id']}", "DELETE")
+                except AssertionError:
+                    pass
+
+
 @pytest.fixture
 def created_reviews():
     """Collect (rec, id) of annotations a test creates; delete them afterwards (only those ids)."""

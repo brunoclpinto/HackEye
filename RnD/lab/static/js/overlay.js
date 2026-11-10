@@ -498,7 +498,8 @@ export class Overlay {
 
 /** v26.2.12: an item's whole box / outline including the rows above the horizon (`bboxFull` / `outlineFull`); older runs: the plain ones. */
 export const fullBox = (h) => h.bboxFull ?? h.bbox;
-export const fullOutline = (h) => h.outlineFull ?? h.outline;
+// v26.2.14: an item with a `bboxFull` but no `outlineFull` has only the outline cut at the horizon: that clipped polygon must not decide a hit above it
+export const fullOutline = (h) => h.outlineFull ?? (h.bboxFull ? null : h.outline);
 
 /** Ray casting: is the normalised point inside the polygon [[x, y], ...]? */
 function pointInPolygon(x, y, poly) {

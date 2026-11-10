@@ -1357,3 +1357,38 @@ The Chest-0004 run was wiped by the version bump before a collision re-run with 
 2. (O33) "moved away" fires 8 times on older fixtures, unreviewed; its clock is where the item was last a danger.
 3. (O34) Passing-close soft beeps also for riders / vehicles (4929 38.50), unreviewed; "started walking away" comes 0.67 s after 30.16.
 4. Four obstacle beeps on 4929_review6 51.2-52.2 s shifted by a few tenths; review 8 lost 16 wall / obstacle beeps (no ✓ among them).
+
+## v26.2.14 — movers by their own motion (near-pass, approaching from a side, cutting in front, moving away), parked vehicles, "blocked" needs a wide obstacle, every item clickable above the horizon, earlier items reviewed as correct (plan [`plans/v26.2.14.md`](plans/v26.2.14.md); review 11 + Lab Notes 2026-11-10, approved "new review. go for it"; review saved as fixture `chest0004_review11` before the bump; Lab version bumped and wiped: run `5fda5626e808` removed and re-run 0-454 s; `collision.json` v26.2.14, `worldmap.json` unchanged)
+
+**Feedback (review 11, Chest-0004 c1, 59-234 s, 7 items).**
+- 59.16 ✗ "person approaching at 11:30 in 6": "Stops speaking when person is already on top of me ... direction vector would put her within collision or near collision area. Adjust so warnings and collision take into consideration detection movements, their direction vectors and potential speed." And: "when an item is reviewed at a later stage ... mark all other unreviewed previous items as correct". 69.34 ✗ same.
+- 70.84 ✗ "vehicle approaching at 11": "Vehicle exists but not moving at all".
+- 87.67 ⊘ "sidewalk blocked at 12:15, continues 11:45": "a small obstacle".
+- Added 141.0 "Person cutting in front" (final) and 149.37 "Person moving away at 12 in 4" (danger).
+- 233.5 ✗ "vehicle approaching at 12:30": should be "vehicle approaching from right at 12:30 in 5".
+- Note: "still not able to click on objects above horizon line ... make sure bounding lines are clickable above that line."
+
+**Findings (Opus).** World-track velocities are too noisy for these rules (speed 0.6-2.8 m/s frame to frame, heading flips, id swaps); the 233.5 car reads 0.0-0.12 m/s. `bboxFull` / `outlineFull` were written only for role items, so a no-role building was cut at the horizon (the client already used them).
+
+**Decisions.**
+- A per-mover own-motion estimate (line fit of its relative positions over 1.2 s + ego speed, with sigma) drives "approaching" (people need own motion toward the user; for vehicles it can only confirm or veto), the near-pass collision course (predicted passing lateral <= 1.3 m within 4 s: collision beeps + said again as it closes), "from left / right" (own lateral >= 0.5 m/s), "person cutting in front", "person moving away at 12 in 4".
+- "blocked" for obstacles needs one obstacle >= 0.8 m wide in 2 recent frames.
+- Every hazards item gets `bboxFull` / `outlineFull` (`output.fullAllItems`); the client lets the full box decide when there is no full outline.
+- Lab: a verdict / added item at t counts the earlier unreviewed notifications of that collision run ✓ (`auto: true`), shown lighter, editable.
+
+**Worker deviations.** W1: `nearPassM` 1.3 (plan 1.1: the review person passed 0.9-1.3 m), `againSteps` 1.5 / `againGapS` 1.0 (plan 2 / 1.5: the re-say was dropped by `minVoiceSteps`); `cut` / `ahead` under `motion`; vehicles: own motion only confirms / vetoes (parked cars read 2-4 m/s toward us at 36, 44, 51, 67 s); motion words wait for a settled ego speed; the width check applies when the phrase is said (at detection it delayed 20.67); `output.fullAllItems` switch because v26.2.12 tests assert no-role items have no `bboxFull`; `tools/make_fixture.py` added. W2: auto ✓ also on added items; an auto ✓ the user removed returns when a later item is reviewed.
+
+**Numbers.**
+- Fixture `chest0004_review11`: one window 0-240 s (1440 frames, 24 MB npz), motion and sensors over the whole run; the replay with the new rules off reproduces c1 (312 / 312 events).
+- Review 11: 59.16 -> "person approaching at 11:45 in 7" 58.66, again "in 4" 59.66, collision beeps 59.99 / 60.35; 69.34 -> "in 5" 68.84 + beeps 69.84 / 70.34; 70.84 no "approaching"; 87.67 no "blocked" (widths 0.1-0.2 m; the 20.67 skip still fires); 141.34 "person cutting in front"; 149.0 "person moving away at 12 in 4"; 233.5 missed (O35).
+- Implicit ✓ before 233.5: 100 of 111 kept (O37).
+- `collision_score` all fixtures: speech 277 -> 312, beeps 269 -> 303, ticks matched label 187 -> 170 / exact 155 -> 136 (the added motion words count as text changes; review 10 -5, review 11 -10, review 8 -2, 4929_review6 -1), still-said removes 7 -> 3.
+- hazards.json +20 % (0-240 s: 46.9 -> 56.2 MB; the full 0-454 s run: 86 MB).
+- Lab run 0-454 s: speech 83, beeps 174; the review-11 targets as in the replay (58.66 / 59.66 + beeps 59.99 / 60.35, 68.84 + beeps, 141.34, 149.0; nothing at 70.84 / 87.67).
+- Unit 820 passed, 7 skipped, 2 xfailed (O32, O35); version asserts moved to v26.2.14 and `GOLDEN_CHEST0004_REVIEW7` re-pinned (version string only). E2E 96 passed. E2E fix by Opus: the auto ✓ that a test's verdict creates on the E2E recordings are removed after every test (autouse `_clean_auto_reviews`, by creation time); before, they stayed on the live Lab and broke later tests.
+
+### Known / possible issues (shipped on purpose; user rule: don't block)
+1. (O35) 233.5 "from right" not said: the car's motion is not measurable.
+2. (O36) "person cutting in front" at 34.67 (a man drifting into the path ahead: debatable) and 111.66 (a standing woman: false).
+3. (O37) 11 implicitly correct review-11 events change, incl. the review-10 remove 44.66 "building at 12:15 in 4" returning.
+4. The strict same-words tick match falls 17 on the older fixtures, partly from the added motion words.
