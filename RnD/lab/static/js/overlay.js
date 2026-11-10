@@ -12,7 +12,7 @@ export class Overlay {
     this.video = video;
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
-    this.layers = { mask: true, region: true, lane: true, horizon: true, hazards: true, showAll: false, depth: false };
+    this.layers = { mask: true, region: true, lane: true, horizon: false, hazards: true, showAll: false, depth: false };
     this.hasDepth = false;    // the loaded run has depth maps (set by app)
     this.outlines = true;     // item shapes: true = mask-edge outlines (when present), false = bounding boxes
     this.hudEl = null;        // set by app: element receiving the HUD lines

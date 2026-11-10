@@ -1,5 +1,5 @@
 """Per fixture window: speech / beeps counts and the user's ticks matched, per named variant of the config (v26.2.11: source image|map x predictive;
-v26.2.12: the new rules one at a time, see ``variants()``).
+v26.2.12 and v26.2.13: the new rules one at a time, see ``variants()``).
 
     python tools/collision_score.py [variant ...] [--rows] [--json out.json]      (run it in the Lab container: cd /rnd && python tools/collision_score.py)
 
@@ -64,11 +64,19 @@ LEAVE_ONE_OUT = {k: {n: v for n, v in {"tree": "tree.enabled", "jump": "distance
                  for k in ("tree", "jump", "voice", "zone", "stable", "coloc", "reann", "cap", "hold", "meas", "follow", "blocked")}
 
 
+# v26.2.13: the four new rules (walls followed by the distance ratio, the known-wall memory, "moved away", soft beeps for a person passing close)
+NEW13_OFF = {"beeps.follow.windowS": 0, "speech.knownWall.enabled": False, "speech.away.enabled": False, "beeps.passing.enabled": False}
+LEAVE_ONE_OUT13 = {"ratio": "beeps.follow.windowS", "known": "speech.knownWall.enabled", "away": "speech.away.enabled", "passing": "beeps.passing.enabled"}
+
+
 def variants() -> dict[str, dict]:
-    out = {"v26.2.11": V26211, "new": {}, "new@1.0": {"tones.speechRate": 1.0}, "mapOnly": {**NEW_OFF, "tones.speechRate": 1.0}}
+    out = {"v26.2.11": {**V26211, **NEW13_OFF}, "v26.2.12": dict(NEW13_OFF), "new": {}, "new@1.0": {"tones.speechRate": 1.0},
+           "mapOnly": {**NEW_OFF, **NEW13_OFF, "tones.speechRate": 1.0}}
     for k, d in LEAVE_ONE_OUT.items():
         key = next(iter(d.values()))
         out[f"new-{k}"] = {key: NEW_OFF[key]}
+    for k, key in LEAVE_ONE_OUT13.items():
+        out[f"new-{k}"] = {key: NEW13_OFF[key]}
     return out
 
 

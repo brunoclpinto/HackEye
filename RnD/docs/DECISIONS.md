@@ -1321,3 +1321,39 @@ The Chest-0004 run was wiped by the version bump before a collision re-run with 
 3. Run length changes the result: a 0-30 s Lab run said "sidewalk blocked at 11:45" at 22.51 s (no free direction) plus a wall phrase at 16.67 s "sidewalk blocked at 1:15, continues 11:30"; the 0-454 s run reproduces the fixture (20.67 s with "continues 12:15"). The motion / sensor history past the window matters.
 4. On the 0-454 s Lab run "blocked" is said 17 times (v26.2.12: 9): 76.16, 87.67, 101.84, 138.34, 252.34, 257.34, 293.16, 376.49, 381.83, 392.99, 406.84, 421.84, 436.67, 442.49 s, unreviewed.
 5. The scoring tool runs without sensors, so its review-9 numbers differ from the Lab's (it shows 17.50 / 23.84 s instead of 20.67 s); the replay with sensors is the reference.
+
+## v26.2.13 — walls being followed stay quiet, known walls are not re-said, "moved away", soft beeps for people passing close, Horizon line off by default (plan [`plans/v26.2.13.md`](plans/v26.2.13.md); review 10 + Lab Notes "1. horizon line off by default." 2026-11-10, approved "reviewed. go for it"; review saved as fixture `chest0004_review10` before the bump; Lab version bumped and wiped: run `5fda5626e808` removed and re-run 0-454 s (speech 79, beeps 169; 0-69 s identical to the fixture replay); `collision.json` v26.2.13, `worldmap.json` unchanged)
+
+**Feedback (review 10, Chest-0004 c1, 0-69 s: 49 items, 34 correct, 13 remove, 2 added).**
+- Walls: 11.66 "building at 12:30 in 3" ("the wall being followed from the getgo ... it is known to be there"), 44.66 "building at 12:15 in 4" ("still a building at same position as before"), 10 building beeps 50.50-69.08 at 12:15 / 12:30, 3-5 steps, and 65.50 "building at 12 in 5" ("Still following same wall, no need to re-notify").
+- Added 30.16 "Person at 12:15 started walking away" ("important to know that obstacle ... changed its movement from static to moving away; same applies to any object within collision range or previously marked for tracking due to collision risk") and 40.34 "Person at 12:30 moved away" ("suddenly moved away, close to collision limits, safer to notify").
+- 59.16 ✓ "person approaching at 11:30 in 6": "Don't forget the beeps for this person when passing close to me."
+- Note: the horizon line off by default.
+
+**Findings (Opus).** The removed wall beeps repeat 3-4 steps for seconds: the nearest lane point of a wall along the path slides forward, so its distance does not close; a wall really ahead closes at walking speed (15.5-18.1 s, 5 -> 1). v26.2.12's `beeps.follow` covered side clocks only. Track 1016 (30.16) stood in the lane and stepped right (lateral 0.5 -> 1.9 m); 1281 (40.34) moved right out of the lane; 1575 (59-61 s) passed at lateral -0.9..-1.3 m closing 2-2.7 m/s and got nothing since v26.2.12's lane-only beeps.
+
+**Decisions.**
+- Followed walls by closing ratio (distance closed < 0.4 × walked over 1.5 s), any clock, quiet for speech and beeps unless at <= 1 step.
+- Known walls: no re-said wall phrase at the same world point (2 m, 30 s) or the same relative place (±1.5 steps, ±1 quarter, 12 s).
+- "moved away" / "started walking away" for a danger that leaves the lane by its own motion.
+- `beeps.passing`: soft beeps for an approaching person / rider / vehicle within 1.5 m laterally and 4 steps.
+- Horizon layer off by default in the Lab (`#horizonChk`).
+
+**Worker deviations (Sonnet W1).**
+- The ratio rule uses the nearest value of the window's older half, restarts on gaps / 3 m jumps, and needs the track seen for 5 s or a wall beep due within 4.5 s (else the ✓ new walls at 25.99 and 34.83 went quiet).
+- Known walls also match on the relative place: 44.66 and 34.83 are 11.5 m apart in the world.
+- A suppressed wall phrase still takes the speech slot once per track, silently (else 45.66's person phrase moved and "sidewalk blocked" appeared at 11.66).
+- The "moved away" clock is where the item was last a danger; it must not be closing faster than 1 m/s (a person passing at 48.3 s got a false one).
+- Older tests run with the four new rules off (conftest); no golden changed.
+
+**Numbers.**
+- Fixture `chest0004_review10` (w0 0-72 s, motion to 150 s, sensors to 156 s) replays c1 exactly with the new rules off.
+- Review 10 with v26.2.13: 11 of 13 removes gone, all 34 ✓ kept with the same words. "person at 12:30 started walking away" 30.83 (target 30.16), "person at 12:30 moved away" 39.84 (40.34), "soft · person at 11:15 · 4 steps" 60.16. No other change in 0-69 s.
+- `collision_score` all fixtures: speech 231 -> 237, beeps 208 -> 190, ticks 202 -> 202, exact 49 -> 49, label 82 -> 81 (review 9's 11.66 "building at 12:45 in 2", the same phrase review 10 removed), still-said removes 13 -> 2.
+- Unit 788 passed, 7 skipped, 1 xfailed (O32); 15 version asserts moved to v26.2.13 and `GOLDEN_CHEST0004_REVIEW7` re-pinned (version string only: with collision.json at v26.2.12 the old hash passes). E2E 93 passed (new `test_v26213_ui.py`).
+
+### Known / possible issues (shipped on purpose; user rule: don't block)
+1. (O32) 68.17 / 69.08 s wall beeps remain: a newly seen wall whose first distances flicker looks like it closes.
+2. (O33) "moved away" fires 8 times on older fixtures, unreviewed; its clock is where the item was last a danger.
+3. (O34) Passing-close soft beeps also for riders / vehicles (4929 38.50), unreviewed; "started walking away" comes 0.67 s after 30.16.
+4. Four obstacle beeps on 4929_review6 51.2-52.2 s shifted by a few tenths; review 8 lost 16 wall / obstacle beeps (no ✓ among them).

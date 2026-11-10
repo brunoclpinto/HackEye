@@ -1,5 +1,5 @@
 {
-  "version": "v26.2.12",
+  "version": "v26.2.13",
   "defaultMount": "chest",
   "defaultHfovDeg": 118,
   "mountPresets": {
@@ -85,7 +85,9 @@
   },
   "contextSpeak": ["obstacle", "building"],
   "beeps": {"follow": {"enabled": true, "followQuietS": 6.0, "lateralM": 0.4, "nearSteps": 1.0, "gapS": 1.5,
-                       "classes": ["building", "barrier", "barrier wall", "barrier fence", "barrier guard-rail", "divider"]}},
+                       "windowS": 1.5, "minCloseRatio": 0.4, "minWalkM": 0.4, "minSpanS": 0.5, "gapMaxS": 0.7, "jumpM": 3.0, "besideS": 5.0, "recentS": 4.5,
+                       "classes": ["building", "barrier", "barrier wall", "barrier fence", "barrier guard-rail", "divider"]},
+            "passing": {"enabled": true, "minClosingMps": 0.8, "lateralM": 1.5, "maxSteps": 4.0}},
   "blocked": {"enabled": true, "aheadM": 3.0, "minAheadM": 0.4, "widthFrac": 0.7, "confirmFrames": 2, "cooldownS": 5.0, "sameSpotM": 3.0, "clearS": 2.0,
               "angleDeg": 60.0, "angleStepDeg": 7.5, "minClearM": 2.0, "freeHalfWidthM": 0.1, "walkMinConf": 0.3,
               "wallClasses": ["building", "barrier fence", "barrier guard-rail"],
@@ -205,6 +207,9 @@
     "minVoiceSteps": 2, "thinStableS": 0.5, "colocatedM": 1.5,
     "zoneOnly": {"enabled": true, "halfWidthM": 0.0, "classes": ["pole", "sign", "traffic-sign", "traffic-light", "traffic-light pedestrians", "sidewalk-obstacle", "utility-cover"]},
     "reannounce": {"enabled": true, "clockQuarters": 4, "growSteps": 3.0, "minGapS": 1.0},
+    "knownWall": {"enabled": true, "windowS": 30.0, "relativeS": 12.0, "worldM": 2.0, "steps": 1.5, "quarters": 1},
+    "away": {"enabled": true, "recentS": 2.0, "marginM": 0.2, "minLatMps": 0.2, "latWindowS": 0.4, "minGrowM": 0.3, "maxClosingMps": 1.0, "staticS": 1.0, "confirmS": 0.0, "confirmMovingS": 0.8,
+             "cooldownS": 10.0, "templates": {"moved": "{label} at {clock} moved away", "started": "{label} at {clock} started {verb} away"}},
     "maxEntries": 3, "peopleMotionWaitSeconds": 1.5, "peopleMotionWaitSteps": 6, "priorityMinGapSeconds": 1.0, "thinRearmSeconds": 8.0, "featureLabelGapSeconds": 6.0, "featureNewCrossingSteps": 5,
     "featureLabelOverrides": {"crosswalk": {"gapSeconds": 20, "newCrossingSteps": 20}, "curb": {"gapSeconds": 20, "newCrossingSteps": 24}},
     "templates": {

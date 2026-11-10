@@ -938,6 +938,7 @@ class _Item:
     jumped: bool = False                      # (v26.2.12) its distance jumped THIS frame (measurement glitch): no motion history, no coasting from it
     full_ref: tuple | None = None             # (v26.2.12) (labelled full-class grid, the component's slices, its label): the whole component incl. rows above the horizon
     pred_v: tuple | None = None               # (v26.2.11, predictive speech) a trusted mover's world velocity in our frame (forward, right) m/s
+    followed: bool = False                    # (v26.2.13) a wall the user walks along (its distance does not close at the walking speed): no beep episode, no phrase
 
     def __post_init__(self) -> None:
         if self.clock_q is None:
@@ -2505,6 +2506,21 @@ class SpeechPolicy:
         self.reann_steps = float(ra.get("growSteps", 3.0))
         self.reann_gap_s = float(ra.get("minGapS", 1.0))
         self.coloc_m = float(self.cfg.get("colocatedM", 0.0))            # v26.2.12: co-located collision items are said once, the closest one's numbers
+        kw = self.cfg.get("knownWall") or {}                             # v26.2.13: a wall phrase is not said again for the same place
+        self.known_on = bool(kw.get("enabled", False))
+        self.known_s = float(kw.get("windowS", 30.0))
+        self.known_rel_s = float(kw.get("relativeS", 12.0))
+        self.known_m = float(kw.get("worldM", 2.0))
+        self.known_steps = float(kw.get("steps", 1.5))
+        self.known_quarters = int(kw.get("quarters", 1))
+        self.known_classes = frozenset((config.get("beeps") or {}).get("follow", {}).get("classes", ()))
+        self.quiet_t = -math.inf                 # the last frame a wall phrase was held back (followed / known)
+        self.quiet_slot: set[int] = set()        # wall tracks whose phrase was held back once (the slot was consumed silently)
+        self.known_walls: list[dict] = []        # recent wall phrases / beeps: {"t", "fam", "wx", "wy", "steps", "q"}
+        aw = self.cfg.get("away") or {}                                  # v26.2.13: "moved away" / "started walking away"
+        self.away_on = bool(aw.get("enabled", False))
+        self.away_cfg = aw
+        self.away_state: dict[int, dict] = {}    # track id -> {"col_t", "dan_q", "still_t0", "leave_t0", "fired_t", "static_at_leave"}
         self.speech_rate = 1.0                   # the sound profile's speechRate (set by the driver)
         self.ego_u: float | None = None          # our ground speed (m/s), None = unknown (no prediction); set by the driver each frame
         self.pred_stats = {"phrases": 0, "changed": 0, "dropped": 0}
@@ -2831,6 +2847,7 @@ class SpeechPolicy:
                 mute = self._seen_before(it, danger=True)        # v26.1.16: only an earlier danger / final for it mutes (not a context phrase)
                 # ... and a never-named context-class thing (vegetation, a wall) reached in the middle of other dangers: its beeps are enough
                 mute = mute or (it.group == "static" and not it.thin and tr.context_seen and not it.mem_named and self._danger_recent(t))
+                mute = mute or it.followed           # v26.2.13: a wall walked along: the slot is consumed, nothing is said
                 if not mute:
                     self._register(t, it, tracks, danger=True)
                 kind = self._kind(it, "final")
@@ -2846,6 +2863,16 @@ class SpeechPolicy:
                                         or i.track_id in reann)
                   and (t - self.danger_label_t.get(i.label, -math.inf) >= self.LABEL_COOLDOWN_S or i.track_id in reann)
                   and not self._motion_pending(t, i, tracks)]
+        if any(i.followed or i.class_name in self.known_classes for i in pend_d):      # v26.2.13: a wall that is walked along / known is not said
+            kept = [i for i in pend_d if not i.followed and (i.track_id in reann or not self._known_wall(t, i))]
+            if not kept and pend_d:
+                self.quiet_t = t               # the slot is spent silently: no other phrase (the "blocked" one) takes its place
+                fresh = [i for i in pend_d if i.track_id not in self.quiet_slot]
+                if fresh:                      # ... once per wall track, with the pacing the spoken phrase would have had (v26.1.7: same as a muted final)
+                    self.quiet_slot.update(i.track_id for i in fresh)
+                    self._event(t, "danger", "", None)
+                    return None
+            pend_d = kept
         dropped_close: list[_Item] = []
         if self.coloc_m > 0 and len(pend_d) > 1:      # v26.2.12 (review 9, 13.0 s: "2 markers within the collision zone, use the closest one"): said once
             chosen: list[_Item] = []
@@ -2934,6 +2961,7 @@ class SpeechPolicy:
                     voiced.append((kind, vg))
                     for i in vg:
                         self._register(t, i, tracks, approach=(kind == "approach"), danger=is_danger)
+                        self.note_wall(t, i)
             for i in cover:
                 self._register(t, i, tracks, named=False)
             if not voiced:
@@ -3020,6 +3048,104 @@ class SpeechPolicy:
             self._event(t, "context", "", None)
             return None
         return self._with_prediction(self._event(t, "context", text, first), info, first)
+
+    # -- known walls (v26.2.13) ---------------------------------------------
+    def note_wall(self, t: float, it: _Item) -> None:
+        """v26.2.13: remember where a wall-family phrase / beep episode was (relative place and world point) for ``_known_wall``."""
+        if not self.known_on or it.class_name not in self.known_classes:
+            return
+        self.known_walls = [w for w in self.known_walls if t - w["t"] <= self.known_s]
+        self.known_walls.append({"t": t, "fam": it.family or it.label, "wx": it.wx, "wy": it.wy, "steps": it.steps, "q": it.clock_q})
+
+    def _known_wall(self, t: float, it: _Item) -> bool:
+        """v26.2.13 (``speech.knownWall``, review 10, 44.66 s: "still a building at same position as before, still known"): a wall phrase is not said
+        again when a wall phrase / beep episode of the same family within the last ``windowS`` s was at the same place: the nearest world point
+        within ``worldM`` m, or (within ``relativeS`` s) the same RELATIVE place (steps within ``steps``, clock within ``quarters``): a wall that is walked along keeps its
+        nearest point at the same distance ahead while its world point slides on with us."""
+        if not self.known_on or it.class_name not in self.known_classes:
+            return False
+        fam = it.family or it.label
+        for w in self.known_walls:
+            if w["fam"] != fam or t - w["t"] > self.known_s:
+                continue
+            if (math.hypot(it.wx - w["wx"], it.wy - w["wy"]) <= self.known_m or t - w.get("sup", -math.inf) <= 1.0
+                    or (t - w["t"] <= self.known_rel_s and abs(it.steps - w["steps"]) <= self.known_steps
+                        and abs(it.clock_q - w["q"]) <= self.known_quarters)):
+                w["sup"] = t               # (a suppressed phrase keeps the wall known for the next second: the nearest point flickers)
+                return True
+        return False
+
+    # -- "moved away" (v26.2.13) --------------------------------------------
+    def observe_movers(self, t: float, items: list[_Item], tracks: dict[int, _Track]) -> None:
+        """v26.2.13 (``speech.away``, review 10, 30.16 / 40.34 s): per mover track, when it last was a collision item (and where), since when it
+        stood still, and since when it has been leaving the lane by its own motion (|lateral| past lane half + ``marginM`` and growing at
+        >= ``minLatMps``, or its distance growing while we walk)."""
+        if not self.away_on:
+            return
+        a = self.away_cfg
+        lat_w = float(a.get("latWindowS", 0.4))
+        seen = set()
+        for it in items:
+            if it.group != "moving" or it.coasting or it.ghost:
+                continue
+            tid = it.track_id
+            seen.add(tid)
+            st = self.away_state.setdefault(tid, {"col_t": -math.inf, "dan_q": 0, "still_t0": None, "leave_t0": None,
+                                                  "fired_t": -math.inf})
+            if it.moving is False:
+                if st["still_t0"] is None:
+                    st["still_t0"] = t
+            elif it.moving is True:
+                st["still_t0"] = None
+            if it.role == "danger":
+                st["dan_q"] = it.clock_q               # (the clock it is spoken at: where it was last a danger)
+            if it.role == "danger" and it.collision:
+                st.update(col_t=t, leave_t0=None)
+                continue
+            if t - st["col_t"] > float(a.get("recentS", 2.0)) + 1e-9:
+                st["leave_t0"] = None
+                continue
+            lh = tracks[tid].lhist
+            old = next((h for h in reversed(lh) if t - h[0] >= lat_w - 1e-9), None)
+            lat_speed = 0.0 if old is None else (abs(it.lateral_m) - abs(old[1])) / max(t - old[0], 1e-6)
+            out = abs(it.lateral_m) > self.lane_half + float(a.get("marginM", 0.2)) and lat_speed >= float(a.get("minLatMps", 0.2))
+            grows = it.receding and it.moving is True and old is not None and it.distance_m - old[2] >= float(a.get("minGrowM", 0.3))
+            # (a mover that closes on us faster than ``maxClosingMps`` passes by, it does not move away)
+            beyond = abs(it.lateral_m) > self.lane_half + float(a.get("marginM", 0.2))
+            leaving = (out or grows or (st["leave_t0"] is not None and beyond)) \
+                and (it.closing is None or it.closing <= float(a.get("maxClosingMps", 1.0)))      # (once leaving, staying out of the lane goes on)
+            if leaving:
+                if st["leave_t0"] is None:
+                    st["leave_t0"] = t
+                    st["static_at_leave"] = st["still_t0"] is not None and t - st["still_t0"] >= float(a.get("staticS", 1.0)) - 1e-9
+            else:
+                st["leave_t0"] = None
+        for tid in [k for k in self.away_state if k not in seen and t - self.away_state[k]["col_t"] > 10.0]:
+            del self.away_state[tid]
+
+    def away_speech(self, t: float, items: list[_Item]) -> dict | None:
+        """The "moved away" phrase of a mover that has been leaving the lane for ``confirmS`` (``confirmMovingS`` for one that was moving before:
+        a swerve may come back), once per track per ``cooldownS``. Text: "person at 12:30 moved away", or for one that stood still
+        (``staticS``) "person at 12:15 started walking away" ("started moving away" for a rider / vehicle)."""
+        if not self.away_on:
+            return None
+        a = self.away_cfg
+        for it in items:
+            st = self.away_state.get(it.track_id)
+            if st is None or st["leave_t0"] is None or it.group != "moving" or it.coasting or it.ghost:
+                continue
+            static = st.get("static_at_leave", False)
+            need = float(a.get("confirmS", 0.0)) if static else float(a.get("confirmMovingS", 0.8))
+            if t - st["leave_t0"] < need - 1e-9 or t - st["fired_t"] < float(a.get("cooldownS", 10.0)) - 1e-9:
+                continue
+            if not self._gap_ok(t, priority=True, danger=True):
+                continue
+            tpl = a["templates"]["started" if static else "moved"]
+            verb = "walking" if it.class_name == "person" else "moving"
+            text = tpl.format(label=it.label, clock=clock_text(st["dan_q"]), verb=verb)
+            st["fired_t"], st["leave_t0"], st["col_t"] = t, None, -math.inf
+            return self._event(t, "danger", text, it, "danger")
+        return None
 
     def memory_if_spoken(self, t: float, it: _Item) -> None:
         """A danger/final call that names a context label counts as having referenced it."""
@@ -4107,6 +4233,104 @@ def _followed_wall(it: _Item, t: float, state: dict, cfg: dict) -> bool:
     return False
 
 
+class _WallFollow:
+    """v26.2.13 (``beeps.follow.windowS``, review 10, 11.66 / 50.5 / 57.3 ... 69.1 s: "still following the same wall, no need to re-notify"): a wall
+    the user walks ALONG keeps its nearest point at the same distance ahead (the point slides forward with us), a wall really ahead closes at
+    about the walking speed (15.5-18.1 s: 5 -> 1 steps). Per wall track the (distance, distance walked) samples of the last ``windowS`` s are kept;
+    the wall is *followed* when, from the nearest value of the older half of the window, its distance closed by less than ``minCloseRatio`` x the
+    distance walked since (needs ``minWalkM`` walked and ``minSpanS`` of history; undecided = not followed). A gap of more than ``gapMaxS`` or a
+    jump of the distance AWAY of ``jumpM`` or more (the nearest point moved to another face) restarts the history; a jump nearer is a wall that is
+    there. A wall is only *quiet* when its track has been seen for ``besideS`` s or a wall phrase / beep was due within ``recentS`` s (a building
+    that just came up in the lane is news, one that is known is not); A beep episode that is running goes on (``quiet``)."""
+
+    def __init__(self, cfg: dict):
+        self.window = float(cfg.get("windowS", 0.0)) if cfg.get("enabled", True) else 0.0
+        self.on = self.window > 0
+        self.min_ratio = float(cfg.get("minCloseRatio", 0.4))
+        self.min_walk = float(cfg.get("minWalkM", 0.5))
+        self.min_span = float(cfg.get("minSpanS", 0.5 * self.window))
+        self.gap = float(cfg.get("gapMaxS", 0.7))
+        self.jump = float(cfg.get("jumpM", 3.0))
+        self.beside_s = float(cfg.get("besideS", 5.0))
+        self.recent_s = float(cfg.get("recentS", 4.5))
+        self.near_steps = float(cfg.get("nearSteps", 1.0))
+        self.classes = frozenset(cfg.get("classes", ()))
+        self.walked = 0.0
+        self.hist: dict[int, list[tuple[float, float, float]]] = {}
+        self.first: dict[int, float] = {}           # track -> first frame seen
+        self.last_followed: dict[str, float] = {}   # family -> last frame a wall of it was followed
+        self.cand_last: dict[str, float] = {}       # family -> last frame a wall of it was due a beep (real or quiet)
+        self.prev_end: dict[str, float] = {}        # ... and the last frame of the run before the current one (a run: frames < ``gapS`` apart)
+        self.run_gap = float(cfg.get("gapS", 1.5))
+        self.last_real: dict[str, float] = {}       # family -> last frame a wall of it really beeped (an episode running goes on)
+
+    def advance(self, dt: float, speed: float | None) -> None:
+        if speed is not None and speed > 0:
+            self.walked += speed * dt
+
+    def observe(self, t: float, items: list[_Item]) -> None:
+        for it in items:
+            if it.class_name not in self.classes or it.coasting or it.ghost:
+                it.followed = False
+                continue
+            tid, fam = it.track_id, it.family or it.label
+            h = self.hist.setdefault(tid, [])
+            self.first.setdefault(tid, t)
+            if h and (t - h[-1][0] > self.gap or it.distance_m - h[-1][1] >= self.jump):
+                h.clear()
+            h.append((t, it.distance_m, self.walked))
+            while h and t - h[0][0] > self.window + 1e-9:
+                h.pop(0)
+            it.followed = it.steps > self.near_steps and self._ratio(t, it.distance_m, h)
+            if it.followed:
+                self.last_followed[fam] = t
+            if it.followed and t - self.first[tid] < self.beside_s - 1e-9 and t - self._last_event(t, fam) > self.recent_s:
+                it.followed = False                         # a wall that just came up and was not announced lately is news
+        for tid in [k for k, h in self.hist.items() if t - h[-1][0] > 2.0]:
+            del self.hist[tid]
+            self.first.pop(tid, None)
+
+    def _ratio(self, t: float, d_now: float, h: list) -> bool:
+        if t - h[0][0] < self.min_span - 1e-9:
+            return False
+        half = [x for x in h if x[0] <= h[0][0] + 0.5 * (t - h[0][0]) + 1e-9]
+        t0, d0, w0 = min(half, key=lambda x: x[1])
+        walked = self.walked - w0
+        return walked >= self.min_walk - 1e-9 and (d0 - d_now) < self.min_ratio * walked
+
+    def quiet(self, t: float, it: _Item, gap_s: float) -> bool:
+        """True = this beep driver starts no episode (a followed wall; one whose episode is running goes on)."""
+        fam = it.family or it.label
+        return it.followed and t - self.last_real.get(fam, -math.inf) > gap_s
+
+    def _last_event(self, t: float, fam: str) -> float:
+        """The last wall event BEFORE the run of beep frames it may be in (a run does not make itself a recent event)."""
+        last = self.cand_last.get(fam, -math.inf)
+        return self.prev_end.get(fam, -math.inf) if t - last <= self.run_gap else last
+
+    def candidate(self, t: float, it: _Item) -> bool:
+        """A wall due a beep this frame; True = it starts a new run (episode) of its family."""
+        fam = it.family or it.label
+        last = self.cand_last.get(fam, -math.inf)
+        start = t - last > self.run_gap
+        if start:
+            self.prev_end[fam] = last
+        self.cand_last[fam] = t
+        return start
+
+    def beeped(self, t: float, it: _Item) -> None:
+        self.last_real[it.family or it.label] = t
+
+
+def _passing_close(it: _Item, cfg: dict) -> bool:
+    """v26.2.13 (``beeps.passing``, review 10, 59.16 s: "don't forget the beeps for this person when passing close to me"): a moving person / rider /
+    vehicle that is closing in (>= ``minClosingMps``), within ``lateralM`` m sideways and ``maxSteps`` steps, outside the beeping lane, gets the soft
+    sound (``proximity``) until it has passed (its distance stops closing). Static items outside the lane never do."""
+    return (it.group == "moving" and not it.coasting and not it.ghost and it.moving is True and not it.receding and not it.collision
+            and it.closing is not None and it.closing >= float(cfg.get("minClosingMps", 0.8))
+            and abs(it.lateral_m) <= float(cfg.get("lateralM", 1.5)) and it.steps <= float(cfg.get("maxSteps", 4.0)))
+
+
 def _trusted_track(wtracks, tid: int, t: float) -> dict | None:
     e = wtracks.lookup(tid, t)
     return e if (e is not None and e["trusted"]) else None
@@ -4348,6 +4572,8 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
     follow_cfg = config.get("beeps") or {}
     follow: dict = {}                          # (family, side) -> {"t": last activity, "t_real": last real beep, "lat": the episode's lateral}
     follow_cfg = {**follow_cfg, **(follow_cfg.get("follow") or {})}
+    wfollow = _WallFollow(follow_cfg)          # v26.2.13: the ratio rule (the distance closes less than the walking speed)
+    pass_cfg = follow_cfg.get("passing") or {}  # v26.2.13: soft beeps for a person passing close
     blk_cfg = config.get("blocked") or {}
     blk_run, blk_last_t, blk_pos, blk_kind = 0, -math.inf, None, None
     blk_seen_t, blk_open = -math.inf, False         # follow-up (O26): one phrase per blockage; it ends after clearS s without one
@@ -4822,6 +5048,11 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
                     tr.jump_t = t
                 it.unstable = (it.thin or it.tree) and t - tr.jump_t < stable_s - 1e-9
 
+        if pass_cfg.get("enabled", False) and not stationary:
+            for it in items:
+                if _passing_close(it, pass_cfg):
+                    it.proximity = True
+
         # confirmation: how many consecutive analysed frames each track has held its role
         seen_tracks = set()
         for it in items:
@@ -4900,14 +5131,22 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
             policy.travel_steps += ego_speed * dt / step_len
         policy.stationary = stationary
         policy.ego_u = ego_speed
+        if wfollow.on:                           # v26.2.13: walls the user walks along (no phrase, no new beep episode)
+            wfollow.advance(dt, 0.0 if stationary else ego_speed)
+            wfollow.observe(t, items)
         if policy.pred_meas_floor > 0:           # v26.2.12: the speed the static witnesses really close at (over the last measuredWindowS)
             w_now = [it.closing for it in items if _speed_witness(it) and it.closing is not None and 0.0 <= it.closing <= ego_cfg["speedMaxMps"]]
             if w_now:
                 meas_hist.append((t, float(np.median(w_now))))
             meas_hist[:] = [h for h in meas_hist if h[0] >= t - meas_win - 1e-9]
             policy.ego_meas = float(np.median([h[1] for h in meas_hist])) if len(meas_hist) >= 3 else None
+        policy.observe_movers(t, items, tracks)
         speech = policy.step(t, items, tracks, surface_known)
-        if speech is None and blk_cfg.get("enabled", False) and smap is not None and not stationary and ego_speed and world.theta is not None:
+        if speech is None:
+            speech = policy.away_speech(t, items)       # v26.2.13: a danger that left the lane by its own motion
+        if speech is None and policy.quiet_t == t:
+            blk_run = 0
+        elif speech is None and blk_cfg.get("enabled", False) and smap is not None and not stationary and ego_speed and world.theta is not None:
             blk = smap.blocked_ahead(blk_cfg)
             blk_run = blk_run + 1 if blk is not None and blk["kind"] == blk_kind else (1 if blk is not None else 0)      # confirmed as one kind
             blk_kind = blk["kind"] if blk is not None else None
@@ -4935,8 +5174,18 @@ def run_collision(grids, times, class_names, config, settings, motion=None, dept
 
         beeping = [it for it in items if it.role == "danger" and it.collision and it.settled
                    and it.role_run >= policy.confirm and it.steps <= config["tones"].get("maxSteps", roles["dangerSteps"])]
+        if wfollow.on:
+            for it in beeping:                           # a wall due a beep, real or quiet, is a wall event (the memory of the quiet rules)
+                if it.class_name in wfollow.classes and wfollow.candidate(t, it):
+                    policy.note_wall(t, it)
         if follow_cfg.get("enabled", False) and beeping:
             beeping = [it for it in beeping if not _followed_wall(it, t, follow, follow_cfg)]
+        if wfollow.on and beeping:
+            beeping = [it for it in beeping if not wfollow.quiet(t, it, float(follow_cfg.get("gapS", 1.5)))]
+        if wfollow.on:
+            for it in beeping:
+                if it.class_name in wfollow.classes:
+                    wfollow.beeped(t, it)
         # a stream of beeps (>= 2 frames in a row) is danger activity; a single pass-by beep is not (review 8, 6.2 s: the building at 2
         # steps right after the first beep of a passing person was a wanted context phrase)
         beep_run = beep_run + 1 if beeping else 0
