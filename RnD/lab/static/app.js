@@ -833,6 +833,21 @@ async function startAnalysis() {
   await submitAnalysis(body, false);
 }
 
+/** The GPU option follows LocalWorker: disabled (and CPU selected) while its LLM holds the GPU. */
+function applyGpuAvailability(models) {
+  if (!models || typeof models.gpuAvailable !== "boolean") return;
+  const sel = $("#deviceSel");
+  const opt = [...sel.options].find((o) => o.value === "gpu");
+  if (!opt) return;
+  opt.disabled = !models.gpuAvailable;
+  opt.title = models.gpuAvailable ? "" : "GPU in use by LocalWorker";
+  if (!models.gpuAvailable && sel.value === "gpu") sel.value = "cpu";
+}
+
+async function refreshGpuAvailability() {
+  applyGpuAvailability(await api("/api/models", { quiet: true }).catch(() => null));
+}
+
 /** POST the run request. A finished run with the same settings comes back `reused`: say so and offer Re-analyse (force). */
 async function submitAnalysis(body, force) {
   const note = $("#reusedNote");
@@ -1266,6 +1281,9 @@ async function init() {
   } else $("#profileSel").add(new Option("default", "default"));
   labelResolutions();
   try { const v = localStorage.getItem("hackeye.lab.device"); if (v === "gpu" || v === "cpu") $("#deviceSel").value = v; } catch { /* storage blocked */ }
+  applyGpuAvailability(models);
+  setInterval(() => { if (!document.hidden) refreshGpuAvailability(); }, 5000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshGpuAvailability(); });
   $("#deviceSel").addEventListener("change", () => {
     try { localStorage.setItem("hackeye.lab.device", $("#deviceSel").value); } catch { /* storage blocked */ }
   });

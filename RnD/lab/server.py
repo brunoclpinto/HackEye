@@ -293,7 +293,7 @@ def get_collision_config() -> dict:
 @app.get("/api/models")
 def get_models() -> dict:
     return {"models": analysis.list_models(), "profiles": analysis.RESOLUTIONS,
-            "depthModels": list(analysis.DEPTH_MODELS)}
+            "depthModels": list(analysis.DEPTH_MODELS), **analysis.gpu_status()}
 
 
 @app.post("/api/runs")

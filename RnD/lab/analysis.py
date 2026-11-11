@@ -37,6 +37,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import egoflow  # noqa: E402
+import gpu_share  # noqa: E402
 import profiles  # noqa: E402
 from lab import recordings  # noqa: E402
 
@@ -241,6 +242,16 @@ def _parse_device(req: dict) -> str:
     return device
 
 
+def gpu_status() -> dict:
+    """Whether the GPU option is usable: `gpuBlockedBy` is "localworker" while its LLM holds the GPU."""
+    blocked = gpu_share.localworker_holds_gpu()
+    return {"gpuAvailable": not blocked, "gpuBlockedBy": "localworker" if blocked else None}
+
+
+class GpuBlocked(RuntimeError):
+    """LocalWorker holds the GPU; a GPU model cannot be loaded."""
+
+
 def _cpu_threads() -> int:
     return int(os.environ.get("HACKEYE_LAB_CPU_THREADS") or max(1, (os.cpu_count() or 2) - 2))
 
@@ -296,6 +307,8 @@ def submit_run(req: dict) -> dict:
             return existing
         if existing["status"] == "done" and not force:
             return {**existing, "reused": True}
+    if device == "gpu" and gpu_share.localworker_holds_gpu():
+        raise RunConflict(gpu_share.BLOCKED_MESSAGE)
     from lab import collisions
     if collisions.job_active():
         raise RunConflict("A collision re-run is running; wait for it or cancel it")
@@ -455,6 +468,14 @@ class _ModelCache:
         self.depth_variant: str | None = None
         self.depth_device: str | None = None
         self.last_used = 0.0
+        self.share = gpu_share.GpuShare()  # LOCK_SH on LocalWorker's gpu.lock while a GPU model is resident
+
+    def _acquire_gpu(self, device: str) -> None:
+        if device == "gpu" and not self.share.acquire():
+            raise GpuBlocked(gpu_share.BLOCKED_MESSAGE)
+
+    def _gpu_resident(self) -> bool:
+        return (self.model is not None and self.device == "gpu") or (self.depth_model is not None and self.depth_device == "gpu")
 
     @staticmethod
     def _torch_device(device: str):
@@ -477,7 +498,12 @@ class _ModelCache:
             from models import SegmentationModel
 
             t0 = time.perf_counter()
-            self.model = SegmentationModel(path, self._torch_device(device))
+            self._acquire_gpu(device)
+            try:
+                self.model = SegmentationModel(path, self._torch_device(device))
+            except BaseException:
+                self.share.release()
+                raise
             self.path, self.device = path, device
             self.class_names = [segmentation.CLASSES[i]["name"] for i in sorted(segmentation.CLASSES)]
             _log(f"model loaded: {Path(path).name} on {device} ({time.perf_counter() - t0:.1f}s)")
@@ -495,7 +521,13 @@ class _ModelCache:
             from depth import DepthModel
 
             t0 = time.perf_counter()
-            self.depth_model = DepthModel(self._torch_device(device), variant)
+            self._acquire_gpu(device)
+            try:
+                self.depth_model = DepthModel(self._torch_device(device), variant)
+            except BaseException:
+                if not self._gpu_resident():
+                    self.share.release()
+                raise
             self.depth_variant, self.depth_device = variant, device
             _log(f"depth model {variant} loaded ({time.perf_counter() - t0:.1f}s)")
         self.last_used = time.monotonic()
@@ -503,6 +535,7 @@ class _ModelCache:
 
     def release(self) -> None:
         if self.model is None and self.depth_model is None:
+            self.share.release()
             return
         import torch
 
@@ -514,6 +547,7 @@ class _ModelCache:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        self.share.release()
         _log(f"model released: {name}{' + depth' if had_depth else ''}")
 
 
