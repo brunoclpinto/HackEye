@@ -1392,16 +1392,3 @@ The Chest-0004 run was wiped by the version bump before a collision re-run with 
 2. (O36) "person cutting in front" at 34.67 (a man drifting into the path ahead: debatable) and 111.66 (a standing woman: false).
 3. (O37) 11 implicitly correct review-11 events change, incl. the review-10 remove 44.66 "building at 12:15 in 4" returning.
 4. The strict same-words tick match falls 17 on the older fixtures, partly from the added motion words.
-
-## Follow-up (no version bump): LocalWorker GPU share: Lab GPU option disabled while LocalWorker holds the GPU
-
-**Why.** LocalWorker (`~/repos/LocalWorker`) runs a local LLM on the same GPU. Its `docs/CONTRACTS.md` section 2 / 8 make a `flock` on `gpu.lock` the arbiter: the LLM holds `LOCK_EX` while loaded, any other GPU user holds `LOCK_SH`.
-
-**Decisions.**
-- `src/gpu_share.py` (stdlib only): `localworker_holds_gpu()` and `GpuShare`. The Lab only ever takes `LOCK_SH | LOCK_NB`, so it never blocks; a missing lock file means "not held".
-- `_ModelCache` takes the shared hold before building a GPU segmentation / depth model and drops it in `release()` (idle unload included) and on a failed load. CPU loads never touch the lock.
-- `GET /api/models` adds `gpuAvailable` / `gpuBlockedBy`; `POST /api/runs` with `device=gpu` that would start a job is 409 `GPU in use by LocalWorker; choose CPU`; a job queued earlier fails fast with the same message instead of a CUDA OOM. The UI disables the GPU option (tooltip) and selects CPU, refreshing every 5 s while the page is visible.
-- compose mounts `LocalWorker/var/gpuq` read-only at `/gpuq` in the `lab` service (the host dir and `gpu.lock` must exist, mode 0777 / 0666, so Docker does not create a root-owned dir).
-- A resident Lab model holds `LOCK_SH`, so the LLM waits until the idle unload (default 300 s) frees the GPU.
-
-**Known / possible issues.** The UI flag is polled (5 s), so a run can still be submitted in the gap and gets the 409 toast.

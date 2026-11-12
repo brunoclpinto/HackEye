@@ -59,8 +59,6 @@ services:
       - ../../../models:/base-models:ro
       # Trained HackEye releases, selectable in the Lab's model picker.
       - ../../HackEye-Models/models:/hackeye-models:ro
-      # LocalWorker's GPU lock (flock): while its LLM holds the GPU the Lab's GPU option is off.
-      - ${LOCALWORKER_GPUQ_DIR:-/home/megabeast/repos/LocalWorker/var/gpuq}:/gpuq:ro
     deploy:
       resources:
         reservations:
