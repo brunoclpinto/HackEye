@@ -186,16 +186,14 @@ Pure logic (numpy, scipy, stdlib) so it can be ported to Swift.
 
 from __future__ import annotations
 
-import json
 import math
 import time
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 
 import numpy as np
 from scipy import ndimage
 
-from common_paths import find_common_dir
+from common_paths import find_common_dir  # noqa: F401  (worldmap calls collision.find_common_dir)
 import faceedge
 import groundfuse
 import sensors as sensor_lib
@@ -276,10 +274,7 @@ class CollisionSettings:
     step_length_user: bool = False                 # v26.2.12: the step length was typed by the user (it wins over the GPS step length)
 
 
-def load_config(path: Path | None = None) -> dict:
-    path = path or (find_common_dir() / "config" / "collision.json")
-    with open(path) as f:
-        return json.load(f)
+from engine.core.config import load_config  # noqa: E402, F401  (plain module attribute: tests replace it)
 
 
 AUTO_FISHEYE_HFOV_DEG = 100.0

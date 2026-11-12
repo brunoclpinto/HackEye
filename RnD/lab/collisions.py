@@ -8,12 +8,12 @@ overrides, labels, delete and the A/B comparison. Errors are CollisionError(stat
 
 from __future__ import annotations
 
-import copy
 import json
 import re
 import shutil
 import threading
 
+from engine.core import config as _config
 from lab import analysis
 
 CID_RE = re.compile(r"^c[1-9][0-9]{0,5}$")
@@ -228,89 +228,34 @@ def register(run_id: str, cid: str) -> None:
 # Config overrides
 # --------------------------------------------------------------------------
 
-def _kind(v) -> str:
-    if isinstance(v, bool):
-        return "bool"
-    if isinstance(v, (int, float)):
-        return "number"
-    if isinstance(v, str):
-        return "string"
-    if isinstance(v, list):
-        return "list"
-    if isinstance(v, dict):
-        return "object"
-    return "null"
+_kind = _config.value_kind
+PENDING_KEYS = _config.PENDING_KEYS
+_pending = _config.is_pending
 
 
 def validate_overrides(overrides) -> dict:
     """Shape check: {} or {"collision": {key: value}, "worldmap": {key: value}}; returns the normalised dict (empty groups dropped)."""
-    if overrides is None:
-        return {}
-    if not isinstance(overrides, dict):
-        raise CollisionError(422, "overrides must be an object")
-    out: dict = {}
-    for group, items in overrides.items():
-        if group not in ("collision", "worldmap"):
-            raise CollisionError(422, f"overrides: unknown config {group!r} (expected collision or worldmap)")
-        if not isinstance(items, dict):
-            raise CollisionError(422, f"overrides.{group} must be an object of dotted keys")
-        if items:
-            out[group] = dict(items)
-    return out
-
-
-# v26.2.11: settings the Lab sends as overrides before (or while) the backend adds them to the config. A key missing from the config is
-# accepted when it is listed here with one of its allowed values (it is then created); once the config has it, the normal checks apply.
-PENDING_KEYS = {
-    "collision": {"source.mode": ("image", "map"), "speech.predictive.enabled": (True, False),
-                  "ego.headingSource": ("auto", "imu", "gyro", "flow"), "horizon.source": ("image", "gravity", "fused"),
-                  "ego.cadenceSource": ("auto", "imu", "image")},
-    "worldmap": {},
-}
-
-
-def _pending(group: str, key: str, value) -> bool:
-    allowed = PENDING_KEYS.get(group, {}).get(key)
-    return allowed is not None and any(value == a and type(value) is type(a) for a in allowed)
+    try:
+        return _config.validate_overrides(overrides)
+    except _config.OverrideError as e:
+        raise CollisionError(422, str(e)) from e
 
 
 def apply_overrides(config: dict, overrides: dict, group: str) -> dict:
     """A deep copy of `config` with the `group` overrides applied (dotted keys). Each key must exist and keep its JSON type;
     else CollisionError 422 naming the key. The loaded config is never mutated."""
-    out = copy.deepcopy(config)
-    for key, value in (overrides.get(group) or {}).items():
-        if not isinstance(key, str) or not key:
-            raise CollisionError(422, f"overrides.{group}: bad key {key!r}")
-        parts = key.split(".")
-        node = out
-        pending = _pending(group, key, value)
-        for p in parts[:-1]:
-            if isinstance(node, dict) and p not in node and pending:
-                node[p] = {}
-            if not isinstance(node, dict) or p not in node:
-                raise CollisionError(422, f"overrides.{group}: unknown key {key!r}")
-            node = node[p]
-        if isinstance(node, dict) and parts[-1] not in node and pending:
-            node[parts[-1]] = value
-            continue
-        if not isinstance(node, dict) or parts[-1] not in node:
-            raise CollisionError(422, f"overrides.{group}: unknown key {key!r}")
-        old = node[parts[-1]]
-        if _kind(old) == "object":
-            raise CollisionError(422, f"overrides.{group}: {key!r} is a section; name a value inside it")
-        if old is not None and _kind(value) != _kind(old):
-            raise CollisionError(422, f"overrides.{group}: {key!r} must be a {_kind(old)}, not a {_kind(value)}")
-        allowed = PENDING_KEYS.get(group, {}).get(key)
-        if allowed is not None and not _pending(group, key, value):          # v26.2.11: the keys of PENDING_KEYS keep their allowed values
-            raise CollisionError(422, f"overrides.{group}: {key!r} must be one of {list(allowed)}")
-        node[parts[-1]] = value
-    return out
+    try:
+        return _config.apply_overrides(config, overrides, group)
+    except _config.OverrideError as e:
+        raise CollisionError(422, str(e)) from e
 
 
 def check_overrides(overrides: dict, collision_cfg: dict, worldmap_cfg: dict) -> None:
     """Validate against the loaded configs before any work starts."""
-    apply_overrides(collision_cfg, overrides, "collision")
-    apply_overrides(worldmap_cfg, overrides, "worldmap")
+    try:
+        _config.check_overrides(overrides, collision_cfg, worldmap_cfg)
+    except _config.OverrideError as e:
+        raise CollisionError(422, str(e)) from e
 
 
 # --------------------------------------------------------------------------
