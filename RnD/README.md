@@ -149,6 +149,24 @@ speed up as a collision gets closer).
     container on every run, about 20 s.)
   - Unit tests exclude it: `... pytest tests -q --ignore=tests/e2e`.
 
+**v26.3.0 work in progress:** the Lab logic is being split into `src/engine/<model>/` -- worker rules in `src/engine/README.md`, gate command `tools/check.sh`.
+
+## Staging Lab (modular worktree)
+
+A second Lab (`compose.staging.yaml`, project `rnd-modular`, `127.0.0.1:8775`) built from the
+`modular` worktree so the browser E2E suite can run at phase checkpoints without touching the live
+Lab on :8765. Own `LAB_DIR` at `<main repo>/debug/lab-staging`; media/models mounted read-only; no GPU
+reservation, runs default to CPU (`HACKEYE_LAB_DEFAULT_DEVICE=cpu`; unset = `gpu`, as before).
+
+    RnD/tools/staging.sh up      # start, wait for /api/recordings
+    RnD/tools/staging.sh seed    # copy proxies/settings/sensors of the two E2E recordings from the live LAB_DIR (read-only source)
+    RnD/tools/staging.sh e2e     # run tests/e2e/run.sh against :8775 (extra args go to pytest)
+    RnD/tools/staging.sh down    # stop containers, keep data
+    RnD/tools/staging.sh clean   # down + delete the staging LAB_DIR
+    RnD/tools/staging.sh status
+
+`tests/e2e/run.sh` honours `HACKEYE_E2E_LAB_DIR` to mount a different LAB_DIR.
+
 ## Documentation
 - [`lab/CONTRACTS.md`](lab/CONTRACTS.md): the current rules for the Lab and the collision logic.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md): the per-version decision log, covering user feedback, decisions, deviations, limitations and results.

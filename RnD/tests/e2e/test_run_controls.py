@@ -2,7 +2,7 @@
 import os
 import shutil
 
-from conftest import BASE, LONG_REC, api, open_lab
+from conftest import BASE, LONG_REC, api, open_lab, scaled
 
 LAB_DIR_MOUNT = os.environ.get("LAB_DIR_MOUNT", "")
 RANGE = (5, 25)   # a range no other test analyses
@@ -40,7 +40,7 @@ def test_cancel_and_progress_visible_while_running(page):
         first = page.inner_text("#runProgress span")
         assert first.startswith(("queued", "running")), first
         # Progress advances (CPU is slow; allow a while) and a reload mid-run re-attaches to the run.
-        page.wait_for_function("() => /running [1-9]/.test(document.querySelector('#runProgress span').textContent)", timeout=180_000)
+        page.wait_for_function("() => /running [1-9]/.test(document.querySelector('#runProgress span').textContent)", timeout=scaled(180_000))
         page.reload()
         page.wait_for_selector("#cancelBtn", state="visible", timeout=15_000)
         page.wait_for_selector("#runProgress", state="visible", timeout=15_000)
@@ -73,7 +73,7 @@ def test_reanalyse_message_and_progress(page):
         run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
         page.wait_for_function("() => /(queued|running)/.test(document.querySelector('#runProgress span').textContent)")
         assert not page.is_visible("#reusedNote")
-        page.wait_for_selector("#cancelBtn", state="hidden", timeout=600_000)   # CPU run finishes
+        page.wait_for_selector("#cancelBtn", state="hidden", timeout=scaled(600_000))   # CPU run finishes
         assert api(f"/api/runs/{run_id}")["status"] == "done"
         page.wait_for_function("() => !document.querySelector('#analyseBtn').disabled")
         page.click("#analyseBtn")

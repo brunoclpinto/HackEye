@@ -6,7 +6,7 @@ import urllib.request
 
 import pytest
 
-from conftest import BASE, DEFAULT_LONG_REC, HOOKS, LONG_REC, SHORT_REC, annotations, api, audio_log, clock, collision_job, open_lab, seek
+from conftest import BASE, DEFAULT_LONG_REC, HOOKS, LONG_REC, SHORT_REC, annotations, api, audio_log, clock, collision_job, open_lab, seek, scaled
 
 
 import os
@@ -155,7 +155,7 @@ def test_slow_run_load_does_not_move_the_add_form_time(page, created_reviews):
     page.click("#rvAddBtn")
     assert page.input_value("#rvAddT") == "0:06.6"
     in_flight = page.evaluate("document.querySelector('#runBadge').textContent === ''")
-    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('run ')", timeout=120_000)
+    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('run ')", timeout=scaled(120_000))
     page.wait_for_timeout(1500)
     cdp.send("Network.emulateNetworkConditions", {"offline": False, "latency": 0, "downloadThroughput": -1, "uploadThroughput": -1})
     assert page.input_value("#rvAddT") == "0:06.6", f"form time jumped (run was still loading when form opened: {in_flight})"
@@ -921,7 +921,7 @@ def test_resolution_select_and_run_badge(page):
     page.select_option("#profileSel", "576p")
     page.fill("#rangeEnd", "6")          # a few seconds: the short recording is minutes long now
     page.click("#analyseBtn")
-    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('1024×576')", timeout=120_000)
+    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('1024×576')", timeout=scaled(120_000))
     run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
     try:
         run = api(f"/api/runs/{run_id}")
@@ -1014,7 +1014,7 @@ def test_depth_run_toggle_and_image(page):
     page.fill("#rangeEnd", "6")
     page.select_option("#depthSel", "da3-small")
     page.click("#analyseBtn")
-    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('depth')", timeout=300_000)
+    page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('depth')", timeout=scaled(300_000))
     run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
     try:
         run = api(f"/api/runs/{run_id}")
@@ -1539,7 +1539,7 @@ def test_portrait_left_run_window_overlay_and_label(page):
         assert texts[-1] == "736p · 736×1280 (default)" and texts[0] == "544p · 544×960"
         page.fill("#rangeEnd", "6")
         page.click("#analyseBtn")
-        page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('736×1280')", timeout=180_000)
+        page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('736×1280')", timeout=scaled(180_000))
         run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
         run = api(f"/api/runs/{run_id}")
         assert run["request"]["orientation"] == "portrait" and run["request"]["side"] == "left"
@@ -1740,7 +1740,7 @@ def test_apply_timing_rescores_the_open_run_with_the_new_intervals(page, sounds_
     assert page.is_enabled("#sndApply") and page.is_visible("#sndApplyNote")
     n_before = len([r for r in page.requests if r[1] == "POST" and r[0].endswith(f"/api/runs/{FULL_RUN}/collision")])
     page.click("#sndApply")
-    page.wait_for_function("() => document.querySelector('#sndStatus').textContent.includes('applied')", timeout=120_000)
+    page.wait_for_function("() => document.querySelector('#sndStatus').textContent.includes('applied')", timeout=scaled(120_000))
     assert len([r for r in page.requests if r[1] == "POST" and r[0].endswith(f"/api/runs/{FULL_RUN}/collision")]) == n_before + 1
     assert next(k for k in api("/api/sounds")["kinds"] if k["kind"] == "collision-center")["intervalS"] == 1.0
     assert page.is_hidden("#sndApply")

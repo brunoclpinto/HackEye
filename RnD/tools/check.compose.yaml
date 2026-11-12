@@ -1,0 +1,13 @@
+# Gate container for tools/check.sh: the `rnd` service (same mounts as compose.yaml) on the hackeye-rnd-check image
+# (hackeye-rnd + pinned ruff and mypy, tools/check.Dockerfile). The Lab image is untouched.
+services:
+  check:
+    extends:
+      file: ../compose.yaml
+      service: rnd
+    image: hackeye-rnd-check
+    build:
+      context: ..
+      dockerfile: tools/check.Dockerfile
+    entrypoint: ["bash"]
+    deploy: {}

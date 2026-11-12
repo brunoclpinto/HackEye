@@ -1,0 +1,1818 @@
+{
+ "cases": {
+  "4929_review1/w0/default": {
+   "bytes": 109739,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.7
+  },
+  "4929_review1/w0/ground": {
+   "bytes": 13980,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.5
+  },
+  "4929_review1/w0/image": {
+   "bytes": 26360,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 3.8
+  },
+  "4929_review1/w0/nopred": {
+   "bytes": 13948,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 1.8
+  },
+  "4929_review1/w0/onepose_off": {
+   "bytes": 13984,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.5
+  },
+  "4929_review1/w0/onepose_on": {
+   "bytes": 25700,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 3.7
+  },
+  "4929_review1/w1/default": {
+   "bytes": 62297,
+   "kind": "pipeline",
+   "nFrames": 43,
+   "seconds": 2.9
+  },
+  "4929_review1/w1/ground": {
+   "bytes": 11804,
+   "kind": "pipeline",
+   "nFrames": 43,
+   "seconds": 1.4
+  },
+  "4929_review1/w1/image": {
+   "bytes": 19413,
+   "kind": "pipeline",
+   "nFrames": 43,
+   "seconds": 2.9
+  },
+  "4929_review1/w1/nopred": {
+   "bytes": 11804,
+   "kind": "pipeline",
+   "nFrames": 43,
+   "seconds": 1.9
+  },
+  "4929_review1/w1/onepose_off": {
+   "bytes": 11824,
+   "kind": "pipeline",
+   "nFrames": 43,
+   "seconds": 1.3
+  },
+  "4929_review1/w1/onepose_on": {
+   "bytes": 19189,
+   "kind": "pipeline",
+   "nFrames": 43,
+   "seconds": 2.5
+  },
+  "4929_review1/w2/default": {
+   "bytes": 52385,
+   "kind": "pipeline",
+   "nFrames": 24,
+   "seconds": 1.4
+  },
+  "4929_review1/w2/ground": {
+   "bytes": 12312,
+   "kind": "pipeline",
+   "nFrames": 24,
+   "seconds": 0.9
+  },
+  "4929_review1/w2/image": {
+   "bytes": 18635,
+   "kind": "pipeline",
+   "nFrames": 24,
+   "seconds": 1.4
+  },
+  "4929_review1/w2/nopred": {
+   "bytes": 12312,
+   "kind": "pipeline",
+   "nFrames": 24,
+   "seconds": 0.8
+  },
+  "4929_review1/w2/onepose_off": {
+   "bytes": 12316,
+   "kind": "pipeline",
+   "nFrames": 24,
+   "seconds": 0.9
+  },
+  "4929_review1/w2/onepose_on": {
+   "bytes": 18887,
+   "kind": "pipeline",
+   "nFrames": 24,
+   "seconds": 1.0
+  },
+  "4929_review2/w0/default": {
+   "bytes": 109739,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 3.5
+  },
+  "4929_review2/w0/ground": {
+   "bytes": 13980,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.0
+  },
+  "4929_review2/w0/image": {
+   "bytes": 26360,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 3.8
+  },
+  "4929_review2/w0/nopred": {
+   "bytes": 13948,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.2
+  },
+  "4929_review2/w0/onepose_off": {
+   "bytes": 13984,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.4
+  },
+  "4929_review2/w0/onepose_on": {
+   "bytes": 25700,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 3.2
+  },
+  "4929_review2/w1/default": {
+   "bytes": 260402,
+   "kind": "pipeline",
+   "nFrames": 83,
+   "seconds": 6.9
+  },
+  "4929_review2/w1/ground": {
+   "bytes": 54868,
+   "kind": "pipeline",
+   "nFrames": 83,
+   "seconds": 3.1
+  },
+  "4929_review2/w1/image": {
+   "bytes": 68320,
+   "kind": "pipeline",
+   "nFrames": 83,
+   "seconds": 6.6
+  },
+  "4929_review2/w1/nopred": {
+   "bytes": 54800,
+   "kind": "pipeline",
+   "nFrames": 83,
+   "seconds": 4.3
+  },
+  "4929_review2/w1/onepose_off": {
+   "bytes": 54896,
+   "kind": "pipeline",
+   "nFrames": 83,
+   "seconds": 4.3
+  },
+  "4929_review2/w1/onepose_on": {
+   "bytes": 68204,
+   "kind": "pipeline",
+   "nFrames": 83,
+   "seconds": 6.8
+  },
+  "4929_review2/w2/default": {
+   "bytes": 299356,
+   "kind": "pipeline",
+   "nFrames": 102,
+   "seconds": 9.0
+  },
+  "4929_review2/w2/ground": {
+   "bytes": 60716,
+   "kind": "pipeline",
+   "nFrames": 102,
+   "seconds": 6.0
+  },
+  "4929_review2/w2/image": {
+   "bytes": 73245,
+   "kind": "pipeline",
+   "nFrames": 102,
+   "seconds": 9.0
+  },
+  "4929_review2/w2/nopred": {
+   "bytes": 60536,
+   "kind": "pipeline",
+   "nFrames": 102,
+   "seconds": 5.7
+  },
+  "4929_review2/w2/onepose_off": {
+   "bytes": 60712,
+   "kind": "pipeline",
+   "nFrames": 102,
+   "seconds": 3.9
+  },
+  "4929_review2/w2/onepose_on": {
+   "bytes": 74493,
+   "kind": "pipeline",
+   "nFrames": 102,
+   "seconds": 6.7
+  },
+  "4929_review2/w3/default": {
+   "bytes": 134409,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 4.9
+  },
+  "4929_review2/w3/ground": {
+   "bytes": 15952,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.8
+  },
+  "4929_review2/w3/image": {
+   "bytes": 27668,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 5.1
+  },
+  "4929_review2/w3/nopred": {
+   "bytes": 15928,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.9
+  },
+  "4929_review2/w3/onepose_off": {
+   "bytes": 15928,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 2.9
+  },
+  "4929_review2/w3/onepose_on": {
+   "bytes": 27432,
+   "kind": "pipeline",
+   "nFrames": 60,
+   "seconds": 4.9
+  },
+  "4929_review2/w4/default": {
+   "bytes": 140997,
+   "kind": "pipeline",
+   "nFrames": 71,
+   "seconds": 6.4
+  },
+  "4929_review2/w4/ground": {
+   "bytes": 19448,
+   "kind": "pipeline",
+   "nFrames": 71,
+   "seconds": 3.7
+  },
+  "4929_review2/w4/image": {
+   "bytes": 32215,
+   "kind": "pipeline",
+   "nFrames": 71,
+   "seconds": 4.8
+  },
+  "4929_review2/w4/nopred": {
+   "bytes": 19428,
+   "kind": "pipeline",
+   "nFrames": 71,
+   "seconds": 2.5
+  },
+  "4929_review2/w4/onepose_off": {
+   "bytes": 19464,
+   "kind": "pipeline",
+   "nFrames": 71,
+   "seconds": 3.7
+  },
+  "4929_review2/w4/onepose_on": {
+   "bytes": 32387,
+   "kind": "pipeline",
+   "nFrames": 71,
+   "seconds": 6.3
+  },
+  "4929_review3/w0/default": {
+   "bytes": 116138,
+   "kind": "pipeline",
+   "nFrames": 72,
+   "seconds": 4.6
+  },
+  "4929_review3/w0/ground": {
+   "bytes": 15604,
+   "kind": "pipeline",
+   "nFrames": 72,
+   "seconds": 2.0
+  },
+  "4929_review3/w0/image": {
+   "bytes": 29040,
+   "kind": "pipeline",
+   "nFrames": 72,
+   "seconds": 4.5
+  },
+  "4929_review3/w0/nopred": {
+   "bytes": 15584,
+   "kind": "pipeline",
+   "nFrames": 72,
+   "seconds": 2.1
+  },
+  "4929_review3/w0/onepose_off": {
+   "bytes": 15608,
+   "kind": "pipeline",
+   "nFrames": 72,
+   "seconds": 3.0
+  },
+  "4929_review3/w0/onepose_on": {
+   "bytes": 28312,
+   "kind": "pipeline",
+   "nFrames": 72,
+   "seconds": 4.5
+  },
+  "4929_review3/w1/default": {
+   "bytes": 423258,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 14.3
+  },
+  "4929_review3/w1/ground": {
+   "bytes": 84312,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 6.8
+  },
+  "4929_review3/w1/image": {
+   "bytes": 100218,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 9.4
+  },
+  "4929_review3/w1/nopred": {
+   "bytes": 84308,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 8.7
+  },
+  "4929_review3/w1/onepose_off": {
+   "bytes": 84324,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 9.0
+  },
+  "4929_review3/w1/onepose_on": {
+   "bytes": 101754,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 13.7
+  },
+  "4929_review3/w2/default": {
+   "bytes": 295891,
+   "kind": "pipeline",
+   "nFrames": 133,
+   "seconds": 11.5
+  },
+  "4929_review3/w2/ground": {
+   "bytes": 40100,
+   "kind": "pipeline",
+   "nFrames": 133,
+   "seconds": 7.1
+  },
+  "4929_review3/w2/image": {
+   "bytes": 56645,
+   "kind": "pipeline",
+   "nFrames": 133,
+   "seconds": 12.4
+  },
+  "4929_review3/w2/nopred": {
+   "bytes": 40076,
+   "kind": "pipeline",
+   "nFrames": 133,
+   "seconds": 7.0
+  },
+  "4929_review3/w2/onepose_off": {
+   "bytes": 40108,
+   "kind": "pipeline",
+   "nFrames": 133,
+   "seconds": 5.5
+  },
+  "4929_review3/w2/onepose_on": {
+   "bytes": 56789,
+   "kind": "pipeline",
+   "nFrames": 133,
+   "seconds": 11.7
+  },
+  "4929_review3/w3/default": {
+   "bytes": 413245,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 11.1
+  },
+  "4929_review3/w3/ground": {
+   "bytes": 78844,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 9.9
+  },
+  "4929_review3/w3/image": {
+   "bytes": 95378,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 11.5
+  },
+  "4929_review3/w3/nopred": {
+   "bytes": 78700,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 10.0
+  },
+  "4929_review3/w3/onepose_off": {
+   "bytes": 78804,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 9.7
+  },
+  "4929_review3/w3/onepose_on": {
+   "bytes": 94954,
+   "kind": "pipeline",
+   "nFrames": 155,
+   "seconds": 16.0
+  },
+  "4929_review4/w0/default": {
+   "bytes": 466736,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 17.9
+  },
+  "4929_review4/w0/depth": {
+   "bytes": 88292,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 11.7
+  },
+  "4929_review4/w0/ground": {
+   "bytes": 89692,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 12.3
+  },
+  "4929_review4/w0/ground+depth": {
+   "bytes": 110252,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 16.4
+  },
+  "4929_review4/w0/image": {
+   "bytes": 107850,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 17.4
+  },
+  "4929_review4/w0/nopred": {
+   "bytes": 88180,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 11.0
+  },
+  "4929_review4/w0/onepose_off": {
+   "bytes": 88272,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 11.7
+  },
+  "4929_review4/w0/onepose_on": {
+   "bytes": 109230,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 14.8
+  },
+  "4929_review4/w0/wt_depth": {
+   "bytes": 105687,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 14.5
+  },
+  "4929_review4/w0/wt_ground+depth": {
+   "bytes": 89796,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 10.2
+  },
+  "4929_review4/w1/default": {
+   "bytes": 607596,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 23.8
+  },
+  "4929_review4/w1/depth": {
+   "bytes": 84656,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 10.5
+  },
+  "4929_review4/w1/ground": {
+   "bytes": 88704,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 13.0
+  },
+  "4929_review4/w1/ground+depth": {
+   "bytes": 113637,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 24.1
+  },
+  "4929_review4/w1/image": {
+   "bytes": 106738,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 17.7
+  },
+  "4929_review4/w1/nopred": {
+   "bytes": 84572,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 13.2
+  },
+  "4929_review4/w1/onepose_off": {
+   "bytes": 84676,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 10.7
+  },
+  "4929_review4/w1/onepose_on": {
+   "bytes": 109554,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 19.3
+  },
+  "4929_review4/w1/wt_depth": {
+   "bytes": 99603,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 18.3
+  },
+  "4929_review4/w1/wt_ground+depth": {
+   "bytes": 85460,
+   "kind": "pipeline",
+   "nFrames": 234,
+   "seconds": 13.5
+  },
+  "4929_review4/w2/default": {
+   "bytes": 1066446,
+   "kind": "pipeline",
+   "nFrames": 330,
+   "seconds": 42.9
+  },
+  "4929_review4/w3/default": {
+   "bytes": 671638,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 23.2
+  },
+  "4929_review4/w3/depth": {
+   "bytes": 143544,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 15.8
+  },
+  "4929_review4/w3/ground": {
+   "bytes": 143688,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 16.8
+  },
+  "4929_review4/w3/ground+depth": {
+   "bytes": 166128,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 23.7
+  },
+  "4929_review4/w3/image": {
+   "bytes": 163862,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 15.4
+  },
+  "4929_review4/w3/nopred": {
+   "bytes": 143528,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 12.0
+  },
+  "4929_review4/w3/onepose_off": {
+   "bytes": 143552,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 10.9
+  },
+  "4929_review4/w3/onepose_on": {
+   "bytes": 165846,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 22.5
+  },
+  "4929_review4/w3/wt_depth": {
+   "bytes": 163133,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 20.4
+  },
+  "4929_review4/w3/wt_ground+depth": {
+   "bytes": 143252,
+   "kind": "pipeline",
+   "nFrames": 203,
+   "seconds": 12.4
+  },
+  "4929_review4/w4/default": {
+   "bytes": 1167807,
+   "kind": "pipeline",
+   "nFrames": 365,
+   "seconds": 25.7
+  },
+  "4929_review4/w5/default": {
+   "bytes": 1233963,
+   "kind": "pipeline",
+   "nFrames": 349,
+   "seconds": 48.2
+  },
+  "4929_review4/w6/default": {
+   "bytes": 561393,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 21.2
+  },
+  "4929_review4/w6/depth": {
+   "bytes": 87840,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 9.2
+  },
+  "4929_review4/w6/ground": {
+   "bytes": 89748,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 14.5
+  },
+  "4929_review4/w6/ground+depth": {
+   "bytes": 115172,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 22.1
+  },
+  "4929_review4/w6/image": {
+   "bytes": 111258,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 21.5
+  },
+  "4929_review4/w6/nopred": {
+   "bytes": 87664,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 10.3
+  },
+  "4929_review4/w6/onepose_off": {
+   "bytes": 87860,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 13.5
+  },
+  "4929_review4/w6/onepose_on": {
+   "bytes": 115170,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 18.8
+  },
+  "4929_review4/w6/wt_depth": {
+   "bytes": 107353,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 16.6
+  },
+  "4929_review4/w6/wt_ground+depth": {
+   "bytes": 89080,
+   "kind": "pipeline",
+   "nFrames": 204,
+   "seconds": 10.8
+  },
+  "4929_review5/w0/default": {
+   "bytes": 1597474,
+   "kind": "pipeline",
+   "nFrames": 661,
+   "seconds": 66.4
+  },
+  "4929_review6/w0/default": {
+   "bytes": 7946249,
+   "kind": "pipeline",
+   "nFrames": 2713,
+   "seconds": 310.3
+  },
+  "chest0002_crosswalk/w0/default": {
+   "bytes": 488616,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 20.0
+  },
+  "chest0002_crosswalk/w0/depth": {
+   "bytes": 84304,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 10.8
+  },
+  "chest0002_crosswalk/w0/ground": {
+   "bytes": 86124,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 8.9
+  },
+  "chest0002_crosswalk/w0/ground+depth": {
+   "bytes": 106501,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 20.3
+  },
+  "chest0002_crosswalk/w0/image": {
+   "bytes": 104165,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 19.4
+  },
+  "chest0002_crosswalk/w0/nopred": {
+   "bytes": 84088,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 12.6
+  },
+  "chest0002_crosswalk/w0/onepose_off": {
+   "bytes": 84284,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 11.8
+  },
+  "chest0002_crosswalk/w0/onepose_on": {
+   "bytes": 105045,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 18.9
+  },
+  "chest0002_crosswalk/w0/wt_depth": {
+   "bytes": 102519,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 12.7
+  },
+  "chest0002_crosswalk/w0/wt_ground+depth": {
+   "bytes": 86132,
+   "kind": "pipeline",
+   "nFrames": 180,
+   "seconds": 8.5
+  },
+  "chest0002_crosswalk/w1/default": {
+   "bytes": 462184,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 13.1
+  },
+  "chest0002_crosswalk/w1/depth": {
+   "bytes": 83200,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 11.6
+  },
+  "chest0002_crosswalk/w1/ground": {
+   "bytes": 91220,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 12.5
+  },
+  "chest0002_crosswalk/w1/ground+depth": {
+   "bytes": 111725,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 16.8
+  },
+  "chest0002_crosswalk/w1/image": {
+   "bytes": 102061,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 17.8
+  },
+  "chest0002_crosswalk/w1/nopred": {
+   "bytes": 83092,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 10.8
+  },
+  "chest0002_crosswalk/w1/onepose_off": {
+   "bytes": 83232,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 11.9
+  },
+  "chest0002_crosswalk/w1/onepose_on": {
+   "bytes": 103149,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 14.8
+  },
+  "chest0002_crosswalk/w1/wt_depth": {
+   "bytes": 100901,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 13.8
+  },
+  "chest0002_crosswalk/w1/wt_ground+depth": {
+   "bytes": 91744,
+   "kind": "pipeline",
+   "nFrames": 145,
+   "seconds": 8.1
+  },
+  "chest0002_crosswalk/w2/default": {
+   "bytes": 147101,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 3.8
+  },
+  "chest0002_crosswalk/w2/depth": {
+   "bytes": 30720,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 2.6
+  },
+  "chest0002_crosswalk/w2/ground": {
+   "bytes": 30988,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 3.8
+  },
+  "chest0002_crosswalk/w2/ground+depth": {
+   "bytes": 43887,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 5.9
+  },
+  "chest0002_crosswalk/w2/image": {
+   "bytes": 43516,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 5.6
+  },
+  "chest0002_crosswalk/w2/nopred": {
+   "bytes": 30596,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 3.6
+  },
+  "chest0002_crosswalk/w2/onepose_off": {
+   "bytes": 30732,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 3.7
+  },
+  "chest0002_crosswalk/w2/onepose_on": {
+   "bytes": 43664,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 5.0
+  },
+  "chest0002_crosswalk/w2/wt_depth": {
+   "bytes": 42211,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 3.0
+  },
+  "chest0002_crosswalk/w2/wt_ground+depth": {
+   "bytes": 31032,
+   "kind": "pipeline",
+   "nFrames": 49,
+   "seconds": 2.4
+  },
+  "chest0002_crosswalk/w3/default": {
+   "bytes": 515651,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 19.0
+  },
+  "chest0002_crosswalk/w3/depth": {
+   "bytes": 98412,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 10.9
+  },
+  "chest0002_crosswalk/w3/ground": {
+   "bytes": 103304,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 12.8
+  },
+  "chest0002_crosswalk/w3/ground+depth": {
+   "bytes": 123201,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 20.2
+  },
+  "chest0002_crosswalk/w3/image": {
+   "bytes": 118303,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 18.4
+  },
+  "chest0002_crosswalk/w3/nopred": {
+   "bytes": 98244,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 8.6
+  },
+  "chest0002_crosswalk/w3/onepose_off": {
+   "bytes": 98404,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 12.6
+  },
+  "chest0002_crosswalk/w3/onepose_on": {
+   "bytes": 119651,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 18.8
+  },
+  "chest0002_crosswalk/w3/wt_depth": {
+   "bytes": 116787,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 15.4
+  },
+  "chest0002_crosswalk/w3/wt_ground+depth": {
+   "bytes": 103288,
+   "kind": "pipeline",
+   "nFrames": 157,
+   "seconds": 11.3
+  },
+  "chest0002_crosswalk/w4/default": {
+   "bytes": 216990,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 4.8
+  },
+  "chest0002_crosswalk/w4/depth": {
+   "bytes": 37800,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 3.1
+  },
+  "chest0002_crosswalk/w4/ground": {
+   "bytes": 39596,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 4.7
+  },
+  "chest0002_crosswalk/w4/ground+depth": {
+   "bytes": 56381,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 7.2
+  },
+  "chest0002_crosswalk/w4/image": {
+   "bytes": 54599,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 6.6
+  },
+  "chest0002_crosswalk/w4/nopred": {
+   "bytes": 37736,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 4.5
+  },
+  "chest0002_crosswalk/w4/onepose_off": {
+   "bytes": 37820,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 3.3
+  },
+  "chest0002_crosswalk/w4/onepose_on": {
+   "bytes": 54787,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 6.8
+  },
+  "chest0002_crosswalk/w4/wt_depth": {
+   "bytes": 52539,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 5.6
+  },
+  "chest0002_crosswalk/w4/wt_ground+depth": {
+   "bytes": 38172,
+   "kind": "pipeline",
+   "nFrames": 59,
+   "seconds": 4.1
+  },
+  "chest0002_crosswalk/w5/default": {
+   "bytes": 391882,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 14.7
+  },
+  "chest0002_crosswalk/w5/depth": {
+   "bytes": 62396,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 8.7
+  },
+  "chest0002_crosswalk/w5/ground": {
+   "bytes": 64168,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 7.1
+  },
+  "chest0002_crosswalk/w5/ground+depth": {
+   "bytes": 83904,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 14.7
+  },
+  "chest0002_crosswalk/w5/image": {
+   "bytes": 81744,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 15.4
+  },
+  "chest0002_crosswalk/w5/nopred": {
+   "bytes": 62296,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 9.5
+  },
+  "chest0002_crosswalk/w5/onepose_off": {
+   "bytes": 62388,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 10.2
+  },
+  "chest0002_crosswalk/w5/onepose_on": {
+   "bytes": 82600,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 15.3
+  },
+  "chest0002_crosswalk/w5/wt_depth": {
+   "bytes": 79616,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 12.1
+  },
+  "chest0002_crosswalk/w5/wt_ground+depth": {
+   "bytes": 64288,
+   "kind": "pipeline",
+   "nFrames": 131,
+   "seconds": 6.3
+  },
+  "chest0004_review10/w0/default": {
+   "bytes": 1102819,
+   "kind": "pipeline",
+   "nFrames": 432,
+   "seconds": 49.4
+  },
+  "chest0004_review11/w0/default": {
+   "bytes": 4081967,
+   "kind": "pipeline",
+   "nFrames": 1440,
+   "seconds": 184.0
+  },
+  "chest0004_review7/w0/default": {
+   "bytes": 376456,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 14.8
+  },
+  "chest0004_review7/w0/depth": {
+   "bytes": 80352,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 8.1
+  },
+  "chest0004_review7/w0/ground": {
+   "bytes": 79932,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 11.7
+  },
+  "chest0004_review7/w0/ground+depth": {
+   "bytes": 96414,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 15.4
+  },
+  "chest0004_review7/w0/image": {
+   "bytes": 96105,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 14.5
+  },
+  "chest0004_review7/w0/nopred": {
+   "bytes": 80268,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 11.0
+  },
+  "chest0004_review7/w0/onepose_off": {
+   "bytes": 80352,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 10.9
+  },
+  "chest0004_review7/w0/onepose_on": {
+   "bytes": 95929,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 10.2
+  },
+  "chest0004_review7/w0/wt_depth": {
+   "bytes": 93694,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 13.7
+  },
+  "chest0004_review7/w0/wt_ground+depth": {
+   "bytes": 79848,
+   "kind": "pipeline",
+   "nFrames": 120,
+   "seconds": 7.9
+  },
+  "chest0004_review8/w0/default": {
+   "bytes": 2775645,
+   "kind": "pipeline",
+   "nFrames": 930,
+   "seconds": 105.8
+  },
+  "chest0004_review9/w0/default": {
+   "bytes": 551637,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 23.2
+  },
+  "chest0004_review9/w0/depth": {
+   "bytes": 120616,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 15.2
+  },
+  "chest0004_review9/w0/ground": {
+   "bytes": 120592,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 11.5
+  },
+  "chest0004_review9/w0/ground+depth": {
+   "bytes": 138163,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 18.5
+  },
+  "chest0004_review9/w0/image": {
+   "bytes": 137231,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 19.7
+  },
+  "chest0004_review9/w0/nopred": {
+   "bytes": 120484,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 13.9
+  },
+  "chest0004_review9/w0/nosensors": {
+   "bytes": 114124,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 16.1
+  },
+  "chest0004_review9/w0/onepose_off": {
+   "bytes": 121056,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 16.5
+  },
+  "chest0004_review9/w0/onepose_on": {
+   "bytes": 138143,
+   "kind": "pipeline",
+   "nFrames": 181,
+   "seconds": 23.0
+  },
+  "labapi": {
+   "bytes": 38860,
+   "fixture": "chest0004_review9",
+   "kind": "api",
+   "window": "w0"
+  }
+ },
+ "format": 1,
+ "geomKeys": [
+  "corridor",
+  "faceEdge",
+  "faceEdgeLines",
+  "lane",
+  "outline",
+  "outlineFull",
+  "rows"
+ ],
+ "numpy": "2.2.5",
+ "python": "3.11.12",
+ "skipped": [
+  {
+   "case": "4929_review1/w0/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w0/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review1/w0/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w0/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w1/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w1/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w1/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review1/w1/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w1/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w2/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w2/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w2/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review1/w2/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review1/w2/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w0/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w0/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review2/w0/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w0/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w1/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w1/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w1/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review2/w1/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w1/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w2/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w2/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w2/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review2/w2/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w2/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w3/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w3/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w3/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review2/w3/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w3/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w4/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w4/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w4/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review2/w4/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review2/w4/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w0/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w0/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review3/w0/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w0/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w1/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w1/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w1/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review3/w1/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w1/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w2/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w2/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w2/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review3/w2/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w2/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w3/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w3/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w3/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review3/w3/wt_depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review3/w3/wt_ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review4/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review4/w1/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review4/w2/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review4/w2/wt_depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w2/wt_ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w3/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review4/w4/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review4/w4/wt_depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w4/wt_ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review4/w5/wt_depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w5/wt_ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review4/w6/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review5/w0/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review5/w0/depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review5/w0/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review5/w0/ground+depth",
+   "reason": "fixture window has no depth maps"
+  },
+  {
+   "case": "4929_review5/w0/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review5/w0/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review5/w0/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review5/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "4929_review6/w0/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review6/w0/depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review6/w0/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review6/w0/ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review6/w0/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review6/w0/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review6/w0/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "4929_review6/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0002_crosswalk/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0002_crosswalk/w1/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0002_crosswalk/w2/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0002_crosswalk/w3/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0002_crosswalk/w4/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0002_crosswalk/w5/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0004_review10/w0/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review10/w0/depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review10/w0/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review10/w0/ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review10/w0/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review10/w0/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review10/w0/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review10/w0/nosensors",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review11/w0/nosensors",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review7/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0004_review8/w0/image",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/ground",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/nopred",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/onepose_on",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/onepose_off",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/nosensors",
+   "reason": "fixture has no device sensors"
+  },
+  {
+   "case": "chest0004_review8/w0/wt_depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  },
+  {
+   "case": "chest0004_review8/w0/wt_ground+depth",
+   "reason": "window longer than 40 s: default mode only (run time)"
+  }
+ ],
+ "totalBytes": 41148596,
+ "volatile": [
+  "analysisVersion",
+  "baseUpdatedAt",
+  "builtAt",
+  "closedAt",
+  "collisionVersion",
+  "createdAt",
+  "depthMsPerFrame",
+  "elapsedSeconds",
+  "exportedAt",
+  "file",
+  "lastWipe",
+  "ms",
+  "msMean",
+  "msP95",
+  "msPerFrame",
+  "mtime",
+  "noteUpdatedAt",
+  "path",
+  "savedAt",
+  "since",
+  "size",
+  "updatedAt",
+  "version",
+  "worldmapVersion"
+ ],
+ "wmStride": 24
+}

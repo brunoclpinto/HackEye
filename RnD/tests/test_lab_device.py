@@ -113,3 +113,14 @@ def test_cpu_threads_env(monkeypatch):
     assert analysis._cpu_threads() == 3
     monkeypatch.delenv("HACKEYE_LAB_CPU_THREADS")
     assert analysis._cpu_threads() >= 1
+
+
+def test_default_device_env_applies_only_when_request_names_none(client, monkeypatch):
+    c, body = client
+    monkeypatch.setenv("HACKEYE_LAB_DEFAULT_DEVICE", "cpu")
+    assert analysis._parse_device({}) == "cpu"
+    assert analysis._parse_device({"device": None}) == "cpu"
+    assert analysis._parse_device({"device": "gpu"}) == "gpu"
+    assert _post(c, body).json()["device"] == "cpu"
+    monkeypatch.delenv("HACKEYE_LAB_DEFAULT_DEVICE")
+    assert analysis._parse_device({}) == "gpu"

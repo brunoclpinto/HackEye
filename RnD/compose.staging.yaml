@@ -1,0 +1,26 @@
+# Staging Lab for the v26.3.0 modular worktree: a second Lab instance built from
+# THIS worktree's code, for running the browser E2E suite without touching the
+# live Lab (:8765). Driven by tools/staging.sh, which exports the variables below.
+#   MAIN_REPO         the main checkout (media/models/base-models paths are relative to it)
+#   STAGING_LAB_DIR   host dir for this instance's LAB_DIR (<main>/debug/lab-staging)
+# No GPU reservation; runs default to CPU. Port 127.0.0.1:8775.
+name: rnd-modular
+services:
+  lab:
+    image: hackeye-rnd
+    working_dir: /rnd
+    user: "${UID:-1000}:${GID:-1000}"
+    entrypoint: ["uvicorn", "lab.server:app", "--host", "0.0.0.0", "--port", "8765"]
+    ports:
+      - "127.0.0.1:8775:8765"
+    environment:
+      YOLO_CONFIG_DIR: /debug/lab/.ultralytics
+      WANDB_MODE: disabled
+      HACKEYE_LAB_DEFAULT_DEVICE: cpu
+    volumes:
+      - .:/rnd
+      - ${HACKEYE_MEDIA_HOST_DIR:-${MAIN_REPO:?run via tools/staging.sh}/../../media/hackeye}:/media:ro
+      - ${STAGING_LAB_DIR:?}:/debug/lab
+      - ../common:/common
+      - ${MAIN_REPO}/../../models:/base-models:ro
+      - ${MAIN_REPO}/../HackEye-Models/models:/hackeye-models:ro

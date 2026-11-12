@@ -235,7 +235,8 @@ DEVICES = ["gpu", "cpu"]
 
 def _parse_device(req: dict) -> str:
     """The execution device of a request. Not part of the hashed request: it changes speed, not results."""
-    device = req.get("device") or "gpu"
+    # HACKEYE_LAB_DEFAULT_DEVICE: default for requests that name no device (staging Lab runs on CPU); unset = "gpu".
+    device = req.get("device") or os.environ.get("HACKEYE_LAB_DEFAULT_DEVICE") or "gpu"
     if device not in DEVICES:
         raise RunError(f"device must be one of {DEVICES}")
     return device

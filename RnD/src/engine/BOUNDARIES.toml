@@ -1,0 +1,74 @@
+# Import boundaries of the engine packages and the Lab packages. Enforced by tests/test_module_boundaries.py.
+# A model may always import itself (and its own subpackages). Anything not listed here is forbidden.
+# Legacy flat modules (collision, groundfuse, geometry, worldmap, ...) and `lab` are never importable from engine/.
+# Changing this file is an Opus decision, not a worker's.
+
+[defaults]
+stdlib = true
+third_party = ["numpy", "scipy"]
+engine = ["engine.core"]
+
+[models.core]
+engine = []            # core imports nothing from engine but itself
+
+[models.gait]
+[models.egosignals]
+[models.surface]
+[models.detection]
+[models.depthscale]
+[models.groundfuse]
+[models.tracking]
+[models.egostate]
+[models.memory]
+[models.worldmap]
+[models.worldtracks]
+[models.motion]
+[models.roles]
+[models.speech]
+[models.sounds]
+[models.output]
+
+[models.infer]
+# GPU model wrappers (segmentation.py / depth.py / models.py / egoflow.py / letterbox.py today).
+third_party = ["numpy", "scipy", "torch", "cv2", "ultralytics", "huggingface_hub", "safetensors", "omegaconf", "einops",
+               "timm", "transformers", "onnxruntime", "depth_anything_3", "unidepth", "PIL"]
+
+[models.pipeline]
+engine = ["*"]         # the only model that may import other models
+
+# ---------------------------------------------------------------------------------------------------------------
+# Lab packages (lab/<name>/). Rules apply once a package exists. `may_import` lists the lab packages it may import,
+# `engine` the engine packages. Other lab modules (lab/server.py, the flat legacy modules) are not restricted,
+# except that only lab.server may import lab.api.
+
+[lab]
+only_importer_of = { "lab.api" = ["lab.server"] }
+
+[lab.packages."lab.store"]
+may_import = []
+engine = []
+
+[lab.packages."lab.jobs"]
+may_import = ["lab.stages", "lab.store"]
+engine = []
+
+[lab.packages."lab.stages"]
+may_import = ["lab.store"]
+engine = ["engine.pipeline", "engine.infer"]
+
+[lab.packages."lab.features"]
+may_import = ["lab.store"]
+engine = []
+
+[lab.packages."lab.api"]
+may_import = ["lab.jobs", "lab.stages", "lab.store", "lab.features"]
+engine = []
+
+# ---------------------------------------------------------------------------------------------------------------
+# Front end: lab/static/js/. A feature module (js/features/**) may import only these top-level js modules/dirs
+# (and files inside its own feature directory).
+
+[js]
+root = "lab/static/js"
+features_dir = "features"
+feature_may_import = ["util", "api", "state", "bus"]

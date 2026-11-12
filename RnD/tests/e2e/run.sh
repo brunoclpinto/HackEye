@@ -18,13 +18,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="${PW_TAG:-v1.63.0-noble}"
 PWV="${TAG#v}"; PWV="${PWV%%-*}"   # python package version matching the image
 LAB_MOUNT=()
-if [ -d "$HERE/../../../debug/lab/runs" ]; then   # lets the session delete the run it created
-  LAB_MOUNT=(-v "$(cd "$HERE/../../../debug/lab" && pwd):/lab" -e LAB_DIR_MOUNT=/lab)
+E2E_LAB_DIR="${HACKEYE_E2E_LAB_DIR:-$HERE/../../../debug/lab}"   # HACKEYE_E2E_LAB_DIR: the Lab's LAB_DIR on the host (staging Lab)
+if [ -d "$E2E_LAB_DIR/runs" ]; then   # lets the session delete the run it created
+  LAB_MOUNT=(-v "$(cd "$E2E_LAB_DIR" && pwd):/lab" -e LAB_DIR_MOUNT=/lab)
 fi
 docker run --rm --network host --ipc host "${LAB_MOUNT[@]}" \
   -e LAB_URL="${LAB_URL:-http://127.0.0.1:8765}" \
   ${HACKEYE_E2E_RECORDING:+-e HACKEYE_E2E_RECORDING="$HACKEYE_E2E_RECORDING"} \
   ${HACKEYE_E2E_SHORT_RECORDING:+-e HACKEYE_E2E_SHORT_RECORDING="$HACKEYE_E2E_SHORT_RECORDING"} \
+  ${HACKEYE_E2E_TIMEOUT_SCALE:+-e HACKEYE_E2E_TIMEOUT_SCALE="$HACKEYE_E2E_TIMEOUT_SCALE"} \
   -e PYTHONDONTWRITEBYTECODE=1 -e PWV="$PWV" \
   -v "$HERE:/e2e:ro" -w /e2e \
   "mcr.microsoft.com/playwright/python:$TAG" \

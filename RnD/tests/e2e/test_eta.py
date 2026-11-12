@@ -2,7 +2,7 @@
 import os
 import shutil
 
-from conftest import LONG_REC, api, open_lab
+from conftest import LONG_REC, api, open_lab, scaled
 
 LAB_DIR_MOUNT = os.environ.get("LAB_DIR_MOUNT", "")
 
@@ -74,7 +74,7 @@ def test_progress_label_shows_eta_on_real_run(page):
         if foreign:
             open_lab(page, foreign["request"]["recording"])
             page.wait_for_selector("#runProgress", state="visible", timeout=20_000)
-            page.wait_for_function(pattern, timeout=60_000)
+            page.wait_for_function(pattern, timeout=scaled(60_000))
             label = page.inner_text("#runProgress span")
             assert page.inner_text(f'#runList li[data-run="{foreign["id"]}"] .tag') .startswith("running"), label
             assert "·" in page.get_attribute("#analyseBtn", "title"), label
@@ -87,7 +87,7 @@ def test_progress_label_shows_eta_on_real_run(page):
         page.click("#analyseBtn")
         page.wait_for_selector("#runProgress", state="visible", timeout=10_000)
         run_id = next(r["id"] for r in api("/api/runs") if r["id"] not in known)
-        page.wait_for_function(pattern, timeout=300_000)
+        page.wait_for_function(pattern, timeout=scaled(300_000))
         label = page.inner_text("#runProgress span")
         assert api(f"/api/runs/{run_id}")["status"] in ("running", "done"), label
         assert page.inner_text(f'#runList li[data-run="{run_id}"] .tag') .startswith("running"), label   # the runs list shows it too

@@ -21,6 +21,15 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 BASE = os.environ.get("LAB_URL", "http://127.0.0.1:8765")
+# HACKEYE_E2E_TIMEOUT_SCALE: multiplies every analysis-run wait (CPU-only staging Lab is slower than the GPU live Lab); default 1.0.
+_SCALE = float(os.environ.get("HACKEYE_E2E_TIMEOUT_SCALE", "1.0"))
+
+
+def scaled(timeout):
+    """A run-completion wait (ms for Playwright, s for collision_job) multiplied by HACKEYE_E2E_TIMEOUT_SCALE."""
+    return timeout * _SCALE
+
+
 LONG_REC = os.environ.get("HACKEYE_E2E_RECORDING", "Chest-center-0002")
 SHORT_REC = os.environ.get("HACKEYE_E2E_SHORT_RECORDING", "Chest-center-0005")
 DEFAULT_LONG_REC = "Chest-center-0002"
@@ -67,7 +76,7 @@ def collision_job(run, body=None, timeout=300):
     import time
     doc = api(f"/api/runs/{run}/collision", "POST", body if body is not None else {})
     t0 = time.time()
-    while time.time() - t0 < timeout:
+    while time.time() - t0 < scaled(timeout):
         doc = next(c for c in api(f"/api/runs/{run}/collisions") if c["id"] == doc["id"])
         if doc["status"] != "running":
             return doc
