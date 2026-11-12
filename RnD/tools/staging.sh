@@ -33,6 +33,7 @@ case "${1:-}" in
     done ;;
   e2e)
     shift
+    HACKEYE_E2E_DEVICE="${HACKEYE_E2E_DEVICE:-cpu}" HACKEYE_E2E_TIMEOUT_SCALE="${HACKEYE_E2E_TIMEOUT_SCALE:-3}" \
     HACKEYE_E2E_LAB_DIR="$STAGING_LAB_DIR" LAB_URL="http://127.0.0.1:$PORT" "$RND/tests/e2e/run.sh" "$@" ;;
   down) dc down ;;
   clean) dc down; rm -rf "$STAGING_LAB_DIR"; echo "removed $STAGING_LAB_DIR" ;;

@@ -165,7 +165,10 @@ reservation, runs default to CPU (`HACKEYE_LAB_DEFAULT_DEVICE=cpu`; unset = `gpu
     RnD/tools/staging.sh clean   # down + delete the staging LAB_DIR
     RnD/tools/staging.sh status
 
-`tests/e2e/run.sh` honours `HACKEYE_E2E_LAB_DIR` to mount a different LAB_DIR.
+`tests/e2e/run.sh` honours `HACKEYE_E2E_LAB_DIR` (mount a different LAB_DIR), `HACKEYE_E2E_DEVICE`
+(preselect the UI's device; the Lab sends it explicitly, so a CPU-only staging Lab needs `cpu`) and
+`HACKEYE_E2E_TIMEOUT_SCALE` (multiplies the analysis-run waits, default 1.0). `staging.sh e2e` defaults
+these to `cpu` and `3` (a 6 s CPU run takes ~30 s, the 120 s long-recording run ~150 s).
 
 ## Documentation
 - [`lab/CONTRACTS.md`](lab/CONTRACTS.md): the current rules for the Lab and the collision logic.

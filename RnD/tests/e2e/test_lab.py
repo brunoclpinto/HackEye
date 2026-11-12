@@ -29,7 +29,7 @@ def _session_run():
     run = api("/api/runs", "POST", {"recording": LONG_REC, "start": LONG_RANGE[0], "end": LONG_RANGE[1], "fps": 6, "model": model})
     created = run["id"] not in known
     t0 = time.time()
-    while run["status"] not in ("done", "error", "cancelled") and time.time() - t0 < 400:
+    while run["status"] not in ("done", "error", "cancelled") and time.time() - t0 < scaled(400):
         time.sleep(1)
         run = api(f"/api/runs/{run['id']}")
     assert run["status"] == "done", run

@@ -34,7 +34,10 @@ LONG_REC = os.environ.get("HACKEYE_E2E_RECORDING", "Chest-center-0002")
 SHORT_REC = os.environ.get("HACKEYE_E2E_SHORT_RECORDING", "Chest-center-0005")
 DEFAULT_LONG_REC = "Chest-center-0002"
 
-HOOKS = """
+# HACKEYE_E2E_DEVICE=cpu: the Lab's device select defaults to GPU (and sends it explicitly), so a CPU-only staging Lab needs it preselected.
+_DEVICE = os.environ.get("HACKEYE_E2E_DEVICE", "")
+_DEVICE_HOOK = f"try {{ localStorage.setItem('hackeye.lab.device', '{_DEVICE}'); }} catch (e) {{}}\n" if _DEVICE in ("cpu", "gpu") else ""
+HOOKS = _DEVICE_HOOK + """
 window.__spoken = [];
 window.__acs = [];
 (() => {
@@ -105,7 +108,7 @@ def _recordings():
         if known[rec]["proxy"]["status"] != "ready":
             api(f"/api/recordings/{rec}/proxy", "POST")
     t0 = time.time()
-    while time.time() - t0 < 600:
+    while time.time() - t0 < scaled(600):
         status = {r["id"]: r["proxy"] for r in api("/api/recordings") if r["id"] in (LONG_REC, SHORT_REC)}
         if all(v["status"] == "ready" for v in status.values()):
             break
