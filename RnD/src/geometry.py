@@ -11,38 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
-@dataclass
-class Box:
-    """Top-left origin box, matching Box.swift."""
-
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-
-    @property
-    def w(self) -> float:
-        return max(0.0, self.x2 - self.x1)
-
-    @property
-    def h(self) -> float:
-        return max(0.0, self.y2 - self.y1)
-
-    @property
-    def area(self) -> float:
-        return self.w * self.h
-
-
-def iou(a: Box, b: Box) -> float:
-    """Intersection-over-union of two boxes; 0 when both are degenerate."""
-    xa, ya = max(a.x1, b.x1), max(a.y1, b.y1)
-    xb, yb = min(a.x2, b.x2), min(a.y2, b.y2)
-    inter = max(0.0, xb - xa) * max(0.0, yb - ya)
-    union = a.area + b.area - inter
-    if union <= 0:
-        return 0.0
-    return inter / union
+from engine.core.geom import Box, iou  # noqa: F401
 
 
 @dataclass

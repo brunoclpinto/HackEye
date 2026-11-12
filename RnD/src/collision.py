@@ -196,7 +196,6 @@ import numpy as np
 from scipy import ndimage
 
 from common_paths import find_common_dir
-from geometry import Box, iou
 import faceedge
 import groundfuse
 import sensors as sensor_lib
@@ -208,6 +207,15 @@ from engine.core.clock import (  # noqa: F401
     clock_text,
     pan_from_bearing as _pan_from_bearing,
     quarter_of_hour as _quarter_of_hour,
+)
+from engine.core.geom import (  # noqa: F401
+    Box,
+    focal_px,
+    ground_distance_m,
+    iou,
+    lateral_m,
+    round_opt as _r,
+    steps_to,
 )
 from engine.core.log import WARNED as _WARNED, log as _log, warn_once as _warn_once  # noqa: F401
 
@@ -352,28 +360,6 @@ def resolve_settings(config: dict, mount: str | None = None, hfov_deg: float | N
         depth_level_prior=preset.get("depthLevelPrior"),
         user_height_m=body_h, camera_location=loc, camera_side=side, lateral_offset_m=lat_off,
         object_distance=object_distance, use_horizon=use_h, step_length_user=step_length_m is not None)
-
-
-# --------------------------------------------------------------------------
-# Geometry helpers
-# --------------------------------------------------------------------------
-
-def focal_px(grid_w: float, hfov_deg: float) -> float:
-    """Focal length in grid pixels: (W / 2) / tan(hfov / 2)."""
-    return (grid_w / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
-
-
-def ground_distance_m(y_norm: float, horizon_y: float, camera_height_m: float,
-                      grid_h: float, f_px: float) -> float | None:
-    """Distance to a ground point seen at ``y_norm``: H * f / ((y - horizon) * grid_h)."""
-    if y_norm <= horizon_y:
-        return None
-    return camera_height_m * f_px / ((y_norm - horizon_y) * grid_h)
-
-
-def lateral_m(x_norm: float, distance_m: float, grid_w: float, f_px: float) -> float:
-    """Sideways offset in metres (+ = right): (x - 0.5) * W * d / f."""
-    return (x_norm - 0.5) * grid_w * distance_m / f_px
 
 
 # --------------------------------------------------------------------------
@@ -2039,16 +2025,6 @@ class _WorldMemory:
 # Steps and roles
 # --------------------------------------------------------------------------
 
-def steps_to(distance_m: float, step_length_m: float) -> float:
-    """Steps until we reach the item: ``distance / step length`` (v26.1.6).
-
-    The distance is gait calibrated (see ``_Scale``) and the step length is the prior or the
-    per-recording value, so the number is stable: it no longer divides by a noisy instantaneous ego
-    speed (v26.1.5 steps swung 25.9 -> 12.7 in 0.2 s).
-    """
-    return distance_m / step_length_m
-
-
 def _speed_witness(it: _Item) -> bool:
     """Can this item tell us our own speed? Only something that stands on the ground at a point:
     a pole, sign or lamp (tall and thin). The contact row of a wall, hedge or building is where the
@@ -3443,10 +3419,6 @@ def _region_rows(region: Region | None, step: int = 4) -> list[list[float]]:
     gh = len(region.left)
     return [[round((r + 0.5) / gh, 3), round(float(region.left[r]), 3), round(float(region.right[r]), 3)]
             for r in range(gh - 1, -1, -step) if not np.isnan(region.left[r])]
-
-
-def _r(v: float | None, nd: int) -> float | None:
-    return None if v is None else round(float(v), nd)
 
 # --------------------------------------------------------------------------
 # Outlines (v26.1.8): the outer contour of an item's own connected component
