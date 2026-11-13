@@ -751,6 +751,7 @@ def _lane_pair(key: str) -> list[tuple[Any, Any, Any, Any, Any]]:
     for j, it in enumerate(items):
         if it.lane_part:
             main = items[j - 1]
+            assert main.shape is not None
             mask, c0, r0 = main.shape
             rr, cc = np.nonzero(mask)
             out.append((geo, main, it, rr + r0, cc + c0))
