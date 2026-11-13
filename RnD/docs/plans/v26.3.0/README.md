@@ -11,6 +11,7 @@ Each spec `pN-NN-<name>.md` has three sections:
 ## Common rules
 - Work only in the worktree `~/repos/HackEye/.worktrees/modular`, never in `~/repos/HackEye`.
 - Workers never commit.
+- Scratch files go only in your own directory `/tmp/claude-1000/-home-megabeast/0ba2ff10-ae38-4b43-a0a3-4e78cc8a2d0d/scratchpad/<task-id>/`. Never delete files outside it, because other workers share the scratchpad. Remove the directory when done.
 - Before reporting, kill every background process you started, check with `ps`, and say so in the report.
 - Gate: `RnD/tools/check.sh --files <changed files> <task test files> --tests <task tests> --related` must end with 0 errors and 0 warnings. Always list the task's test files under `--files` too: they get mypy-checked in their final (green) state only then. In p1-03, a locked test failed mypy only at the phase check.
 

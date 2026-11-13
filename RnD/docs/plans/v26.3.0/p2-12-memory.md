@@ -8,8 +8,10 @@
   - The signature `WorldMemory(cfg, enabled=True)` is unchanged.
   - Order inside `advance`: the pose update (the reckoner) first, then the pruning loop over `entries` using the new pose, exactly as today, including the `heading_deg is None` early return before pruning.
   - Alternative if properties break a pinned test (`__new__` plus attribute assignment): subclass `DeadReckoner` instead (`class WorldMemory(DeadReckoner)`). Report which one was used and why.
-- **Said contract** (plan decision 4): add the methods `mark_said(mem_id: int, t: float) -> None` and `said_at(mem_id: int) -> float | None`. They read and write `entries[mem_id]["said"]`, the same key and value the speech code writes today (read `SpeechPolicy` at the audit lines 2743, 2893, 3008 for the exact value type).
-  - They are not yet called by speech; Phase 3 speech switches over.
+- **Said contract** (plan decision 4): speech today writes `entries[mem_id]["said"] = (it.steps, t)`, a `(steps, t)` tuple of floats (collision.py, `SpeechPolicy`), and reads it back in `_closing_again`. Add:
+  - `mark_said(mem_id: int, steps: float, t: float) -> None`, which stores exactly `(steps, t)` under `"said"`;
+  - `said_at(mem_id: int) -> tuple[float, float] | None`, which returns `entries[mem_id].get("said")`.
+  - These keep the same key and the same value as today. Speech does not call them yet; Phase 3 speech switches over. (The tests worker caught this: an earlier draft stored only `t`.)
 - Add `ObjectMemory(Protocol)` to `engine.core.types`, not to `engine.memory` (`active`, `entries`, `add(...)`, `mark_said`, `said_at`): speech types against core and never imports memory.
 - `worldmap.PoseTracker` keeps using `collision._WorldMemory` until Phase 3: no change there.
 
