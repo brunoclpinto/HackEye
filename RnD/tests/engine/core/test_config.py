@@ -209,7 +209,7 @@ def test_apply_overrides_pending_allowed_values() -> None:
 def test_check_overrides() -> None:
     from engine.core import config
 
-    assert config.check_overrides({"collision": {"a.b": 2}}, _CFG, _WM) is None
+    config.check_overrides({"collision": {"a.b": 2}}, _CFG, _WM)  # valid: must not raise
     with pytest.raises(config.OverrideError) as e1:
         config.check_overrides({"collision": {"a.b": "x"}}, _CFG, _WM)
     assert str(e1.value) == "overrides.collision: 'a.b' must be a number, not a string"

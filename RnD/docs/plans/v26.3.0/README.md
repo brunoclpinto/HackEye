@@ -12,7 +12,7 @@ Each spec `pN-NN-<name>.md` has three sections:
 - Work only in the worktree `~/repos/HackEye/.worktrees/modular`, never in `~/repos/HackEye`.
 - Workers never commit.
 - Before reporting, kill every background process you started, check with `ps`, and say so in the report.
-- Gate: `RnD/tools/check.sh --files <changed files> --tests <task tests> --related` must end with 0 errors and 0 warnings.
+- Gate: `RnD/tools/check.sh --files <changed files> <task test files> --tests <task tests> --related` must end with 0 errors and 0 warnings. Always list the task's test files under `--files` too: they get mypy-checked in their final (green) state only then. In p1-03, a locked test failed mypy only at the phase check.
 
 ## Tests worker
 1. Write only the files listed under **Tests**: `tests/engine/<model>/test_*.py`.

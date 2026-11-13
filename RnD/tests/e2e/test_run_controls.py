@@ -2,7 +2,7 @@
 import os
 import shutil
 
-from conftest import BASE, LONG_REC, api, open_lab, scaled
+from conftest import LONG_REC, api, open_lab, scaled
 
 LAB_DIR_MOUNT = os.environ.get("LAB_DIR_MOUNT", "")
 RANGE = (5, 25)   # a range no other test analyses
