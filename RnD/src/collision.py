@@ -228,6 +228,15 @@ from engine.core.settings import (  # noqa: F401
     resolve_projection,
     resolve_settings,
 )
+from engine.core.groundgeom import (  # noqa: F401
+    FrameGeo as _FrameGeo,
+    bottom_point as _bottom_point,
+    ego_frame as _ego_frame,
+    frame_geometry as _frame_geometry,
+    ground_dist as _ground_dist,
+    lateral_of as _lateral_of,
+    walking_axis_offset_m as _walking_axis_offset_m,
+)
 
 from engine.core.classes import (  # noqa: F401
     ITEM_GROUPS,
@@ -575,83 +584,6 @@ def estimate_horizon(left: np.ndarray, right: np.ndarray, config: dict,
 # --------------------------------------------------------------------------
 
 @dataclass
-class _FrameGeo:
-    """Everything derived from the horizon, shared by all items of one frame."""
-    gh: int
-    gw: int
-    f: float
-    horizon: float
-    camera_height_m: float
-    hfov_deg: float
-    projection: str
-    below: np.ndarray                         # (H,) rows whose bottom edge is below the horizon
-    lane: np.ndarray                          # (H, W) danger lane
-    lane_region: np.ndarray                   # lane within the dilated walking region
-    region_dilated: np.ndarray                # (H, W)
-    floor_below: np.ndarray                   # (H, W) True where the pixel below is walking region
-    lateral_offset_m: float = 0.0             # walking axis relative to the camera axis (+ = right), see _walking_axis_offset_m
-    lens: "groundfuse.Geometry | None" = None  # v26.2.7: the lens ground geometry of a fisheye run (None = the pinhole formulas, exact there)
-
-
-def _walking_axis_offset_m(settings: "CollisionSettings", heading_deg: float | None = None) -> float:
-    """Lateral position (m, + = right) of the camera relative to the body centre line that the danger lane,
-    the collision-course test and the reported laterals are centred on.
-
-    The ONE place the lane's direction is decided. Today the lane runs straight along the camera's optical axis,
-    shifted by the mounting side offset. With head or glasses mounting the camera heading differs from the
-    walking direction when the head turns; a body heading (IMU) is meant to replace this (``heading_deg`` is the
-    future hook: the body-vs-camera yaw), and only this function has to change."""
-    return float(getattr(settings, "lateral_offset_m", 0.0))
-
-
-def _frame_geometry(gh: int, gw: int, horizon: float, camera_height_m: float, f: float, hfov_deg: float,
-                    lane_half_m: float, region: Region | None, margin_px: int,
-                    projection: str = "rectilinear", lateral_offset_m: float = 0.0, lens_ground: bool = True) -> _FrameGeo:
-    rows_bottom = (np.arange(gh) + 1.0) / gh
-    below = rows_bottom > horizon + 1e-9
-    # half width of the lane in px at each row = lane_half * f / distance
-    half_px = np.where(below, lane_half_m * (rows_bottom - horizon) * gh / camera_height_m, -1.0)
-    col_c = np.arange(gw) + 0.5 - gw / 2.0
-    if lateral_offset_m:
-        # body lateral = camera lateral + offset; lane = |body lateral| <= half: its centre sits -offset*f/d px from the axis
-        shift_px = np.where(below, lateral_offset_m * (rows_bottom - horizon) * gh / camera_height_m, 0.0)
-        lane = np.abs(col_c[None, :] + shift_px[:, None]) <= half_px[:, None]
-    else:
-        lane = np.abs(col_c)[None, :] <= half_px[:, None]
-    if region is not None:
-        dil = ndimage.binary_dilation(region.mask, structure=ndimage.generate_binary_structure(2, 1),
-                                      iterations=max(1, margin_px)) if margin_px > 0 else region.mask
-    else:
-        dil = np.zeros((gh, gw), dtype=bool)
-    floor = np.zeros((gh, gw), dtype=bool)
-    if region is not None:
-        floor[:-1] = region.mask[1:]
-    # v26.2.7: the lens ground geometry of a fisheye run with depth distances. (Ground-distance runs keep the pinhole formulas: their gait
-    # scale k, fitted on pinhole closings, already absorbs the lens factor; correcting the distance as well would apply it twice.)
-    lens = groundfuse.Geometry(gh, gw, hfov_deg, projection, camera_height_m) if (projection == "fisheye" and lens_ground) else None
-    return _FrameGeo(gh, gw, f, horizon, camera_height_m, hfov_deg, projection, below, lane, lane & dil, dil, floor,
-                     lateral_offset_m, lens)
-
-
-def _ground_dist(geo: _FrameGeo, y_norm: float, col: float) -> float | None:
-    """Forward distance (m) of the floor point seen at the bottom edge ``y_norm`` (fraction of the grid height) of image column ``col``;
-    None at or above the horizon. v26.2.7: on a fisheye run through the lens (``groundfuse.ground_point``, 1.2 - 1.8 times the old pinhole
-    value on the 118 deg lens); on a rectilinear run the pinhole formula (exact there, unchanged)."""
-    if geo.lens is None:
-        return ground_distance_m(y_norm, geo.horizon, geo.camera_height_m, geo.gh, geo.f)
-    fwd = float(groundfuse.ground_point(geo.lens, y_norm * geo.gh, col + 0.5, geo.horizon)[0])
-    return fwd if math.isfinite(fwd) and fwd > 0.0 else None
-
-
-def _lateral_of(geo: _FrameGeo, row: float, col: float, dist: float) -> float:
-    """Camera-axis lateral (m, + right) of the pixel ``col`` at forward distance ``dist``; ``row`` = its bottom edge (row coordinate).
-    v26.2.7: through the lens on a fisheye run, the pinhole formula on a rectilinear one."""
-    if geo.lens is None:
-        return lateral_m((col + 0.5) / geo.gw, dist, geo.gw, geo.f)
-    return float(groundfuse.lateral_at(geo.lens, row, col + 0.5, dist, geo.horizon))
-
-
-@dataclass
 class _Item:
     """One connected component of an item class in one frame."""
     group: str
@@ -751,15 +683,6 @@ class _Item:
             self.clock_q = _quarter_of_hour(self.clock)
         if not self.clock_text:
             self.clock_text = clock_text(self.clock_q)
-
-
-def _bottom_point(rows: np.ndarray, cols: np.ndarray, sel: np.ndarray, gw: int) -> tuple[int, int]:
-    """Lowest selected pixel; on that row the column nearest the image centre."""
-    r = rows[sel].max()
-    on_row = sel & (rows == r)
-    c_all = cols[on_row]
-    c = int(c_all[np.argmin(np.abs(c_all + 0.5 - gw / 2.0))])
-    return int(r), c
 
 
 def _split_people(comp: np.ndarray, r0: int, c0: int, geo: _FrameGeo, cfg: dict, dmap: np.ndarray | None,
@@ -4388,14 +4311,6 @@ class _OwnMotion:
 def _trusted_track(wtracks, tid: int, t: float) -> dict | None:
     e = wtracks.lookup(tid, t)
     return e if (e is not None and e["trusted"]) else None
-
-
-def _ego_frame(pose: tuple, x: float, y: float) -> tuple[float, float]:
-    """World (x, y) -> (forward, right) metres of the pose (x, y, heading deg)."""
-    th = math.radians(pose[2])
-    s_, c_ = math.sin(th), math.cos(th)
-    dx, dy = x - pose[0], y - pose[1]
-    return dx * s_ + dy * c_, dx * c_ - dy * s_
 
 
 def _map_source(items: list[_Item], tracks: dict, smap: "_StaticMap", wtracks, cfg: dict, t: float, step_len: float,

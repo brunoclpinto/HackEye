@@ -38,6 +38,16 @@ from engine.core.distfuse import (  # noqa: F401
     settings,
 )
 from engine.core.distfuse import prior_interp as _prior_interp  # noqa: F401
+from engine.core.groundgeom import (  # noqa: F401
+    Geometry,
+    ground_m,
+    ground_pixel,
+    ground_point,
+    ground_z,
+    lateral_at,
+    ray_dir,
+)
+from engine.core.groundgeom import pitch as _pitch  # noqa: F401
 
 
 class HorizonSigma:
@@ -167,110 +177,3 @@ def _wmedian(x: np.ndarray, w: np.ndarray) -> float:
     o = np.argsort(x, kind="stable")
     c = np.cumsum(w[o])
     return float(x[o][int(np.searchsorted(c, 0.5 * c[-1]))])
-
-
-class Geometry:
-    """Lens + camera: grid size, HFOV, projection ("fisheye" equidistant or "rectilinear"), camera height (m, without any gait scale)."""
-
-    def __init__(self, gh: int, gw: int, hfov_deg: float, projection: str, cam_h: float):
-        self.gh, self.gw, self.hfov, self.fisheye, self.cam_h = gh, gw, float(hfov_deg), projection == "fisheye", float(cam_h)
-        self.f_eq = gw / math.radians(self.hfov)
-        self.f_pin = (gw / 2.0) / math.tan(math.radians(self.hfov) / 2.0)
-        self.roll = 0.0          # v26.2.11 (``ego.rollCorrect``): the camera roll (rad, + = right side down) the geometry undoes; set per frame
-
-
-def _pitch(geo: Geometry, horizon: float) -> float:
-    """The camera pitch (rad, + = looking down) the horizon row implies: the ray of the horizon row on the centre column is level."""
-    off = geo.gh / 2.0 - horizon * geo.gh
-    return off / geo.f_eq if geo.fisheye else math.atan(off / geo.f_pin)
-
-
-def ray_dir(geo: Geometry, row_b, col_c):
-    """(xn, yn): the normalised camera ray (x right, y down, z = 1 along the optical axis) of grid position (``row_b`` row coordinate,
-    ``col_c`` column coordinate, floats, pixel centres at +0.5): the equidistant fisheye's or the pinhole's. nan where a fisheye ray points
-    (almost) sideways or backwards."""
-    row_b, col_c = np.broadcast_arrays(np.asarray(row_b, dtype=np.float64), np.asarray(col_c, dtype=np.float64))
-    px, py = col_c - geo.gw / 2.0, row_b - geo.gh / 2.0
-    if geo.roll:                                   # the pixel as a level camera would see it
-        cr, sr = math.cos(geo.roll), math.sin(geo.roll)
-        px, py = px * cr - py * sr, px * sr + py * cr
-    if geo.fisheye:
-        r = np.hypot(px, py)
-        theta = r / geo.f_eq
-        ct = np.cos(theta)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            k = np.where(r > 0, np.tan(theta) / np.maximum(r, 1e-12), 1.0 / geo.f_eq)
-        xn, yn = k * px, k * py
-        ok = ct > 1e-3
-        return np.where(ok, xn, np.nan), np.where(ok, yn, np.nan)
-    return px / geo.f_pin, py / geo.f_pin
-
-
-def ground_z(geo: Geometry, row_b, col_c, horizon: float, cam_h: float | None = None):
-    """z-depth (m, along the optical axis) of the ground point seen at grid position (``row_b`` row coordinate, ``col_c`` column coordinate,
-    both float, pixel centres at +0.5), for a flat floor ``cam_h`` (default ``geo.cam_h``) below the camera and the horizon at ``horizon``
-    (fraction of the height; it fixes the pitch: the ray of the horizon row on the centre column is level). nan above the horizon."""
-    xn, yn = ray_dir(geo, row_b, col_c)
-    phi = _pitch(geo, horizon)
-    h = geo.cam_h if cam_h is None else float(cam_h)
-    down = yn * math.cos(phi) + math.sin(phi)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return np.where(down > 1e-4, h / down, np.nan)
-
-
-def ground_point(geo: Geometry, row_b, col_c, horizon: float, cam_h: float | None = None):
-    """v26.2.7: the floor point seen at grid position (``row_b``, ``col_c``): (forward m, right m) in the level frame of the camera (the
-    horizon's pitch removed; camera axis, no body offset). forward = z (cos phi - yn sin phi), right = xn z. nan above the horizon. This is
-    the ONE lens ground geometry of the map's surfaces, the object bases and the items (the collision pass's old pinhole formulas are
-    1.2 - 1.8 times off on the 118 deg fisheye)."""
-    xn, yn = ray_dir(geo, row_b, col_c)
-    z = ground_z(geo, row_b, col_c, horizon, cam_h)
-    phi = _pitch(geo, horizon)
-    return z * (math.cos(phi) - yn * math.sin(phi)), xn * z
-
-
-def ground_pixel(geo: Geometry, fwd, right, horizon: float, cam_h: float | None = None):
-    """v26.2.7: the exact inverse of ``ground_point``: the float grid position (row coordinate, column coordinate) that sees the floor point
-    (``fwd`` m forward, ``right`` m right). nan where the point is not in front of the camera."""
-    fwd, right = np.broadcast_arrays(np.asarray(fwd, dtype=np.float64), np.asarray(right, dtype=np.float64))
-    phi = _pitch(geo, horizon)
-    h = geo.cam_h if cam_h is None else float(cam_h)
-    cp, sp = math.cos(phi), math.sin(phi)
-    z = fwd * cp + h * sp
-    y = h * cp - fwd * sp
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ok = z > 1e-6
-        xn, yn = np.where(ok, right / z, np.nan), np.where(ok, y / z, np.nan)
-        if geo.fisheye:
-            rho = np.hypot(xn, yn)
-            r = np.arctan(rho) * geo.f_eq
-            k = np.where(rho > 0, r / np.maximum(rho, 1e-12), geo.f_eq)
-            px, py = k * xn, k * yn
-        else:
-            px, py = xn * geo.f_pin, yn * geo.f_pin
-    if geo.roll:                                   # back into the rolled camera's image
-        cr, sr = math.cos(geo.roll), math.sin(geo.roll)
-        px, py = px * cr + py * sr, -px * sr + py * cr
-    return py + geo.gh / 2.0, px + geo.gw / 2.0
-
-
-def lateral_at(geo: Geometry, row_b, col_c, fwd, horizon: float):
-    """v26.2.7: the right offset (m, camera axis) of the pixel's ray at the forward distance ``fwd``: xn fwd / (cos phi - yn sin phi)."""
-    xn, yn = ray_dir(geo, row_b, col_c)
-    phi = _pitch(geo, horizon)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return xn * np.asarray(fwd, dtype=np.float64) / (math.cos(phi) - yn * math.sin(phi))
-
-
-def ground_m(geo: Geometry, row_b, col_c, horizon: float, rep: dict | None, sigma_rows: float | None = None):
-    """The ground ray in depth metres, ``ref x ground_z`` (nan without ``ref``). With ``sigma_rows``: also its 1-sigma (m) from a base-row error."""
-    z = ground_z(geo, row_b, col_c, horizon)
-    if rep is None:
-        return np.full_like(z, np.nan), np.full_like(z, np.nan)
-    q = float(rep["ref"])
-    if sigma_rows is None:
-        return q * z, None
-    hi, lo = ground_z(geo, np.asarray(row_b) - sigma_rows, col_c, horizon), ground_z(geo, np.asarray(row_b) + sigma_rows, col_c, horizon)
-    with np.errstate(invalid="ignore"):
-        sg = np.where(np.isnan(hi), np.abs(q * z - q * lo), np.abs(hi - lo) / 2.0 * q)
-    return q * z, sg
