@@ -229,9 +229,13 @@ from engine.core.settings import (  # noqa: F401
     resolve_settings,
 )
 
-_4_CONNECTIVITY = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
-ITEM_GROUPS = ("static", "moving", "feature")
-NO_DATA = 255            # grid cell outside the analysed window (a portrait run): no class, never a surface or an item
+from engine.core.classes import (  # noqa: F401
+    ITEM_GROUPS,
+    NO_DATA,
+    ClassIds,
+    FOUR_CONNECTIVITY as _4_CONNECTIVITY,
+    resolve_class_ids,
+)
 
 
 LAST_WORLD_TRACKS_MS: list[float] = []     # ms of the world-track step per frame of the last run_collision (metrics tool; not in the output)
@@ -471,47 +475,6 @@ def estimate_stationary(t, resid, cfg: dict) -> np.ndarray:
                 since = None
         out[i] = state
     return out
-
-
-# --------------------------------------------------------------------------
-# Class ids
-# --------------------------------------------------------------------------
-
-@dataclass
-class ClassIds:
-    """Config class names resolved to ids of this model."""
-    surface_groups: dict[str, np.ndarray]
-    inside: np.ndarray
-    items: dict[str, list[int]]               # group -> class ids (static/moving/feature)
-    names: list[str]                          # class id -> name
-    people: frozenset = frozenset()           # class names treated as movers unless measured stationary
-    fast: frozenset = frozenset()             # class names that cover 5-10 m/s (rider, vehicle): warned about early (v26.1.13)
-    thin: frozenset = frozenset()             # class names warned about as "beware poles"
-    landmark: frozenset = frozenset()         # feature class names announced as a landmark (crosswalk)
-
-
-def resolve_class_ids(config: dict, class_names: list[str]) -> ClassIds:
-    index = {n: i for i, n in enumerate(class_names)}
-
-    def ids_of(names) -> np.ndarray:
-        out = []
-        for name in names:
-            if name in index:
-                out.append(index[name])
-            else:
-                _warn_once(f"class '{name}' not in this model, skipped")
-        return np.array(out, dtype=np.int64)
-
-    surf = config["surfaces"]
-    return ClassIds(
-        surface_groups={g: ids_of(v["classes"]) for g, v in surf["groups"].items()},
-        inside=ids_of(surf["inside"]),
-        items={g: [int(i) for i in ids_of(config["classes"].get(g, []))] for g in ITEM_GROUPS},
-        names=list(class_names),
-        people=frozenset(config["classes"].get("people", [])),
-        fast=frozenset(config["classes"].get("fast", [])),
-        thin=frozenset(config["classes"].get("thin", [])),
-        landmark=frozenset(config["classes"].get("landmark", [])))
 
 
 # --------------------------------------------------------------------------
