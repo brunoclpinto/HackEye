@@ -105,3 +105,27 @@ None.
 ### Invariants
 - Code moved verbatim; the stdlib (`json`, `struct`, `subprocess`, `tempfile`) is the only addition to numpy.
 - Sample times are spread evenly over each payload's packet pts / duration; fix and DOP repeat per payload.
+
+## series.py (v26.3.0 p2-04, moved from `collision.py`)
+
+| name | kind | purpose | legacy |
+|---|---|---|---|
+| `motion_series` | function | `(t, cadence, cumulative heading deg, stationary flag or None)` of the image motion track, or None | `collision._motion_series` |
+| `IMU_STATIONARY_DEFAULT` | constant | defaults of `ego.imu.stationary` (median 0.3 s, enter 0.5 px, leave 0.8 px, 1.5 s / 1.0 s) | `collision.IMU_STATIONARY_DEFAULT` |
+| `nearest` | function | index of the sorted `tu` sample at or just before each `t` (clipped) | `collision._nearest` |
+| `sensor_series` | function | device-sensor series on the motion time base: `mt`, `s`, `cad`, `stat_imu`, `pitch`, `roll`; None without usable sensors | `collision._sensor_series` |
+| `gps_at` | function | GPS state `{lat, lon, speedMps, dop, fix, good}` at a time, or None | `collision._gps_at` |
+| `auto_stationary` | function | `ego.stationarySource` "auto": `(imu_stat, "imu")` | `collision._auto_stationary` |
+| `sensor_heading` | function | fills `sser` in place with `heading_imu`, `info`, `heading_gps` (bias from the stationary spans) | `collision._sensor_heading` |
+
+Legacy names are re-exports of the same objects (`tools/sensors_report.py` calls `collision._sensor_series`). These
+functions call `cadence`, `imu` and `gpmf` through `engine.egosignals.*`.
+
+### Config keys read
+`ego`: `cadenceWindowSeconds`, `cadenceBandHz`, `cadenceMinPeakRatio`, `minStepHz`, `harmonicMinRatio`, `stationary`,
+`gravityTauS`; plus the sensor sections `imu` (`activityWindowS`, `cadenceRateHz`, `stationary`), `gps` (`enabled`,
+`minFix`, `maxDop`).
+
+### Invariants
+- `sensor_heading` mutates its `sser` argument in place (keep it).
+- Code moved verbatim; numerics bit-identical.

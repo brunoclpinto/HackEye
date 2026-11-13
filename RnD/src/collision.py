@@ -303,6 +303,15 @@ from engine.egosignals.cadence import (  # noqa: E402, F401
     spectrum as _spectrum,
     window_cadence as _window_cadence,
 )
+from engine.egosignals.series import (  # noqa: E402, F401
+    IMU_STATIONARY_DEFAULT,
+    auto_stationary as _auto_stationary,
+    gps_at as _gps_at,
+    motion_series as _motion_series,
+    nearest as _nearest,
+    sensor_heading as _sensor_heading,
+    sensor_series as _sensor_series,
+)
 
 
 # --------------------------------------------------------------------------
@@ -3560,65 +3569,6 @@ class _StaticMap:
         return self._names[cid] if cid < len(self._names) else str(cid)
 
 
-def _motion_series(motion: dict | None, hfov_deg: float, ego_cfg: dict):
-    """(t, cadence per sample, cumulative heading degrees per sample, stationary flag per sample or None) or None."""
-    if motion is None:
-        return None
-    mt = np.asarray(motion["t"], dtype=float)
-    if len(mt) < 2:
-        return None
-    dx = np.nan_to_num(np.asarray(motion["dx"], dtype=float))
-    dy = np.nan_to_num(np.asarray(motion["dy"], dtype=float))
-    cad = estimate_cadence(mt, dy, ego_cfg["cadenceWindowSeconds"], ego_cfg["cadenceBandHz"],
-                           ego_cfg["cadenceMinPeakRatio"], dx=dx,
-                           min_step_hz=ego_cfg.get("minStepHz", 1.4),
-                           harmonic_ratio=ego_cfg.get("harmonicMinRatio", 0.25))
-    stat = None
-    if motion.get("resid") is not None and len(motion["resid"]) == len(mt):
-        stat = estimate_stationary(mt, motion["resid"], ego_cfg.get("stationary", {}))   # v26.1.11; old runs: never stationary
-    return mt, cad, np.cumsum(-dx * hfov_deg), stat
-
-
-IMU_STATIONARY_DEFAULT = {"medianSeconds": 0.3, "enterPx": 0.5, "leavePx": 0.8, "enterSeconds": 1.5, "leaveSeconds": 1.0}
-
-
-def _nearest(tu: np.ndarray, t: np.ndarray) -> np.ndarray:
-    """Index in the sorted ``tu`` of the sample at or just before each ``t`` (clipped)."""
-    return np.clip(np.searchsorted(tu, t + 1e-9, side="right") - 1, 0, len(tu) - 1)
-
-
-def _sensor_series(sens: dict | None, mser, times, ego_cfg: dict, hfov_deg: float) -> dict | None:
-    """v26.2.11: everything the device sensors (GoPro GPMF, ``sensors.py``) give the pass, on the motion track's time base ``mt`` (the
-    motion track's own times; the analysed frame times when the run has none). None without usable sensors.
-
-    Keys: mt; cad (accelerometer step cadence, Hz or nan); stat_imu (accel + gyro quiet); heading_imu (gyro heading, deg, 0 at the start);
-    heading_gps (the same pulled toward the GPS course); info {biasDegPerS, biasSource, gps updates}.
-    ``stationary`` for the bias is the final stationary series (computed by the caller through ``select_stationary``)."""
-    if not sens or "gyro" not in sens or "accl" not in sens:
-        return None
-    mt = np.asarray(mser[0] if mser is not None else times, dtype=float)
-    if len(mt) < 2:
-        return None
-    s = sensor_lib.crop(sens, float(mt[0]) - 6.0, float(mt[-1]) + 6.0)
-    if len(s.get("gyro_t", ())) < 200 or len(s.get("accl_t", ())) < 100:
-        return None
-    icfg = ego_cfg.get("imu") or {}
-    out: dict = {"mt": mt, "s": s}
-    # stationary: accelerometer + gyro activity, on a 10 Hz grid
-    et, en = sensor_lib.motion_energy(s, float(icfg.get("activityWindowS", 1.0)))
-    tu = np.arange(mt[0], mt[-1] + 0.05, 0.1)
-    st_cfg = {**IMU_STATIONARY_DEFAULT, **(icfg.get("stationary") or {})}
-    out["stat_imu"] = estimate_stationary(tu, np.interp(tu, et, en), st_cfg)[_nearest(tu, mt)]
-    # cadence from the vertical acceleration (same estimator, band and window as the image cadence)
-    vt, vert, side = sensor_lib.vertical_signals(s, float(icfg.get("cadenceRateHz", 60.0)))
-    cad = estimate_cadence(vt, vert, ego_cfg["cadenceWindowSeconds"], ego_cfg["cadenceBandHz"], ego_cfg["cadenceMinPeakRatio"], dx=side,
-                           min_step_hz=ego_cfg.get("minStepHz", 1.4), harmonic_ratio=ego_cfg.get("harmonicMinRatio", 0.25))
-    out["cad"] = cad[_nearest(vt, mt)]
-    pt, pitch, roll = sensor_lib.gravity_angles(s, {**icfg, "gravityTauS": ego_cfg.get("gravityTauS", 0.5)})
-    out["pitch"], out["roll"] = pitch[_nearest(pt, mt)], roll[_nearest(pt, mt)]
-    return out
-
-
 class HorizonGravity:
     """v26.2.11 (``horizon.source`` "gravity" | "fused"): the horizon row from the camera pitch of the gravity vector. The pitch changes
     the horizon by ``f`` rows per radian (the lens's centre slope); the LEVEL (the mount angle) is the slow average of (image horizon - gravity
@@ -3675,39 +3625,6 @@ class GpsSpeedScale:
             target = min(self.hi, max(self.lo, target))
             self.k += (1.0 - math.exp(-dt / self.tau)) * (target - self.k) if self.tau > 0 else target - self.k
         return self.k
-
-
-def _gps_at(s: dict, t: float, cfg: dict) -> dict | None:
-    """The GPS state at time ``t`` for the ego block: {lat, lon, speedMps, dop, fix, good} (the sample at or just before ``t``) or None."""
-    if "gps_t" not in s or len(s["gps_t"]) == 0:
-        return None
-    k = int(np.clip(np.searchsorted(s["gps_t"], t + 1e-9, side="right") - 1, 0, len(s["gps_t"]) - 1))
-    if abs(s["gps_t"][k] - t) > 1.5:
-        return None
-    fix, dop = int(s["gps_fix"][k]), float(s["gps_dop"][k])
-    good = fix >= int(cfg.get("minFix", 3)) and dop <= float(cfg.get("maxDop", 2.5)) and bool(cfg.get("enabled", True))
-    has = fix >= 2
-    return {"lat": round(float(s["gps"][k, 0]), 7) if has else None, "lon": round(float(s["gps"][k, 1]), 7) if has else None, "speedMps": round(float(s["gps"][k, 3]), 2),
-            "dop": round(dop, 2), "fix": fix, "good": good}
-
-
-def _auto_stationary(flow_stat: np.ndarray, imu_stat: np.ndarray) -> tuple[np.ndarray, str]:
-    """``ego.stationarySource`` "auto": see the DECISIONS entry of v26.2.11 for the measurement behind the choice."""
-    return imu_stat, "imu"
-
-
-def _sensor_heading(sser: dict, stat: np.ndarray | None, ego_cfg: dict) -> None:
-    """Fill ``sser`` with the gyro heading (bias from the stationary spans of ``stat``) and its GPS-corrected twin."""
-    icfg = ego_cfg.get("imu") or {}
-    mt = sser["mt"]
-    h, info = sensor_lib.heading_series(sser["s"], mt, mt if stat is not None else None, stat, icfg)
-    sser["heading_imu"], sser["info"] = h, info
-    g = ego_cfg.get("gps") or {}
-    sser["heading_gps"] = h
-    if g.get("enabled", True) and "gps" in sser["s"]:
-        off, ginfo = sensor_lib.gps_course_offset(sser["s"], mt, h, g)
-        sser["heading_gps"] = h + off
-        info["gpsUpdates"] = ginfo["updates"]
 
 
 def _followed_wall(it: _Item, t: float, state: dict, cfg: dict) -> bool:

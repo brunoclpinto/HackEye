@@ -31,9 +31,20 @@ from engine.egosignals.imu import (
     wrap_deg,
     yaw_rate,
 )
+from engine.egosignals.series import (
+    IMU_STATIONARY_DEFAULT,
+    auto_stationary,
+    gps_at,
+    motion_series,
+    nearest,
+    sensor_heading,
+    sensor_series,
+)
 
 __all__ = [
     "CORROBORATED_RATIO_FRAC",
+    "IMU_STATIONARY_DEFAULT",
+    "auto_stationary",
     "build",
     "concat",
     "crop",
@@ -42,6 +53,7 @@ __all__ = [
     "estimate_cadence",
     "estimate_stationary",
     "extract",
+    "gps_at",
     "gps_course_offset",
     "gps_good",
     "gps_step_length",
@@ -53,10 +65,14 @@ __all__ = [
     "hold_last",
     "load",
     "motion_energy",
+    "motion_series",
+    "nearest",
     "parse_payload",
     "peak",
     "refine",
     "save",
+    "sensor_heading",
+    "sensor_series",
     "smooth",
     "spans",
     "spectrum",
