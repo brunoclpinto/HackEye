@@ -49,13 +49,20 @@ fi
 
 targets=("${tests[@]}" tests/test_module_boundaries.py tests/test_field_ownership.py)
 [ -f tests/test_equivalence_quick.py ] && targets+=(tests/test_equivalence_quick.py)
-if [ "${CHECK_RELATED:-0}" = 1 ] && [ ${#legacy[@]} -gt 0 ]; then
-  mapfile -t rel < <(python - "${legacy[@]}" <<'PY'
+if [ "${CHECK_RELATED:-0}" = 1 ] && [ $(( ${#legacy[@]} + ${#strict[@]} )) -gt 0 ]; then
+  # Names defined in the changed legacy and engine files, plus names a legacy facade re-exports
+  # (`from engine.x import a as _a`): a pure-facade module like sensors.py defines nothing itself.
+  mapfile -t rel < <(python - "${legacy[@]}" "${strict[@]}" <<'PY'
 import ast, re, sys
 from pathlib import Path
 names = set()
 for f in sys.argv[1:]:
+    if not f.endswith(".py") or f.startswith("tests/"):
+        continue
     for n in ast.parse(Path(f).read_text()).body:
+        if isinstance(n, ast.ImportFrom) and (n.module or "").startswith("engine"):
+            names.update(a.asname or a.name for a in n.names)
+            names.update(a.name for a in n.names)
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(n.name)
         elif isinstance(n, ast.Assign):

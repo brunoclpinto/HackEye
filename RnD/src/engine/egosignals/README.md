@@ -77,3 +77,31 @@ Sensor dict `s` as returned by `sensors.extract` (`gyro`, `gyro_t`, `accl`, `acc
 ### Invariants
 - Code moved verbatim; numerics bit-identical to the pre-move `sensors.py`.
 - `gps_course_offset` is causal (holds the last update); `gps_step_length` is pinned by `test_collision_v26212`.
+
+## gpmf.py (v26.3.0 p2-03, moved from `sensors.py` 28-255)
+
+| name | kind | purpose | legacy |
+|---|---|---|---|
+| `parse_payload` | function | one GPMF payload (nested KLV, `SCAL`, big-endian types) -> `{stream: {...}}` | `sensors.parse_payload` |
+| `split_payloads` | function | raw `gpmd` bytes -> list of payloads (stops at the first malformed header) | `sensors.split_payloads` |
+| `build` | function | payloads + packet `(pts, duration)` -> time-stamped sensor arrays | `sensors.build` |
+| `extract` | function | `gpmd` stream of a media file via ffmpeg/ffprobe -> sensor dict, or None without the stream | `sensors.extract` |
+| `hilights` | function | HiLight tag times (s) of a media file | `sensors.hilights` |
+| `concat` | function | chapters `[(start_s, sensors)]` -> one sensor dict on the recording time line | `sensors.concat` |
+| `save` / `load` | function | npz cache of a sensor dict (atomic write; `load` gives None when missing or unreadable) | `sensors.save` / `sensors.load` |
+| `_FMT`, `_STREAMS`, `_klv`, `_numbers`, `_gpmd_stream`, `_utc_epoch` | private | parser internals; reached by tests through the `sensors` facade | same names in `sensors` |
+
+Legacy names are re-exports of the same objects. The package `__init__` re-exports the public names (not the
+private ones). `lab.recordings` and `tools/sensors_report.py` call `sensors.extract` etc. through the module, so
+`sensors.extract` stays patchable.
+
+### Inputs / outputs
+`extract(media_path)` returns `gyro, gyro_t, accl, accl_t, gps, gps_t, gps_fix, gps_dop, gps_utc, shut, shut_t,
+isog, isog_t` (seconds from the start of the file) or None. Needs `ffmpeg`/`ffprobe` on PATH.
+
+### Config keys read
+None.
+
+### Invariants
+- Code moved verbatim; the stdlib (`json`, `struct`, `subprocess`, `tempfile`) is the only addition to numpy.
+- Sample times are spread evenly over each payload's packet pts / duration; fix and DOP repeat per payload.

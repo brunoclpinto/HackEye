@@ -12,6 +12,7 @@ from engine.egosignals.cadence import (
     spectrum,
     window_cadence,
 )
+from engine.egosignals.gpmf import build, concat, extract, hilights, load, parse_payload, save, split_payloads
 from engine.egosignals.imu import (
     crop,
     default_imu_cfg,
@@ -33,11 +34,14 @@ from engine.egosignals.imu import (
 
 __all__ = [
     "CORROBORATED_RATIO_FRAC",
+    "build",
+    "concat",
     "crop",
     "default_imu_cfg",
     "estimate_bias",
     "estimate_cadence",
     "estimate_stationary",
+    "extract",
     "gps_course_offset",
     "gps_good",
     "gps_step_length",
@@ -45,13 +49,18 @@ __all__ = [
     "gravity_angles",
     "gravity_unit",
     "heading_series",
+    "hilights",
     "hold_last",
+    "load",
     "motion_energy",
+    "parse_payload",
     "peak",
     "refine",
+    "save",
     "smooth",
     "spans",
     "spectrum",
+    "split_payloads",
     "vertical_signals",
     "window_cadence",
     "wrap_deg",
