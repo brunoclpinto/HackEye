@@ -188,7 +188,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 import numpy as np
 from scipy import ndimage
@@ -214,6 +214,14 @@ from engine.core.geom import (  # noqa: F401
     lateral_m,
     round_opt as _r,
     steps_to,
+)
+from engine.core.types import (  # noqa: F401
+    LANE_PART_ID_BASE,
+    POINT_ASPECT,
+    Item as _Item,
+    Region,
+    Track as _Track,
+    trusted_track as _trusted_track,
 )
 from engine.core.log import WARNED as _WARNED, log as _log, warn_once as _warn_once  # noqa: F401
 from engine.core.settings import (  # noqa: F401
@@ -490,13 +498,6 @@ def estimate_stationary(t, resid, cfg: dict) -> np.ndarray:
 # Walking region
 # --------------------------------------------------------------------------
 
-@dataclass
-class Region:
-    group: str
-    label: str
-    mask: np.ndarray                          # (H, W) bool
-    left: np.ndarray                          # (H,) normalised x, nan = row has no region
-    right: np.ndarray
 
 
 def walking_region(grid: np.ndarray, ids: ClassIds, config: dict) -> Region | None:
@@ -583,106 +584,6 @@ def estimate_horizon(left: np.ndarray, right: np.ndarray, config: dict,
 # Per-frame geometry and items
 # --------------------------------------------------------------------------
 
-@dataclass
-class _Item:
-    """One connected component of an item class in one frame."""
-    group: str
-    class_name: str
-    bbox: list[float]
-    contact_y: float
-    distance_m: float
-    lateral_m: float
-    bearing: float
-    clock: int
-    pan: float
-    area_frac: float
-    clipped: bool                             # touches the bottom image edge: distance is a lower bound
-    touches: bool                             # touches the dilated walking region
-    lane_hit: bool                            # (static/moving) in lane within region; (feature) in lane
-    along_path: bool                          # long stretch of path inside the region: a boundary, not an obstacle
-    lane_cover: float                         # share of the lane's width at the contact row that it covers
-    contact_y_raw: float = 0.0
-    area_m2: float = 0.0                      # component area scaled to square metres at its distance
-    # filled in by tracking / roles
-    track_id: int = 0
-    closing: float | None = None
-    moving: bool | None = None
-    approaching: bool = False
-    steps: float = 0.0
-    label: str = ""
-    role: str = "none"
-    urgency: str = "none"
-    settled: bool = False                     # track old enough to speak or beep
-    family: str = ""                          # label family used as context-memory key ("" = use label)
-    role_run: int = 0                         # consecutive frames the track has held ``role`` (incl. this one)
-    closing_raw: float | None = None          # closing speed in uncalibrated model metres (k = 1)
-    landmark: bool = False                    # a crosswalk: announced once as a location marker
-    receding: bool = False                    # a mover measured to walk away from us
-    ego_known: bool = False                   # our own speed is known, so this item's motion can be measured
-    own_fast: bool = False                    # a rider / vehicle closing faster than any walking speed could explain (v26.1.16)
-    ego_settled: bool = False                 # ...and the robust ego speed has its full window: motion words / the motion wait apply (v26.1.15)
-    summary_ok: bool = False                  # would be context but for the lateral cap: allowed in the first scene summary
-    people: bool = False                      # person / rider / animal: a mover unless measured stationary
-    fast: bool = False                        # rider / vehicle: announced as early as possible, without a distance (v26.1.13)
-    speak: bool = True                        # may be spoken; False = beeps only (a person within 5 steps, v26.1.13)
-    thin: bool = False                        # pole, light, sign: easy to miss, warned about when noticed
-    collision: bool = False                   # a danger on a collision course: the only thing that beeps (parking beeps)
-    prox_run: int = 0                         # consecutive frames the track has been a proximity item (confirmFrames)
-    proximity: bool = False                   # a person / animal measured approaching, close and not on a collision course: soft sound (v26.1.13 follow-up)
-    present_run: int = 0                      # consecutive analysed frames the track has been seen
-    wx: float = 0.0                           # dead-reckoned world position (m), see _WorldMemory
-    wy: float = 0.0
-    mem_id: int | None = None                 # the remembered object this item is, if any
-    mem_named: bool = False                   # ... and it was named (False: only covered by a cluster notice)
-    mem_approach: bool = False                # ... and it was announced as "approaching"
-    mem_danger: bool = False                  # ... and it was announced as a danger / final (v26.1.16: only that mutes a later danger)
-    shape: tuple | None = None                # (cropped component mask, col0, row0): source of the outline (v26.1.8)
-    clock_q: int | None = None                # quarter-hour clock index (v26.1.10); derived from ``clock`` if not given
-    clock_text: str = ""                      # spoken clock position, "12", "12:15", "11:45"
-    depth_m: float | None = None              # metric depth under the item's lower rows (experiment), if a depth map exists
-    depth_on: bool = False                    # a depth map exists for this frame (``depthM`` is reported, maybe null)
-    depth_raw: float | None = None            # depth under the item's lower rows in the map's own units (metres or relative)
-    from_depth: bool = False                  # distance_m was taken from the depth map
-    lat_vel: float | None = None              # own sideways ground velocity (m/s, + = right), see _lateral_velocity (v26.1.11)
-    cross_mps: float | None = None            # velocity across the line of sight from the bearing rate (m/s, + = right), see _cross_velocity (v26.1.12)
-    depth_cells: tuple | None = None          # (rows, cols) the depth is read from instead of the component's lowest rows (lane part: its base)
-    lane_part_weak: bool = False              # ...whose base is not flat: it only continues a lane part that was flat a moment ago (laneBaseHoldSeconds)
-    lane_part: bool = False                   # the extra item of a wall / building whose ground base crosses the lane (v26.1.16 follow-up)
-    map_source: str = ""                      # "map": a static item judged on the fused world map (v26.2.1); "image": no map cells to read (its contact point); "": staticSource image
-    map_cells: int = 0                        # (map) cells of the item's family inside the walking corridor
-    map_world: tuple | None = None            # (map) world position of its nearest corridor cell (a ghost is followed from it)
-    image_dl: tuple | None = None             # (map, in the corridor) the image contact point's (distance, lateral, bearing, clock, clock_q, clock_text, pan) the map measurement replaced
-    solid_corrected: bool = False             # (v26.2.2, insideSolid.mode "snap") its distance was moved to the near border of the solid area
-    raw_distance_m: float | None = None       # ...the measured distance before the correction
-    inside_solid: bool = False                # (v26.2.2) its map position is inside / behind a solid wall face: impossible, so it is muted (no speech, beeps, proximity)
-    coasting: bool = False                    # (v26.2.2) a mover that left the image: predicted on its last world velocity, beeps / course only
-    ghost: bool = False                       # (map) no longer in the image (under the frame): kept alive by its map cells
-    map_judged: bool = False                  # (v26.2.2) a wall-like static item judged on the map alone (no image lane rule)
-    face_edge: dict | None = None             # (v26.2.2, roles.faceEdge.enabled) the face / edge test of its corridor cells: diagnostics only
-    base_row: int = -1                        # (v26.2.3) the grid pixel of its contact point (lowest pixel); -1 = unknown
-    base_col: int = -1
-    dist_source: str = ""                     # (v26.2.3, objectDistance != "depth") "depth" | "ground" | "fused": where distance_m came from
-    raw_depth_m: float | None = None          # ... the scaled depth before the range correction
-    ground_m: float | None = None             # ... its ground ray in depth metres (None: not in contact / outside the band)
-    srcsel: str = ""                          # (v26.2.11, source.mode "map") where its position came from: "map" | "track" | "image"; "" = image mode
-    track_motion: tuple | None = None         # (source "track") (own speed towards us along the line of sight, sideways velocity, velocity across the line of sight) m/s, from its world track
-    tree: bool = False                        # (v26.2.12) a "pole" whose top meets a vegetation canopy: a tree trunk (label "tree", family vegetation)
-    unstable: bool = False                    # (v26.2.12) its distance jumped within the last ``speech.thinStableS``: a thin item stays unspoken
-    jumped: bool = False                      # (v26.2.12) its distance jumped THIS frame (measurement glitch): no motion history, no coasting from it
-    full_ref: tuple | None = None             # (v26.2.12) (labelled full-class grid, the component's slices, its label): the whole component incl. rows above the horizon
-    pred_v: tuple | None = None               # (v26.2.11, predictive speech) a trusted mover's world velocity in our frame (forward, right) m/s
-    followed: bool = False                    # (v26.2.13) a wall the user walks along (its distance does not close at the walking speed): no beep episode, no phrase
-    own: tuple | None = None                  # (v26.2.14) the mover's own ground velocity (forward, right) m/s in our frame and its sigma, see _OwnMotion
-    own_ok: bool = False                      # ... the estimate is usable (enough frames, sigma small): the motion words come from it, not from the closing rate
-    own_closing: float | None = None          # ... the rate the gap shrinks at: our speed minus its forward speed
-    near_pass: bool = False                   # ... an approaching mover that passes within ``motion.nearPassM`` of us within ``motion.nearPassS``: a collision danger
-    from_side: str = ""                       # ... "right" / "left": it comes across our path from that side (own lateral speed >= ``motion.sideMps``)
-
-    def __post_init__(self) -> None:
-        if self.clock_q is None:
-            self.clock_q = _quarter_of_hour(self.clock)
-        if not self.clock_text:
-            self.clock_text = clock_text(self.clock_q)
 
 
 def _split_people(comp: np.ndarray, r0: int, c0: int, geo: _FrameGeo, cfg: dict, dmap: np.ndarray | None,
@@ -965,53 +866,6 @@ def _lane_part_item(main: _Item, rr: np.ndarray, cc: np.ndarray, geo: _FrameGeo,
 # Tracking
 # --------------------------------------------------------------------------
 
-@dataclass
-class _Track:
-    id: int
-    group: str
-    class_name: str
-    box: Box
-    last_t: float
-    first_t: float
-    last_distance: float
-    last_lateral: float
-    history: list[tuple[float, float]] = field(default_factory=list)   # (t, distanceM)
-    closing: float | None = None
-    moving: bool | None = None
-    # speech bookkeeping, set only when the phrase is really spoken
-    danger_done: bool = False
-    final_done: bool = False
-    feature_done: bool = False
-    thin_done: bool = False
-    contact_s: float | None = None            # smoothed contact row: the distance (and so the steps) is read from it
-    present_run: int = 0                      # consecutive analysed frames this track was matched
-    # confirmation: consecutive analysed frames holding the same role (v26.1.5)
-    role: str = "none"
-    role_run: int = 0
-    mem_id: int | None = None                 # world-memory object this track was matched to (v26.1.7)
-    linked_t: float = 0.0                     # when it was matched to it
-    under_last: float | None = None           # last time a curb/crosswalk track had its contact under our feet
-    under_fired: bool = False
-    dhist: list[tuple[float, float]] = field(default_factory=list)     # (t, depthM) of the depth experiment
-    lhist: list[tuple] = field(default_factory=list)                    # (t, lateral m, distance m, heading deg): v26.1.11 own sideways velocity
-    lp_strong_t: float | None = None          # last time the lane part had a flat base
-    lane_part: bool = False                   # track of a wall's / building's lane part (v26.1.16 follow-up)
-    along_s: float | None = None              # smoothed speed along the line of sight over the ground (m/s, + = towards us), v26.1.11
-    along_t: float = 0.0
-    feature_frames: int = 0                   # frames it held role "feature" in the lane, not along the path: a real crossing (v26.1.11)
-    approach_done: bool = False               # announced as "approaching" (v26.1.12): the one re-announcement after an earlier phrase
-    mstate: str | None = None                 # motion state with hysteresis: "still" | "approach" | "recede" | "side" | None (v26.1.12)
-    prox_run: int = 0                         # consecutive analysed frames the item was a proximity item (v26.1.13 follow-up)
-    context_seen: bool = False                # the track has been a context item (v26.1.16)
-    ghost_src: "_Item | None" = None          # a static danger that may be followed on in the map once the image loses it (v26.2.1)
-    ghost_t0: float | None = None             # since when it has been a ghost
-    still_t0: float | None = None             # since when |own along speed| < standingMps without a break (v26.1.12)
-    d_prev: float | None = None               # (v26.2.12) the previous frame's measured distance and when: a jump in it is a measurement glitch
-    d_prev_t: float = -math.inf
-    df_prev: float | None = None              # ... the same for the final distance (after the map / solid snap)
-    df_prev_t: float = -math.inf
-    jump_t: float = -math.inf                 # ... the last frame whose distance jumped (the motion history is cut, a thin item stays quiet)
-    said: tuple | None = None                 # (v26.2.12) (distance m, clock quarter, steps, t) of the last danger phrase for this track (re-announcement)
 
 
 def _closing_mps(history: list[tuple[float, float]], horizon: float, camera_height_m: float, gh: int, f: float,
@@ -1832,8 +1686,6 @@ def _pole_like(it: _Item) -> bool:
     return h >= POINT_ASPECT * w
 
 
-LANE_PART_ID_BASE = 1_000_000   # first track id of the lane parts of walls / buildings (v26.1.16 follow-up)
-POINT_ASPECT = 3.0   # bbox height / width (normalised units, ~1.7 in pixels) of a pole-like item
 
 
 def _is_static_like(it: _Item) -> bool:
@@ -4308,9 +4160,6 @@ class _OwnMotion:
                 it.moving = False                      # standing (between standingMps and the minimum speed the closing-rate state stays)
 
 
-def _trusted_track(wtracks, tid: int, t: float) -> dict | None:
-    e = wtracks.lookup(tid, t)
-    return e if (e is not None and e["trusted"]) else None
 
 
 def _map_source(items: list[_Item], tracks: dict, smap: "_StaticMap", wtracks, cfg: dict, t: float, step_len: float,
