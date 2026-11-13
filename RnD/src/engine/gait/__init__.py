@@ -2,4 +2,6 @@
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from .scale import GpsSpeedScale, Scale
+
+__all__ = ["GpsSpeedScale", "Scale"]
