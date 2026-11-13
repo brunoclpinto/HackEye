@@ -10,4 +10,9 @@ services:
       context: ..
       dockerfile: tools/check.Dockerfile
     entrypoint: ["bash"]
+    # Absolute host paths: compose.yaml's relative ../../../media and ../../../models resolve one level off when RnD/ lives in
+    # a git worktree (.worktrees/<name>/RnD), which mounted empty, root-owned stand-ins and skipped the media tests.
+    volumes:
+      - ${HACKEYE_MEDIA_HOST_DIR:-${HOME}/media/hackeye}:/media:ro
+      - ${HACKEYE_BASE_MODELS_DIR:-${HOME}/models}:/base-models:ro
     deploy: {}
