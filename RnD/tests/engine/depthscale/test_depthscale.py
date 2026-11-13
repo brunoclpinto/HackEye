@@ -705,9 +705,12 @@ def test_anchor_update_sequences() -> None:
 def test_plane_fit_synthetic_and_deterministic() -> None:
     got = _plane_run(_engine())
     _close(got, EXP_PLANE_RUN)
-    for key, val in got.items():
-        if isinstance(val, list) and len(val) == 2 and isinstance(val[0], (list, type(None))):
-            assert val[0] == val[1], key
+    # the synthetic planes were fitted twice (`fit`, `again`): RANSAC is seeded per call, so both runs are equal
+    twice = [k for k in got if k.startswith(("fisheye-", "rectilinear-"))]
+    assert twice
+    for key in twice:
+        first, second = got[key]
+        assert first == second, key
 
 
 def test_depth_scale_sequences() -> None:
