@@ -27,3 +27,10 @@
 - A 40-tick `step` sequence on the review-11 fixture window (as `tests/replay.py` drives it, or a reduced driver from the existing policy
   tests): pin the spoken texts and their times per tick.
 - `mark_said` path: after a tick that speaks a remembered item, `world.entries[mem_id]["said"] == (steps, t)`.
+
+## Note (Opus, 2026-11-15)
+`tests/engine/speech/test_text_context_walls.py::test_mro_after_p3_12` pins the p3-12 MRO (no `MoversMixin`). It goes red when this task
+lands; Opus deletes that one test in the p3-13 commit (`test_policy.py` pins the final MRO). The implementation worker leaves it alone and
+reports it as the only expected failure among the p3-12 tests.
+The 40-tick driver is a scripted one built from existing test helpers (not the review-11 fixture); it speaks 3 phrases and covers the
+danger-path `mark_said` write only. The full equivalence check covers the rest.
