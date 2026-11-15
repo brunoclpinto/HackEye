@@ -27,64 +27,38 @@ hazards.json. Nothing is inferred again. Per frame:
 from __future__ import annotations
 
 import math
+import sys
 import time
-from pathlib import Path
 
 import numpy as np
 
-import collision
+import collision  # noqa: F401  (kept as a module attribute)
 import groundfuse
-from collision import _WorldMemory, focal_px, ground_distance_m, lateral_m
-
-UNKNOWN = 255
-KIND_IGNORE, KIND_SURFACE, KIND_OBJECT, KIND_MOVER = 0, 1, 2, 3
-
-
-def load_config(path: Path | None = None) -> dict:
-    import json
-    path = path or (collision.find_common_dir() / "config" / "worldmap.json")
-    with open(path) as f:
-        return json.load(f)
-
-
-def class_kinds(cfg: dict, class_names: list[str]) -> np.ndarray:
-    """(n_classes,) uint8 lookup: ignore / surface / object / mover."""
-    kind = np.zeros(max(len(class_names), 256), dtype=np.uint8)
-    index = {n: i for i, n in enumerate(class_names)}
-    for k, key in ((KIND_SURFACE, "surface"), (KIND_OBJECT, "object"), (KIND_MOVER, "mover")):
-        for name in cfg["classes"][key]:
-            if name in index:
-                kind[index[name]] = k
-    return kind
+from collision import focal_px, ground_distance_m, lateral_m  # noqa: F401
+import engine.worldmap.config as _wcfg
+from engine.worldmap.config import (  # noqa: F401  (same objects; the conftest patches ``load_config`` on this module)
+    KIND_IGNORE,
+    KIND_MOVER,
+    KIND_OBJECT,
+    KIND_SURFACE,
+    UNKNOWN,
+    class_kinds,
+    load_config,
+)
+from engine.worldmap.helpers import (  # noqa: F401
+    face_contact_samples,
+    first_depth_scale,
+    frames_from_hazards,
+    settings_from_hazards,
+)
+from engine.worldmap.pose import PoseTracker, integrate_pose  # noqa: F401
 
 
-class PoseTracker:
-    """The user's pose, frame by frame: exactly what the collision pass's world memory integrates (speed x dt along the mean
-    heading; stationary = 0). The offline ``build`` and the collision pass feed it the same (rounded) ego values."""
-
-    def __init__(self, coll_cfg: dict):
-        self.wm = _WorldMemory(coll_cfg.get("memory", {}))
-        self.prev_t: float | None = None
-        self.last_heading = 0.0
-
-    def advance(self, t: float, ego: dict) -> tuple[float, float, float]:
-        dt = 0.0 if self.prev_t is None else float(t - self.prev_t)
-        self.prev_t = float(t)
-        h = ego.get("headingDeg")
-        h = self.last_heading if h is None else float(h)
-        self.last_heading = h
-        speed = 0.0 if ego.get("stationary") else ego.get("speedMps")
-        self.wm.advance(float(t), dt, speed, h)
-        return (self.wm.x, self.wm.y, h)
+def _facade_loader() -> dict:
+    return sys.modules[__name__].load_config()
 
 
-def integrate_pose(times: np.ndarray, egos: list[dict], coll_cfg: dict) -> np.ndarray:
-    """(N, 3) x east, y north (m), heading deg (0 = initial direction, + = right turn) over a whole run."""
-    pt = PoseTracker(coll_cfg)
-    out = np.zeros((len(times), 3))
-    for i, (t, e) in enumerate(zip(times, egos)):
-        out[i] = pt.advance(float(t), e)
-    return out
+_wcfg.default_config_loader = _facade_loader
 
 
 class Observer:
@@ -201,7 +175,7 @@ class Observer:
         rr, cc = np.nonzero(base)
         return rr, cc, below_surface
 
-    def face_contact_samples(self, grid: np.ndarray, dmap: np.ndarray | None, depth_scale: float | None, horizon: float):
+    def face_contact_samples(self, grid: np.ndarray, dmap: np.ndarray | None, depth_scale: float | None, horizon: float):  # noqa: F811
         """v26.2.7: (depth m, lens ground z m) of the face-class bases that stand on a surface: a wall base is a ground point seen at the
         wall's own range, a free calibration of the depth where the walking region does not reach. Same base / contact rules and the same
         bottom-``faceDepthRows`` median depth as ``object_bases``; the depth is scaled, never range-corrected; the ground z is the camera-axis
@@ -828,36 +802,6 @@ class Fusion:
         total = self.votes.sum(axis=0) * np.float32(self._decay(t))
         cls = np.where(total > self.floor, self.classes[self.votes.argmax(axis=0)], UNKNOWN).astype(np.uint8)
         return cls, total
-
-
-def face_contact_samples(observer: Observer, grid: np.ndarray, dmap, depth_scale, horizon: float):
-    """v26.2.7: (depth m, lens ground z m) of the face-class bases that stand on a surface (see ``Observer.face_contact_samples``)."""
-    return observer.face_contact_samples(grid, dmap, depth_scale, horizon)
-
-
-def frames_from_hazards(hazards: dict) -> list[dict]:
-    """The per-frame inputs the observer needs: horizon, scales and the ego block (as stored by the collision pass)."""
-    out = []
-    for fr in hazards["frames"]:
-        e = fr.get("ego") or {}
-        out.append({"horizon": fr["horizonY"], "scale": e.get("scale"), "depthScale": e.get("depthScale"), "ego": e,
-                    "dcorr": fr.get("depthCorrection")})
-    return out
-
-
-def first_depth_scale(frames: list[dict] | None) -> float | None:
-    """The first known depth scale of a run (None when it has none)."""
-    for f in frames or ():
-        if f.get("depthScale"):
-            return float(f["depthScale"])
-    return None
-
-
-def settings_from_hazards(hazards: dict) -> dict:
-    s = hazards["settings"]
-    return {"hfovDeg": s["hfovDeg"], "cameraHeightM": s["cameraHeightM"], "lateralOffsetM": s.get("lateralOffsetM", 0.0),
-            "projection": hazards.get("projection"), "distanceSource": hazards.get("distanceSource", "ground"),
-            "objectDistance": s.get("objectDistance", "depth"), "useHorizon": s.get("useHorizon", True)}
 
 
 class WorldMap:
