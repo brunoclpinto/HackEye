@@ -267,30 +267,12 @@ from engine.depthscale.scale import (  # noqa: F401
 )
 
 
-LAST_WORLD_TRACKS_MS: list[float] = []     # ms of the world-track step per frame of the last run_collision (metrics tool; not in the output)
-
-
-def _bottom_distance(ob, horizon: float, cam_h: float, gh: int, f: float) -> float:
-    """Forward distance of the last image row on the centre column (the ground seen at the bottom), as the map's ``objectClearBottomM`` uses it."""
-    try:
-        if ob is not None and getattr(ob, "geometry", False):
-            d = float(groundfuse.ground_point(ob.geo, float(ob.gh), ob.gw / 2.0, float(horizon), ob.cam_h)[0])
-            return d if math.isfinite(d) else 0.0
-        return float(cam_h) * f / (max(1.0 - float(horizon), 1e-6) * gh)
-    except Exception:
-        return 0.0
-
-
-def _hidden_fn(ob):
-    """``(fwd, right) -> bool``: the online map's cell there is hidden behind a building in this frame (None without a map)."""
-    if ob is None or getattr(ob, "ray_hidden", None) is None:
-        return None
-    hid = ob.ray_hidden
-
-    def hidden(fwd: float, right: float) -> bool:
-        r, c = ob.orow - int(round(fwd / ob.cell)), ob.oc + int(round(right / ob.cell))
-        return 0 <= r < hid.shape[0] and 0 <= c < hid.shape[1] and bool(hid[r, c])
-    return hidden
+from engine.pipeline.glue import (  # noqa: F401
+    LAST_WORLD_TRACKS_MS,
+    bottom_distance as _bottom_distance,
+    hidden_fn as _hidden_fn,
+    predict_velocities as _predict_velocities,
+)
 
 
 # --------------------------------------------------------------------------
@@ -470,18 +452,6 @@ from engine.worldmap.source import map_source as _map_source  # noqa: E402, F401
 # Static items on the fused world map (v26.2.1)
 # --------------------------------------------------------------------------
 
-
-
-def _predict_velocities(items: list[_Item], wtracks, t: float, theta: float, pcfg: dict) -> None:
-    """Predictive speech: a mover with a trusted, moving world track carries its velocity in our frame (``pred_v``)."""
-    top = float(pcfg.get("maxMoverMps", 12.0))
-    for it in items:
-        if it.group != "moving" or it.lane_part or it.ghost:
-            continue
-        e = _trusted_track(wtracks, it.track_id, t)
-        if e is None or e["static"] or math.hypot(e["vx"], e["vy"]) > top:
-            continue
-        it.pred_v = _ego_frame((0.0, 0.0, math.degrees(theta)), e["vx"], e["vy"])
 
 
 def run_collision(grids, times, class_names, config, settings, motion=None, depth=None,
