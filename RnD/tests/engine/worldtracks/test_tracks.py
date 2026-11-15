@@ -835,7 +835,7 @@ def test_rot_eig_radius_interval() -> None:
     from engine.worldtracks import tracks
 
     for deg, rot_exp in ROT.items():
-        assert tracks.rot(deg).tolist() == pytest.approx(rot_exp, rel=1e-12, abs=1e-12)
+        assert tracks.rot(deg) == pytest.approx(np.array(rot_exp), rel=1e-12, abs=1e-12)
     assert tracks.eig_radius(np.array([[4.0, 1.0], [1.0, 2.0]])) == pytest.approx(EIG, rel=1e-12, abs=1e-12)
     for args, exp in INTERVAL:
         got = tracks.interval(*args)
