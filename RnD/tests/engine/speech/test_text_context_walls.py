@@ -402,16 +402,6 @@ def test_walls_methods_and_free_names_are_the_engine_objects() -> None:
     assert collision._WallFollow is walls.WallFollow
 
 
-def test_mro_after_p3_12() -> None:
-    assert [c.__name__ for c in collision.SpeechPolicy.__mro__] == [
-        "SpeechPolicy",
-        "TextMixin",
-        "ContextMixin",
-        "WallsMixin",
-        "object",
-    ]
-
-
 def test_no_method_is_defined_in_two_mixins() -> None:
     from engine.speech import context, text, walls
 

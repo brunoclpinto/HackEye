@@ -17,7 +17,7 @@ __all__ = ["TextMixin"]
 class TextMixin:
     """The text building methods of ``SpeechPolicy`` (composed with ``ContextMixin`` and ``WallsMixin``)."""
 
-    cfg: dict[str, dict[str, str]]
+    cfg: dict[str, Any]
     STATE_WORDS: dict[str, str]
 
     @staticmethod
@@ -42,11 +42,11 @@ class TextMixin:
         tpl = self.cfg["templates"][template]
         if kw.get("steps") is None:
             tpl = tpl.replace(" in {steps}", "")
-        return tpl.format(**kw)
+        return tpl.format(**kw)  # type: ignore[no-any-return]  # cfg is the untyped config block
 
     def _text(self, template: str, it: Item | None = None, label: str = "") -> str:
         if it is None:
-            return self.cfg["templates"][template].format(label=label)
+            return self.cfg["templates"][template].format(label=label)  # type: ignore[no-any-return]  # cfg is the untyped config block
         if template == "approach" and it.fast and not it.own_ok:
             return self._fmt("approachFast", label=it.label, clock=it.clock_text, steps=None)
         if (
