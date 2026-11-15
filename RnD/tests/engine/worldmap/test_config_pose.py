@@ -212,8 +212,9 @@ def test_moved_names_are_the_engine_objects() -> None:
     helpers = importlib.import_module("engine.worldmap.helpers")
     pose = importlib.import_module("engine.worldmap.pose")
 
-    # load_config is left out: the conftest's module fixture _v2629_map_settings replaces worldmap.load_config with a lambda
-    # for this module, so its identity cannot be checked here (test_default_config_loader_sees_facade_patch covers the route).
+    # load_config is left out: the conftest's module fixture _v2629_map_settings replaces
+    # worldmap.load_config with a lambda for this module, so its identity cannot be checked here
+    # (test_default_config_loader_sees_facade_patch covers the route).
     owners: list[tuple[str, Any]] = [
         ("class_kinds", config),
         ("UNKNOWN", config),

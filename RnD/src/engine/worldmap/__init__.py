@@ -17,6 +17,7 @@ from engine.worldmap.helpers import (
     frames_from_hazards,
     settings_from_hazards,
 )
+from engine.worldmap.observer import Observer
 from engine.worldmap.pose import PoseTracker, integrate_pose
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "KIND_OBJECT",
     "KIND_SURFACE",
     "UNKNOWN",
+    "Observer",
     "PoseTracker",
     "class_kinds",
     "face_contact_samples",

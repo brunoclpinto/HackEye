@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
+    from engine.worldmap.observer import Observer
+
 __all__ = ["face_contact_samples", "first_depth_scale", "frames_from_hazards", "settings_from_hazards"]
 
 
-class _FaceObserver(Protocol):
-    def face_contact_samples(self, grid: npt.NDArray[Any], dmap: Any, depth_scale: Any, horizon: float) -> Any: ...
-
-
 def face_contact_samples(
-    observer: _FaceObserver, grid: npt.NDArray[Any], dmap: Any, depth_scale: Any, horizon: float
+    observer: Observer, grid: npt.NDArray[Any], dmap: Any, depth_scale: Any, horizon: float
 ) -> Any:
     """v26.2.7: (depth m, lens ground z m) of the face-class bases that stand on a surface (see
     ``Observer.face_contact_samples``)."""
