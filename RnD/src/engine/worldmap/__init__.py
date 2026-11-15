@@ -22,6 +22,7 @@ from engine.worldmap.helpers import (
 from engine.worldmap.map import WorldMap, build
 from engine.worldmap.observer import Observer
 from engine.worldmap.pose import PoseTracker, integrate_pose
+from engine.worldmap.staticmap import StaticMap, mute_solid, set_position
 
 __all__ = [
     "KIND_IGNORE",
@@ -32,6 +33,7 @@ __all__ = [
     "Fusion",
     "Observer",
     "PoseTracker",
+    "StaticMap",
     "WorldMap",
     "build",
     "class_kinds",
@@ -41,5 +43,7 @@ __all__ = [
     "frames_from_hazards",
     "integrate_pose",
     "load_config",
+    "mute_solid",
+    "set_position",
     "settings_from_hazards",
 ]
