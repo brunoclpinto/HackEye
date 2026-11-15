@@ -15,3 +15,8 @@
 - `Pipeline(STAGES).stats.world_tracks_ms` has one entry per frame where world tracks ran, and `collision.LAST_WORLD_TRACKS_MS` equals it
   after a run.
 - AST of `src/collision.py`: only the docstring, `from __future__`, imports (with or without alias) and `__all__`, if present.
+
+## Note (Opus, 2026-11-15)
+p4-02 put a file-level `# mypy: ignore-errors` on `engine/pipeline/run.py` (the verbatim body has ~60 strict errors from
+`None`-initialised locals). By the end of this task no `engine/pipeline/*.py` file may carry it: the state fields of p4-03 are typed
+(`Any` where the legacy value is dynamic) and the stage functions are annotated.

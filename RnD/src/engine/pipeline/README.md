@@ -1,8 +1,8 @@
 # engine/pipeline -- the frame pipeline
 
 The only engine package that may import other models (`BOUNDARIES.toml`: `engine = ["*"]`). It is being built up in
-Phase 4: `run_collision` moves here, then is cut into stages. So far it holds the small glue helpers that
-`run_collision` calls between stages. Imports only the stdlib and `engine.core`.
+Phase 4: `run_collision` has moved here verbatim (p4-02) and is cut into stages next. It also holds the small glue helpers that
+`run_collision` calls between stages. `run.py` imports the other engine models; `glue.py` only the stdlib and `engine.core`.
 
 ## API
 
@@ -11,6 +11,7 @@ Phase 4: `run_collision` moves here, then is cut into stages. So far it holds th
 | `glue.py` | `bottom_distance(ob, horizon, cam_h, gh, f)` | forward distance of the last image row on the centre column (the ground seen at the bottom); 0.0 on any error or non-finite value | `collision._bottom_distance` |
 | `glue.py` | `hidden_fn(ob)` | `(fwd, right) -> bool` closure: the online map's cell there is hidden behind a building; None without a map | `collision._hidden_fn` |
 | `glue.py` | `predict_velocities(items, wtracks, t, theta, pcfg)` | sets `pred_v` (velocity in our frame) on movers with a trusted, moving world track | `collision._predict_velocities` |
+| `run.py` | `run_collision(grids, times, class_names, config, settings, motion=None, depth=None, window=None, sounds=None, worldmap_config=None, progress=None, sensors=None)` | per-frame hazards document and the speech/tone event list (the whole Lab logic, one function) | `collision.run_collision` (same object, no wrapper) |
 | `glue.py` | `LAST_WORLD_TRACKS_MS` | list of the world-track step ms per frame of the last run (metrics tool only; not in the output) | `collision.LAST_WORLD_TRACKS_MS` |
 
 `engine/pipeline/__init__.py` re-exports these four names (`__all__`). No function shares a name with a submodule.
@@ -34,3 +35,17 @@ Phase 4: `run_collision` moves here, then is cut into stages. So far it holds th
 - `collision._bottom_distance`, `_hidden_fn`, `_predict_velocities` and `LAST_WORLD_TRACKS_MS` are the same objects as the engine
   names (`tests/engine/pipeline/test_glue.py`); `tools/worldtracks_metrics.py` reads `col.LAST_WORLD_TRACKS_MS`.
 - Named rename only: `groundfuse.ground_point` became `groundgeom.ground_point` (the same function).
+
+## run.py (p4-02)
+
+- The body is the legacy text, AST-identical after the named renames: `groundfuse.Geometry` / `lateral_at` -> `groundgeom.*`,
+  `groundfuse.resolved_mode` / `settings` -> `distfuse.*`, `groundfuse.Corrector` / `HorizonSigma` -> the engine classes,
+  `sensor_lib.gps_step_length` -> `imu.gps_step_length`, `worldtracks.WorldTracks` -> `wt_mod.WorldTracks` (`tracks` is a local of the
+  body), `worldmap.<x>` -> `wmap.<x>` (`from engine import worldmap as wmap`; the module is aliased so `run` binds no legacy module name).
+  The two function-local `import worldmap` lines are gone. Underscore names are imported under their old aliases.
+- One sanctioned added statement, first after the docstring: `if worldmap_config is None: worldmap_config = wm_config.default_config_loader()`.
+  The facade `worldmap.py` installs the hook, so a patched `worldmap.load_config` is still seen; the two `... else wmap.load_config()`
+  fallbacks stay (dead when called with None).
+- `# noqa` only on three lines (B023, PLR1714, SIM114); no expression was rewritten. File-level `# ruff: noqa: E501` and `# mypy: ignore-errors` (about 60 strict errors from None-initialised locals; p4-03 types them).
+- `collision.run_collision is engine.pipeline.run.run_collision`; tests that monkeypatch `collision.run_collision` still work because
+  the Lab calls it through the module.
