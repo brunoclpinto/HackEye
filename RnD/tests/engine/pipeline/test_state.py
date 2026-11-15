@@ -38,6 +38,7 @@ import ast
 import dataclasses
 import inspect
 import json
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -55,7 +56,8 @@ FIXTURE = "chest0004_review9"
 N_FRAMES = 10
 
 # Bare Store allow-lists, by what binds the name (derivation in the module docstring).
-FOR_TARGETS = {"i", "_g", "ii", "it", "tid", "tr"}
+# "st": the stage loop of p4-05 (``for st in STAGES: st.fn(s, f)``; Opus, 2026-11-15).
+FOR_TARGETS = {"i", "_g", "ii", "it", "tid", "tr", "st"}
 COMP_TARGETS = {"h", "it", "k", "v"}
 LAMBDA_PARAMS = {"e", "it", "tid"}
 WITH_EXCEPT_TARGETS: set[str] = set()
@@ -122,15 +124,27 @@ def _names(target: ast.AST) -> set[str]:
 
 
 def _is_state_assign(node: ast.Name, parent: ast.AST | None) -> bool:
-    """``s = RunState()`` / ``f = FrameState()``: the only bare Stores of ``s`` and ``f``."""
-    want = {"s": "RunState", "f": "FrameState"}.get(node.id)
+    """``s = RunState()`` / ``f = FrameState()``: the only bare Stores of ``s`` and ``f``.
+
+    Since p4-05 (Opus, 2026-11-15) ``s = setup(...)`` is the other accepted form: ``setup`` builds the ``RunState``
+    (checked in ``test_state_objects_are_built_where_the_spec_says``)."""
+    want = {"s": ("RunState", "setup"), "f": ("FrameState",)}.get(node.id)
+    if (
+        node.id == "s"
+        and isinstance(parent, ast.Assign)
+        and parent.targets == [node]
+        and isinstance(parent.value, ast.Call)
+        and isinstance(parent.value.func, ast.Name)
+        and parent.value.func.id == "setup"
+    ):
+        return True
     return (
         want is not None
         and isinstance(parent, ast.Assign)
         and parent.targets == [node]
         and isinstance(parent.value, ast.Call)
         and isinstance(parent.value.func, ast.Name)
-        and parent.value.func.id == want
+        and parent.value.func.id == want[0]
         and not parent.value.args
         and not parent.value.keywords
     )
@@ -348,16 +362,31 @@ def test_frame_state_attrs_used_by_run_collision_are_fields() -> None:
     assert sorted(used_f - {f.name for f in _fields(state.FrameState)}) == []
 
 
+def _calls(node: ast.AST, name: str) -> list[ast.Call]:
+    return [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == name]
+
+
 def test_state_objects_are_built_where_the_spec_says() -> None:
+    """One ``RunState()`` before the frame loop: in ``run_collision`` itself (p4-03, p4-04) or, since p4-05, inside the
+    ``setup`` it calls as ``s = setup(...)`` (Opus, 2026-11-15: the final shape of test_stages_b.py wins)."""
     fn = _function()
     top = [n for n in fn.body if isinstance(n, ast.Assign)]
     run_assigns = [
         n
         for n in top
-        if isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name) and n.value.func.id == "RunState"
+        if isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Name)
+        and n.value.func.id in ("RunState", "setup")
     ]
     assert len(run_assigns) == 1
     assert fn.body.index(run_assigns[0]) < fn.body.index(_main_loop(fn))
+    value = run_assigns[0].value
+    assert isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+    if value.func.id == "setup":
+        from engine.pipeline import stages
+
+        setup_fn = ast.parse(textwrap.dedent(inspect.getsource(stages.setup))).body[0]
+        assert len(_calls(setup_fn, "RunState")) == 1
     first = _main_loop(fn).body[0]
     assert isinstance(first, ast.Assign)
     assert isinstance(first.value, ast.Call)

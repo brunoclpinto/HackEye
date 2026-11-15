@@ -1,7 +1,7 @@
 # engine/pipeline -- the frame pipeline
 
 The only engine package that may import other models (`BOUNDARIES.toml`: `engine = ["*"]`). It is being built up in
-Phase 4: `run_collision` has moved here verbatim (p4-02) and is cut into stages next. It also holds the small glue helpers that
+Phase 4: `run_collision` has moved here (p4-02), is converted to state objects (p4-03) and cut into 24 stage functions plus `finish` (p4-04, p4-05). It also holds the small glue helpers that
 `run_collision` calls between stages. `run.py` imports the other engine models; `glue.py` only the stdlib and `engine.core`.
 
 ## API
@@ -54,7 +54,7 @@ Phase 4: `run_collision` has moved here verbatim (p4-02) and is cut into stages 
 ## state.py / locals -> state (p4-03)
 
 `state.py` has two dataclasses, `RunState` and `FrameState` (every field typed `Any`, default None, or a fresh `list` / `dict`
-where the first assignment is an empty literal; fields in order of first assignment). `run_collision` builds `s = RunState()` first
+where the first assignment is an empty literal; fields in order of first assignment). `setup` builds `s = RunState()` first (p4-05; `run_collision` did before)
 (then `s.<param> = <param>` for every parameter, in signature order) and `f = FrameState()` first in every frame iteration. Every local of the
 body became `s.<name>` or `f.<name>` by a mechanical rename (no statement moved, no expression changed). Left bare: the frame-loop
 variable `i`, the targets of inner `for` loops and comprehensions and lambda parameters, and the reads of them inside the scope that
@@ -313,19 +313,18 @@ everything else is `s`. Line numbers refer to the pre-conversion `run.py` (p4-02
 | `hazards_doc` | s | 1387 | setup |
 
 
-## stages.py, part A (p4-04)
+## stages.py, part A (p4-04) and part B (p4-05)
 
 `stages.py` holds `Stage` (frozen dataclass: `name`, `reads`, `writes`, `config_section`, `fn`), `setup(...)`, the stage functions 1-12 of
-audit 3.2 and `STAGES` (those 12, in execution order; p4-05 appends the rest). `reads` / `writes` are the attribute names of `s` / `f`
+audit 3.2 and `STAGES` (12 in p4-04; p4-05 appended stages 13-24, see part B below). `reads` / `writes` are the attribute names of `s` / `f`
 that the function body loads / stores (sorted; derived from the AST, and `tests/engine/pipeline/test_stages.py` re-derives them).
 Each stage function is the verbatim block of the p4-03 body (dedented by one level, then reformatted by `ruff format`, which only
 re-wraps lines that now fit). `run_collision` keeps the per-frame preamble (`f = FrameState()`, `f.i = i`, `progress`, `t`, `dt`,
-`prev_t`, `grid`), calls the 12 functions in order, then the inline stages 13-24 and the epilogue.
+`prev_t`, `grid`), calls the 12 functions in order (p4-05: all 24 through the stage loop, see part B).
 
-`setup(grids, ..., sensors, s=None) -> RunState` is the setup block (audit 3.1: from `s.grids = grids` to the last frame-loop local,
-`s.ego_hist_t0`). `run_collision` does `s = RunState()` and passes it in as the last argument: `setup` fills that object (a None `s`
-builds a fresh one) and returns it. `s = RunState()` stays in `run_collision` because the p4-03 AST checks require it there (a plain
-`s = setup(...)` is a bare store of `s`).
+`setup(grids, ..., sensors) -> RunState` is the setup block (audit 3.1: from `s.grids = grids` to the last frame-loop local,
+`s.ego_hist_t0`). It builds the `RunState` itself (one `RunState()` call) and returns it; `run_collision` does `s = setup(...)` (p4-05;
+in p4-04 the caller built `s` and passed it in).
 
 | stage | config section | first statement | last statement |
 |---|---|---|---|
@@ -348,3 +347,34 @@ Edits beyond the cut and paste:
 - the `# noqa: B023` on the coast lambda is gone: the lambda no longer sits in a loop that rebinds `f`, so it is not a B023 case (RUF100).
 - `Callable` is imported under `TYPE_CHECKING` (TC003); `stages.py` carries the same file-level `E501` / mypy ignores as `run.py`.
 - no stage block holds a `continue` / `break` aimed at the frame loop (the ones inside are in inner `for` loops).
+
+## stages.py, part B (p4-05)
+
+Stages 13-24 of audit 3.2 are appended to `stages.py` and to `STAGES` (24 entries, audit order), and the epilogue after the loop is
+`finish(s) -> tuple[dict, dict]` (tone events, `events.extend`, `events.sort`, `hazards_doc`, coast episodes, `LAST_WORLD_TRACKS_MS[:] =`,
+the return value). Same cut-and-paste rule as part A (blocks dedented one level, statement order unchanged). `run_collision` is now
+`s = setup(...)`, the frame loop (preamble, then `for st in STAGES: st.fn(s, f)`) and `return finish(s)`; its imports
+shrank to `STAGES`, `finish`, `setup`, `FrameState` (the engine imports moved to `stages.py` with the code that uses them).
+
+| stage | config section | first statement | last statement |
+|---|---|---|---|
+| `motion_roles` | `roles` | `f.span = None` (comment 6-8) | `f.tr.under_last = f.t` (end of the item loop) |
+| `tracking_jump_final` | `distance` | `if s.jump_cfg.get("enabled", False):` | `it.unstable = ...` |
+| `speech_passing` | `beeps` | `if s.pass_cfg.get("enabled", False) and not f.stationary:` | `it.proximity = True` |
+| `tracking_confirm` | none | `f.seen_tracks = set()` | `s.coast.observe(it, f.t, s.world)` |
+| `worldmap_keeps` | none | `if s.smap is not None:` | `f.tr.ghost_src = f.tr.ghost_t0 = None` |
+| `tracking_unseen` | `surfaces` | `for tid, tr in s.tracks.items():` | `s.surface.note_evidence(f.t)` |
+| `memory` | `memory` | `s.world.advance(...)` | `s.world.link(...)` |
+| `worldtracks` | `worldTracks` | `f.wt_out = None` | `_predict_velocities(...)` |
+| `egostate_pathchange` | `pathChange` | `f.path_change = ...` (comment 9) | `s.policy.observe_context(...)` |
+| `speech` | `speech` | `f.surface_known = ...` | `s.events.append(f.speech)` |
+| `sounds_beeps` | `tones` | `f.beeping = [...]` | `s.frame_proximity.append(...)` |
+| `output_frame` | none | `f.speed_known = ...` | `s.frames_out.append({...})` |
+
+Edits beyond the cut and paste:
+- `output_frame` reads the frame index as `f.i` (was the bare loop variable `i`, `"index": i`); `f.i` was added to the preamble in p4-04.
+- `setup` lost its `s=None` parameter and builds `RunState()` itself (the Opus decision that `test_stages_b.py` wins over the p4-03 `s = RunState()` check).
+- no new preamble statement, no new `FrameState` / `RunState` field.
+- `continue` in `motion_roles` (coast branch) is aimed at that stage's own `for it in f.items` loop, not the frame loop; no stage holds
+  a `continue` / `break` aimed at the frame loop. The `blk_*` state machine stays inside `speech`, the inline motion block inside `motion_roles`.
+- the `s.progress` call and the other preamble lines stay in `run_collision`.
