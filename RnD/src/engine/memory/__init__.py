@@ -2,4 +2,6 @@
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from engine.memory.world import WorldMemory
+
+__all__ = ["WorldMemory"]

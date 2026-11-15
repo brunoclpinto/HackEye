@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from engine.core.clock import clock_text
 from engine.core.clock import quarter_of_hour as _quarter_of_hour
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from engine.core.geom import Box
 
-__all__ = ["LANE_PART_ID_BASE", "POINT_ASPECT", "Item", "Region", "Track", "trusted_track"]
+__all__ = ["LANE_PART_ID_BASE", "POINT_ASPECT", "Item", "ObjectMemory", "Region", "Track", "trusted_track"]
 
 LANE_PART_ID_BASE = 1_000_000  # first track id of the lane parts of walls / buildings (v26.1.16 follow-up)
 POINT_ASPECT = 3.0  # bbox height / width (normalised units, ~1.7 in pixels) of a pole-like item
@@ -240,3 +240,16 @@ class Track:
 def trusted_track(wtracks: Any, tid: int, t: float) -> dict[str, Any] | None:
     e = wtracks.lookup(tid, t)
     return e if (e is not None and e["trusted"]) else None
+
+
+class ObjectMemory(Protocol):
+    """What speech needs of the world memory (implemented by ``engine.memory.world.WorldMemory``)."""
+
+    @property
+    def active(self) -> bool: ...
+
+    entries: dict[int, dict[str, Any]]
+
+    def add(self, it: Item, t: float, named: bool = True) -> int: ...
+    def mark_said(self, mem_id: int, steps: float, t: float) -> None: ...
+    def said_at(self, mem_id: int) -> tuple[float, float] | None: ...

@@ -89,7 +89,7 @@ below gives the facade name; a leading `_` is the legacy private alias.
 | `PoseLike` | Protocol | read-only view of a dead-reckoned pose (`x, y, theta, speed, speed_t, hold_s`) | none |
 | `DeadReckoner` | class | pose `(x, y, heading)` with a latched walking speed (held `hold_s`); `advance()` integrates, or takes a corrected pose | none |
 
-`DeadReckoner` is not wired into any model yet; only `tests/engine/core/test_pose.py` uses it. Wiring is planned with
+`DeadReckoner` is composed by `engine.memory.world.WorldMemory` (v26.3.0 p2-12); `tests/engine/core/test_pose.py` pins it. Wiring is planned with
 the p2 memory / Phase 3 worldmap work.
 
 ## distfuse.py
@@ -135,6 +135,7 @@ the p2 memory / Phase 3 worldmap work.
 | `Region` | dataclass | walking region: `group`, `label`, `mask`, per-row `left` / `right` edges | `collision.Region` |
 | `Item` | dataclass | one connected component of an item class in one frame (field order pinned; `__post_init__` fills clock fields) | `collision._Item` |
 | `Track` | dataclass | an item followed across frames (field order pinned) | `collision._Track` |
+| `ObjectMemory` | Protocol | what speech needs of the world memory: `active`, `entries`, `add`, `mark_said`, `said_at` (implemented by `engine.memory.world.WorldMemory`) | none |
 | `trusted_track` | function | world-track lookup, returns the entry only if trusted | `collision._trusted_track` |
 
 ## Config keys read
