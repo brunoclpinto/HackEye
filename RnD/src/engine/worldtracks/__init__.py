@@ -1,5 +1,8 @@
-"""World tracks model."""
+"""World tracks model: every collision item tracked in the world frame."""
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from engine.worldtracks import tracks
+from engine.worldtracks.tracks import DEFAULTS, WorldTracks
+
+__all__ = ["DEFAULTS", "WorldTracks", "tracks"]
