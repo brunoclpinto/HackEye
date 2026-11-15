@@ -18,6 +18,7 @@ from engine.worldmap.helpers import (
     frames_from_hazards,
     settings_from_hazards,
 )
+from engine.worldmap.map import WorldMap, build
 from engine.worldmap.observer import Observer
 from engine.worldmap.pose import PoseTracker, integrate_pose
 
@@ -30,6 +31,8 @@ __all__ = [
     "Fusion",
     "Observer",
     "PoseTracker",
+    "WorldMap",
+    "build",
     "class_kinds",
     "face_contact_samples",
     "first_depth_scale",
