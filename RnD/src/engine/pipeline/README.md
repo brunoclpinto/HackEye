@@ -311,3 +311,40 @@ everything else is `s`. Line numbers refer to the pre-conversion `run.py` (p4-02
 | `tone_events` | s | 1380 | setup |
 | `version` | s | 1386 | setup |
 | `hazards_doc` | s | 1387 | setup |
+
+
+## stages.py, part A (p4-04)
+
+`stages.py` holds `Stage` (frozen dataclass: `name`, `reads`, `writes`, `config_section`, `fn`), `setup(...)`, the stage functions 1-12 of
+audit 3.2 and `STAGES` (those 12, in execution order; p4-05 appends the rest). `reads` / `writes` are the attribute names of `s` / `f`
+that the function body loads / stores (sorted; derived from the AST, and `tests/engine/pipeline/test_stages.py` re-derives them).
+Each stage function is the verbatim block of the p4-03 body (dedented by one level, then reformatted by `ruff format`, which only
+re-wraps lines that now fit). `run_collision` keeps the per-frame preamble (`f = FrameState()`, `f.i = i`, `progress`, `t`, `dt`,
+`prev_t`, `grid`), calls the 12 functions in order, then the inline stages 13-24 and the epilogue.
+
+`setup(grids, ..., sensors, s=None) -> RunState` is the setup block (audit 3.1: from `s.grids = grids` to the last frame-loop local,
+`s.ego_hist_t0`). `run_collision` does `s = RunState()` and passes it in as the last argument: `setup` fills that object (a None `s`
+builds a fresh one) and returns it. `s = RunState()` stays in `run_collision` because the p4-03 AST checks require it there (a plain
+`s = setup(...)` is a bare store of `s`).
+
+| stage | config section | first statement | last statement |
+|---|---|---|---|
+| `surface_region` | `surfaces` | `f.region = walking_region(...)` | `s.prev_group = f.group` |
+| `surface_horizon` | `geometry` | `f.raw = ... estimate_horizon(...)` | `s.h_state = s.horizon` |
+| `egosignals_lookup` | `ego` | `f.cadence = f.heading = f.flow_heading = None` | the `if s.gps_scale ...: s.step_len = ...` block |
+| `surface_crosswalk` | `surfaces` | `f.cw_change = s.crosswalk.update(...)` | `s.cw_marks.append((f.t, f.cw_change))` |
+| `detection` | `geometry` | `f.k = s.scale.value` | `it.depth_raw = _item_depth_m(...)` (end of the `if f.dmap is not None` block) |
+| `tracking` | `tracking` | `s.tracks = {k: v ... maxMissedSeconds}` | `it.settled = ...` |
+| `depthscale` | `distance` | `if s.relative:` (comment 4b) | `it.closing = f.tr.closing` (end of the depth item loop) |
+| `tracking_jump` | `distance` | `if s.jump_cfg.get("enabled", False):` (comment 4c) | `f.tr.closing = None` |
+| `egostate` | `ego` | `s.ego.cadence = f.cadence` (comment 5) | `s.mover.advance(...)` |
+| `depthscale_report` | none | `f.depth_scale_out = (...)` | the plane-anchor `f.depth_scale_out = ...` |
+| `worldmap_step` | `source` | `f.corridor_out = None` | `f.corridor_out = s.smap.corridor()` |
+| `tracking_coast` | `coast` | `if s.coast.on:` | `s.coast.items(...)` call (end of the block) |
+
+Edits beyond the cut and paste:
+- `f.i` (new `FrameState` field, first): the frame-loop variable `i` is read by `worldmap_step` (`s.smap.update(f.i, ...)`), so the
+  preamble sets `f.i = i` right after `f = FrameState()`. The loop and `s.progress(i, ...)` keep the bare `i`.
+- the `# noqa: B023` on the coast lambda is gone: the lambda no longer sits in a loop that rebinds `f`, so it is not a B023 case (RUF100).
+- `Callable` is imported under `TYPE_CHECKING` (TC003); `stages.py` carries the same file-level `E501` / mypy ignores as `run.py`.
+- no stage block holds a `continue` / `break` aimed at the frame loop (the ones inside are in inner `for` loops).

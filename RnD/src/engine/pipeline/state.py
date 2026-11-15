@@ -175,6 +175,7 @@ class RunState:
 class FrameState:
     """Locals of ``run_collision`` assigned inside the frame loop, rebuilt for every frame."""
 
+    i: Any = None  # the frame index (the loop variable ``i``), set in the preamble so that the stages can read it
     t: Any = None
     dt: Any = None
     grid: Any = None
