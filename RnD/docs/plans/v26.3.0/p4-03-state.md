@@ -36,3 +36,10 @@ README `engine/pipeline/README.md`.
   inner-loop variables, lambda parameters and `with`/`except` targets (allow-list them explicitly: the tests worker computes the list
   from the legacy function and pins it). This is the test that fails red today.
 - `run_collision` still returns `(hazards_doc, events_doc)` for one fixture window (a smoke test; equivalence covers the values).
+
+## Note (Opus, 2026-11-15, from the tests worker)
+- The setup local `f = focal_px(gw, hfov)` clashes with the `FrameState` variable `f`: it becomes the run-level attribute `s.f`
+  (field name `f` on `RunState`), every read of the focal length becomes `s.f`.
+- `tid`, `tr` and `k` are also plain locals read outside a loop that binds them (`k = scale.value` is the frame-start scale,
+  audit 5.1): they become `f.tid` / `f.tr` / `f.k` where so assigned; their for/comprehension uses stay bare.
+- The frame-loop variable `i` stays bare (the loop starts before `f` exists).
