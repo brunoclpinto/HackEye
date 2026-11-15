@@ -5,6 +5,8 @@ are compared against, the approach / recede / still / side state with hysteresis
 from the item's own positions on the dead-reckoned world plane. Imports only numpy, the stdlib and `engine.core`
 (types only, under `TYPE_CHECKING`).
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.moving`, `Item.approaching`, `Item.receding`, `Item.ego_known`, `Item.own_fast`, `Item.ego_settled`, `Item.lat_vel`, `Item.cross_mps`, `Item.own`, `Item.own_ok`, `Item.own_closing`, `Item.near_pass`, `Item.from_side`, `Track.moving`, `Track.lhist`, `Track.along_s`, `Track.along_t`, `Track.mstate`, `Track.still_t0`.
+
 ## API
 
 | module | name | purpose | legacy |

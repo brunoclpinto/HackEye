@@ -5,6 +5,8 @@ and the trackers that decide surface changes and crosswalk enter / exit. Modules
 `trackers.py`; imports only numpy, scipy, the stdlib and `engine.core` (`ClassIds`, `FOUR_CONNECTIVITY`, `Region`,
 `Geometry`).
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): none.
+
 ## Public API (legacy name in brackets)
 - `walking_region(grid, ids, config) -> Region | None` (`collision.walking_region`).
 - `smooth_bounds(prev, cur, alpha=0.5)` (`collision._smooth_bounds`): per-row EMA of region bounds.

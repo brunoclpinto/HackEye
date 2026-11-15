@@ -4,6 +4,8 @@ The per-item `hazards.json` dict (with its optional outline), the walking-lane p
 the outline tracing and Douglas-Peucker simplification behind them. Imports only the stdlib, numpy and `engine.core`
 (`Item`, `Region`, `FrameGeo`, `round_opt`).
 
+**Fields written:** none (`Item` / `Track` fields, `engine.core.types.FIELD_WRITERS`).
+
 ## API (re-exported by `__init__.py`)
 
 `outline.py`:

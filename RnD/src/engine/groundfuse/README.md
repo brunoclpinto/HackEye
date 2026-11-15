@@ -4,6 +4,8 @@ Per-run state for the distance of a base that stands on a surface (`distance.obj
 the range-correction curve fitted from the walking region. The stateless pieces (ground ray, `resolve`, `rho_at`) live
 in `engine.core.groundgeom` / `engine.core.distfuse`; `src/groundfuse.py` is a facade that re-exports all of them.
 
+**Fields written:** none (`Item` / `Track` fields, `engine.core.types.FIELD_WRITERS`).
+
 ## API (`estimators.py`, re-exported by the package)
 
 | name | kind | purpose | legacy |

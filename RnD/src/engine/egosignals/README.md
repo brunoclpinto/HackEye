@@ -2,6 +2,8 @@
 
 Signals about the wearer's own motion. Imports only the stdlib and numpy; no other model.
 
+**Fields written:** none (`Item` / `Track` fields, `engine.core.types.FIELD_WRITERS`).
+
 ## cadence.py (v26.3.0 p2-01, moved from `collision.py`)
 
 | name | kind | purpose | legacy |

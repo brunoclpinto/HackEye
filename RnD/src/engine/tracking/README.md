@@ -3,6 +3,8 @@
 Per-frame items are followed across frames: track velocities (closing speed, sideways speed, bearing rate), the greedy
 frame-to-frame matcher, and the coasting of movers that left the image. Imports only `engine.core.*`, numpy and its own modules.
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.track_id`, `Item.closing`, `Item.settled`, `Item.role_run`, `Item.closing_raw`, `Item.prox_run`, `Item.present_run`, `Item.coasting`, `Item.unstable`, `Item.jumped`, `Track.id`, `Track.group`, `Track.class_name`, `Track.box`, `Track.last_t`, `Track.first_t`, `Track.last_distance`, `Track.last_lateral`, `Track.history`, `Track.closing`, `Track.contact_s`, `Track.present_run`, `Track.role`, `Track.role_run`, `Track.dhist`, `Track.lane_part`, `Track.prox_run`, `Track.context_seen`, `Track.d_prev`, `Track.d_prev_t`, `Track.df_prev`, `Track.df_prev_t`, `Track.jump_t`, `Track.under_last`, `Track.under_fired`; also writes `Item.distance_m`, `Item.lateral_m`, `Item.bearing`, `Item.clock`, `Item.pan`, `Item.clipped`, `Item.speak`, `Item.shape`, `Item.clock_q`, `Item.clock_text`, `Item.map_cells`, `Item.map_world`, `Item.image_dl`, `Item.srcsel`, `Item.full_ref`.
+
 ## API
 
 | module | name | purpose | legacy |

@@ -4,6 +4,8 @@ What the system remembers between frames: the user's dead-reckoned ground positi
 a world position, so a fragmented detection or a camera turn does not make the same object "new". Imports only
 `engine.core` and the stdlib.
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.wx`, `Item.wy`, `Item.mem_id`, `Item.mem_named`, `Item.mem_approach`, `Item.mem_danger`, `Track.mem_id`, `Track.linked_t`.
+
 ## API
 
 | module | name | purpose | legacy |

@@ -3,6 +3,8 @@
 The per-run state of the wearer's motion that the frame loop updates: an EMA-smoothed walking speed from the closing
 rates of static witnesses, and the detector for a sustained heading change (a turn). Imports only numpy and the stdlib.
 
+**Fields written:** none (`Item` / `Track` fields, `engine.core.types.FIELD_WRITERS`).
+
 ## API
 
 | module | name | purpose | legacy |

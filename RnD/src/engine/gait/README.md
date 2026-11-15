@@ -3,6 +3,8 @@
 Gait model: the metric scale of the pinhole geometry, calibrated against walking (step cadence) and the GPS.
 Module `scale.py`; imports only numpy and the stdlib.
 
+**Fields written:** none (`Item` / `Track` fields, `engine.core.types.FIELD_WRITERS`).
+
 ## Public API
 - `Scale(cfg, prior_step_m)` (legacy `collision._Scale`): `update(t, cadence, raw_speed, dt)`, property `value`
   (the applied scale), attributes `k` (target, None until the first estimate), `applied`, `from_gait`, `samples`.

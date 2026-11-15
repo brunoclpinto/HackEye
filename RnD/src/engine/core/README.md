@@ -132,6 +132,7 @@ the p2 memory / Phase 3 worldmap work.
 |---|---|---|---|
 | `LANE_PART_ID_BASE` | constant (1_000_000) | first track id of lane parts of walls and buildings | `collision.LANE_PART_ID_BASE` |
 | `POINT_ASPECT` | constant (3.0) | bbox height / width of a pole-like item | `collision.POINT_ASPECT` |
+| `FIELD_WRITERS` | dict[str, tuple[str, ...]] | `"Item.<field>"` / `"Track.<field>"` -> models allowed to write it, owner first (checked by `tests/test_field_ownership_v2.py`) | none |
 | `Region` | dataclass | walking region: `group`, `label`, `mask`, per-row `left` / `right` edges | `collision.Region` |
 | `Item` | dataclass | one connected component of an item class in one frame (field order pinned; `__post_init__` fills clock fields) | `collision._Item` |
 | `Track` | dataclass | an item followed across frames (field order pinned) | `collision._Track` |

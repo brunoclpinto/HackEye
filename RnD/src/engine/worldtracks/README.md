@@ -5,6 +5,8 @@ constant-velocity Kalman filter (state `[x, y, vx, vy]`, 4 x 4 covariance, white
 static-like items, large for movers). Nothing computed here feeds a decision; it only adds `worldTracks` to each hazards
 frame. Imports only numpy and the stdlib.
 
+**Fields written:** none (`Item` / `Track` fields, `engine.core.types.FIELD_WRITERS`).
+
 ## API
 
 | module | name | purpose | legacy |

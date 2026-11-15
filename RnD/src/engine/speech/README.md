@@ -4,6 +4,8 @@ The speech policy of the Lab, moved out of `collision.py` (p3-12, p3-13). `Speec
 `step`, predictive speech, events) lives in `policy.py`; its text, context-memory, known-wall and mover methods are mixins.
 Imports only the stdlib and `engine.core`.
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.followed`, `Track.danger_done`, `Track.final_done`, `Track.feature_done`, `Track.thin_done`, `Track.approach_done`, `Track.said`; also writes `Item.distance_m`, `Item.lateral_m`, `Item.bearing`, `Item.clock`, `Item.steps`, `Item.mem_id`, `Item.mem_named`, `Item.mem_approach`, `Item.mem_danger`, `Item.clock_q`, `Item.clock_text`, `Track.mem_id`.
+
 ## API
 
 | module | name | purpose | legacy |

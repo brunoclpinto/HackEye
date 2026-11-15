@@ -15,10 +15,162 @@ if TYPE_CHECKING:
 
     from engine.core.geom import Box
 
-__all__ = ["LANE_PART_ID_BASE", "POINT_ASPECT", "Item", "ObjectMemory", "Region", "Track", "trusted_track"]
+__all__ = [
+    "FIELD_WRITERS",
+    "LANE_PART_ID_BASE",
+    "POINT_ASPECT",
+    "Item",
+    "ObjectMemory",
+    "Region",
+    "Track",
+    "trusted_track",
+]
 
 LANE_PART_ID_BASE = 1_000_000  # first track id of the lane parts of walls / buildings (v26.1.16 follow-up)
 POINT_ASPECT = 3.0  # bbox height / width (normalised units, ~1.7 in pixels) of a pole-like item
+
+# Writers of every Item / Track field, owner first (audit section 4; checked by the AST scan in
+# tests/test_field_ownership_v2.py). ``pipeline`` may write any field and is never listed. A model after the
+# owner writes the field too (observed on the code of 2026-11-15). A field whose only writer today is
+# ``run_collision`` (moving to engine.pipeline) lists the audit's intended owner. "differs" marks fields where the
+# audit's single owner and the observed writers disagree. Geometry cluster (distance_m, lateral_m, bearing, clock*,
+# pan, clipped, shape, full_ref): tracking (coast copy) and speech (view copy) write it through replace(), worldmap
+# through _set_position / snap_solid.
+FIELD_WRITERS: dict[str, tuple[str, ...]] = {
+    "Item.group": ("detection",),
+    "Item.class_name": ("detection",),
+    "Item.bbox": ("detection",),
+    "Item.contact_y": ("detection",),
+    "Item.distance_m": ("detection", "speech", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.lateral_m": ("detection", "speech", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.bearing": ("detection", "speech", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.clock": ("detection", "speech", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.pan": ("detection", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.area_frac": ("detection",),
+    "Item.clipped": ("detection", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.touches": ("detection",),
+    "Item.lane_hit": ("detection",),
+    "Item.along_path": ("detection",),
+    "Item.lane_cover": ("detection",),
+    "Item.contact_y_raw": ("detection",),
+    "Item.area_m2": ("detection",),
+    "Item.track_id": ("tracking",),
+    "Item.closing": ("tracking", "worldmap"),  # differs: worldmap via _map_source
+    "Item.moving": ("motion",),
+    "Item.approaching": ("motion",),
+    "Item.steps": ("roles", "speech"),  # differs: speech view copy via replace
+    "Item.label": ("roles",),
+    "Item.role": ("roles", "worldmap"),  # differs: worldmap via mute_solid
+    "Item.urgency": ("roles", "worldmap"),  # differs: worldmap via mute_solid
+    "Item.settled": ("tracking",),
+    "Item.family": ("roles",),
+    "Item.role_run": ("tracking",),
+    "Item.closing_raw": ("tracking",),
+    "Item.landmark": ("detection",),
+    "Item.receding": ("motion",),
+    "Item.ego_known": ("motion",),
+    "Item.own_fast": ("motion",),
+    "Item.ego_settled": ("motion",),
+    "Item.summary_ok": ("roles", "worldmap"),  # differs: worldmap via mute_solid
+    "Item.people": ("detection",),
+    "Item.fast": ("detection",),
+    "Item.speak": ("roles", "tracking", "worldmap"),  # differs: worldmap via mute_solid
+    "Item.thin": ("detection",),
+    "Item.collision": ("roles", "worldmap"),  # differs: worldmap via mute_solid
+    "Item.prox_run": ("tracking",),
+    "Item.proximity": ("roles", "worldmap"),  # differs: worldmap via mute_solid
+    "Item.present_run": ("tracking",),
+    "Item.wx": ("memory",),
+    "Item.wy": ("memory",),
+    "Item.mem_id": ("memory", "speech"),  # differs: speech via _register
+    "Item.mem_named": ("memory", "speech"),  # differs: speech via _register
+    "Item.mem_approach": ("memory", "speech"),  # differs: speech via _register
+    "Item.mem_danger": ("memory", "speech"),  # differs: speech via _register
+    "Item.shape": ("detection", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.clock_q": ("detection", "speech", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.clock_text": ("detection", "speech", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.depth_m": ("depthscale",),
+    "Item.depth_on": ("depthscale",),
+    "Item.depth_raw": ("depthscale",),
+    "Item.from_depth": ("depthscale",),
+    "Item.lat_vel": ("motion",),
+    "Item.cross_mps": ("motion",),
+    "Item.depth_cells": ("detection",),
+    "Item.lane_part_weak": ("detection",),
+    "Item.lane_part": ("detection",),
+    "Item.map_source": ("worldmap",),
+    "Item.map_cells": ("worldmap", "tracking"),  # differs: tracking coast copy via replace
+    "Item.map_world": ("worldmap", "tracking"),  # differs: tracking coast copy via replace
+    "Item.image_dl": ("worldmap", "tracking"),  # differs: tracking coast copy via replace
+    "Item.solid_corrected": ("worldmap",),
+    "Item.raw_distance_m": ("worldmap",),
+    "Item.inside_solid": ("worldmap",),
+    "Item.coasting": ("tracking",),
+    "Item.ghost": ("worldmap",),
+    "Item.map_judged": ("worldmap",),
+    "Item.face_edge": ("worldmap",),
+    "Item.base_row": ("detection",),
+    "Item.base_col": ("detection",),
+    "Item.dist_source": ("depthscale",),
+    "Item.raw_depth_m": ("depthscale",),
+    "Item.ground_m": ("depthscale",),
+    "Item.srcsel": ("worldmap", "tracking"),  # differs: tracking coast copy via replace
+    "Item.track_motion": ("worldmap",),
+    "Item.tree": ("detection",),
+    "Item.unstable": ("tracking",),
+    "Item.jumped": ("tracking",),
+    "Item.full_ref": ("detection", "tracking", "worldmap"),  # differs: geometry cluster, see above
+    "Item.pred_v": ("worldmap",),  # differs: audit owner pipeline.glue (unlistable); worldmap _map_source
+    "Item.followed": ("speech",),
+    "Item.own": ("motion",),
+    "Item.own_ok": ("motion",),
+    "Item.own_closing": ("motion",),
+    "Item.near_pass": ("motion",),
+    "Item.from_side": ("motion",),
+    "Track.id": ("tracking",),
+    "Track.group": ("tracking",),
+    "Track.class_name": ("tracking",),
+    "Track.box": ("tracking",),
+    "Track.last_t": ("tracking",),
+    "Track.first_t": ("tracking",),
+    "Track.last_distance": ("tracking",),
+    "Track.last_lateral": ("tracking",),
+    "Track.history": ("tracking",),
+    "Track.closing": ("tracking",),
+    "Track.moving": ("motion",),
+    "Track.danger_done": ("speech",),
+    "Track.final_done": ("speech",),
+    "Track.feature_done": ("speech",),
+    "Track.thin_done": ("speech",),
+    "Track.contact_s": ("tracking",),
+    "Track.present_run": ("tracking",),
+    "Track.role": ("tracking",),
+    "Track.role_run": ("tracking",),
+    "Track.mem_id": ("memory", "speech"),  # differs: speech via _register
+    "Track.linked_t": ("memory",),
+    "Track.under_last": ("tracking",),  # audit: pipeline (stages 13 feature frames and 18 tracking.unseen)
+    "Track.under_fired": ("tracking",),  # audit: pipeline (stages 13 feature frames and 18 tracking.unseen)
+    "Track.dhist": ("tracking",),
+    "Track.lhist": ("motion",),
+    "Track.lp_strong_t": ("roles",),
+    "Track.lane_part": ("tracking",),
+    "Track.along_s": ("motion",),
+    "Track.along_t": ("motion",),
+    "Track.feature_frames": ("roles",),
+    "Track.approach_done": ("speech",),
+    "Track.mstate": ("motion",),
+    "Track.prox_run": ("tracking",),
+    "Track.context_seen": ("tracking",),
+    "Track.ghost_src": ("worldmap",),
+    "Track.ghost_t0": ("worldmap",),
+    "Track.still_t0": ("motion",),
+    "Track.d_prev": ("tracking",),
+    "Track.d_prev_t": ("tracking",),
+    "Track.df_prev": ("tracking",),
+    "Track.df_prev_t": ("tracking",),
+    "Track.jump_t": ("tracking",),
+    "Track.said": ("speech",),
+}
 
 
 @dataclass

@@ -89,6 +89,7 @@ from engine.core.settings import (
     resolve_settings,
 )
 from engine.core.types import (
+    FIELD_WRITERS,
     LANE_PART_ID_BASE,
     POINT_ASPECT,
     Item,
@@ -101,6 +102,7 @@ from engine.core.types import (
 __all__ = [
     "AUTO_FISHEYE_HFOV_DEG",
     "DISTANCE_SOURCES",
+    "FIELD_WRITERS",
     "FOUR_CONNECTIVITY",
     "HORIZON_HOLD_S",
     "ITEM_GROUPS",

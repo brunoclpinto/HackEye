@@ -8,6 +8,8 @@ level of the anchored depth, the per-item depth and the ground+depth distance of
 Legacy facade (same objects): `collision._DepthAnchor`, `_InitialAnchor`, `_ground_anchor`, `_PlaneFit`, `_plane_fit`,
 `_PlaneAnchor`, `_DepthScale`, `_item_depth_m`, `_ground_depth_distance`.
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.depth_m`, `Item.depth_on`, `Item.depth_raw`, `Item.from_depth`, `Item.dist_source`, `Item.raw_depth_m`, `Item.ground_m`.
+
 ## anchors.py
 
 | name | kind | purpose |

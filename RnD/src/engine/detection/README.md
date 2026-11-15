@@ -3,6 +3,8 @@
 Turns one semantic class grid plus the frame geometry into `Item`s (one per connected component of an item class, with
 contact point, distance, bearing and clock). Imports only the stdlib, numpy, scipy and `engine.core`; no other model.
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.group`, `Item.class_name`, `Item.bbox`, `Item.contact_y`, `Item.distance_m`, `Item.lateral_m`, `Item.bearing`, `Item.clock`, `Item.pan`, `Item.area_frac`, `Item.clipped`, `Item.touches`, `Item.lane_hit`, `Item.along_path`, `Item.lane_cover`, `Item.contact_y_raw`, `Item.area_m2`, `Item.landmark`, `Item.people`, `Item.fast`, `Item.thin`, `Item.shape`, `Item.clock_q`, `Item.clock_text`, `Item.depth_cells`, `Item.lane_part_weak`, `Item.lane_part`, `Item.base_row`, `Item.base_col`, `Item.tree`, `Item.full_ref`.
+
 ## items.py (v26.3.0 p2-07, moved from `collision.py`)
 
 | name | kind | purpose | legacy |

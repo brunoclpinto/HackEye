@@ -4,6 +4,8 @@ Sound kinds, the Lab-wide sound profile, the parking-sensor collision beeps, the
 enter / exit tones, as tone events plus "beeps" episodes for the timeline. Imports only the stdlib, numpy and
 `engine.core` (`Item`).
 
+**Fields written:** none (`Item` / `Track` fields, `engine.core.types.FIELD_WRITERS`).
+
 ## API (`tones.py`, re-exported by `__init__.py`)
 
 | name | purpose | legacy |

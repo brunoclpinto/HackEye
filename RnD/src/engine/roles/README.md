@@ -4,6 +4,8 @@ Decides the role of one item (`danger` / `context` / `feature` / `none`), its ur
 the summary and proximity flags, with the predicates behind it. Imports only the stdlib and `engine.core` (`Item`,
 `POINT_ASPECT`).
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.steps`, `Item.label`, `Item.role`, `Item.urgency`, `Item.family`, `Item.summary_ok`, `Item.speak`, `Item.collision`, `Item.proximity`, `Track.lp_strong_t`, `Track.feature_frames`.
+
 ## API (`roles.py`, re-exported by `__init__.py`)
 
 | name | purpose | legacy |

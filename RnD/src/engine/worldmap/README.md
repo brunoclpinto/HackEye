@@ -4,6 +4,8 @@ The world map fuses the class grid, the depth map and the frame's horizon and eg
 README covers the whole model (p3-01 to p3-08): the config loader, the pose integration, the hazards helpers, the observer, the fusion,
 the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib and `engine.core`.
 
+**Fields written** (`engine.core.types.FIELD_WRITERS`): owns `Item.map_source`, `Item.map_cells`, `Item.map_world`, `Item.image_dl`, `Item.solid_corrected`, `Item.raw_distance_m`, `Item.inside_solid`, `Item.ghost`, `Item.map_judged`, `Item.face_edge`, `Item.srcsel`, `Item.track_motion`, `Item.pred_v`, `Track.ghost_src`, `Track.ghost_t0`; also writes `Item.distance_m`, `Item.lateral_m`, `Item.bearing`, `Item.clock`, `Item.pan`, `Item.clipped`, `Item.closing`, `Item.role`, `Item.urgency`, `Item.summary_ok`, `Item.speak`, `Item.collision`, `Item.proximity`, `Item.shape`, `Item.clock_q`, `Item.clock_text`, `Item.full_ref`.
+
 ## API
 
 | module | name | purpose | legacy |
