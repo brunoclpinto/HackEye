@@ -1,7 +1,7 @@
 # engine/worldmap -- the fused bird's-eye world map
 
 The world map fuses the class grid, the depth map and the frame's horizon and ego block into an ego-centric map. This
-README covers the whole model (p3-01 to p3-06): the config loader, the pose integration, the hazards helpers, the observer, the fusion,
+README covers the whole model (p3-01 to p3-07): the config loader, the pose integration, the hazards helpers, the observer, the fusion,
 the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib and `engine.core`.
 
 ## API
@@ -20,7 +20,8 @@ the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib a
 | `map.py` | `build(grids, times, class_names, hazards, coll_cfg, cfg=None, depth=None, hook=None)` | the whole run -> the arrays of `worldmap.npz` (`classes`, `conf`, `surface`, `object`, `t`, `pose`, `cellM`, `origin`, `ms`, `alignDeg`, `alignM`, `agree`, `agreePrior`) | `worldmap.build` |
 | `helpers.py` | `face_contact_samples`, `frames_from_hazards`, `first_depth_scale`, `settings_from_hazards` | per-frame inputs and settings from a stored hazards dict | same names on `worldmap` |
 | `faceedge.py` | `EDGE`, `FACE`, `NONE`, `VERDICT_NAMES`, `DEFAULTS`, `settings`, `fit_line`, `fit_wall_lines`, `local_orientation`, `classify`, `summarize`, `lines_json` | face / edge verdict per corridor cell of a static family from wall-line fits and local orientation (whole legacy module, verbatim; `VERDICT_NAMES` is unused) | same names on `faceedge` |
-| `staticmap.py` | `StaticMap(wmod, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode="depth", wcfg=None)` | the collision pass's online world map: `update`, `measure`, `snap_solid`, `region`, `ghost`, `keeps`, `corridor`, `locate`, `faceedge`, `recent_obstacle_points`, `blocked_ahead` (moves to a mixin in p3-07) and the private helpers `_lut`, `_corridor_cells`, `_apply`, `_footprint` | `collision._StaticMap` |
+| `staticmap.py` | `StaticMap(wmod, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode="depth", wcfg=None)` | the collision pass's online world map: `update`, `measure`, `snap_solid`, `region`, `ghost`, `keeps`, `corridor`, `locate`, `faceedge`, `recent_obstacle_points`, `blocked_ahead` (inherited from `BlockedMixin`) and the private helpers `_lut`, `_corridor_cells`, `_apply`, `_footprint` | `collision._StaticMap` |
+| `blocked.py` | `BlockedMixin` | mixin with `blocked_ahead(bcfg)`: lane blocked by a wall or an obstacle and the free direction; reads `self.classes`, `conf`, `ob`, `lane_half`, `min_conf`, `_names`, `obs_widths`, `obs_min_w_frames`, `recent_obstacle_points()`; caches in `self._blk` | `collision._StaticMap.blocked_ahead` |
 | `staticmap.py` | `set_position(it, fwd, right)`, `mute_solid(it, smap)` | move an item to (forward, right) m keeping the image measurement in `image_dl`; `insideSolid.mode` "suppress" mutes an item inside a wall face | `collision._set_position`, `collision._mute_solid` |
 
 `engine/worldmap/__init__.py` re-exports all of these with `__all__`; the face / edge API is exported as the submodule `faceedge` only (its `settings` must not shadow anything).
@@ -63,3 +64,4 @@ the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib a
   `worldmap` facade module) supplies `load_config()`, `WorldMap` and `KIND_OBJECT`. `_lut` is keyed by `id(lut)` in `_fe_cache` and `blocked_ahead`
   caches lazily in `self._blk` (`"_blk" not in self.__dict__`); both verbatim. The method `faceedge` and the module global `faceedge` share a
   name: method bodies resolve the module global. Config keys read: `roles.map*`, `roles.insideSolid`, `roles.faceEdge`, `spokenLabels`, `blocked`.
+- `BlockedMixin` (p3-07): no `__init__`, no class values (bare annotations only); `StaticMap(BlockedMixin)`; `blocked` does not import `staticmap`. Body verbatim, including the lazy `_blk` cache. Config keys read: `blocked.*` (`solidClasses`, `walkableClasses`, `wallClasses`, `obstacle`, `minAheadM`, `aheadM`, `widthFrac`, `walkableLabels`, `freeHalfWidthM`, `walkMinConf`, `angleStepDeg`, `angleDeg`, `minClearM`).

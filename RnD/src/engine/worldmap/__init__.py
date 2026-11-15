@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from engine.worldmap import faceedge
+from engine.worldmap.blocked import BlockedMixin
 from engine.worldmap.config import (
     KIND_IGNORE,
     KIND_MOVER,
@@ -30,6 +31,7 @@ __all__ = [
     "KIND_OBJECT",
     "KIND_SURFACE",
     "UNKNOWN",
+    "BlockedMixin",
     "Fusion",
     "Observer",
     "PoseTracker",
