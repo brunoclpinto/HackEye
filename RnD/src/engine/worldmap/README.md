@@ -1,7 +1,7 @@
 # engine/worldmap -- the fused bird's-eye world map
 
 The world map fuses the class grid, the depth map and the frame's horizon and ego block into an ego-centric map. This
-README covers the whole model (p3-01 to p3-07): the config loader, the pose integration, the hazards helpers, the observer, the fusion,
+README covers the whole model (p3-01 to p3-08): the config loader, the pose integration, the hazards helpers, the observer, the fusion,
 the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib and `engine.core`.
 
 ## API
@@ -23,6 +23,7 @@ the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib a
 | `staticmap.py` | `StaticMap(wmod, grids, times, class_names, config, settings, lat_off, projection, source, lane_half, step_len, obj_mode="depth", wcfg=None)` | the collision pass's online world map: `update`, `measure`, `snap_solid`, `region`, `ghost`, `keeps`, `corridor`, `locate`, `faceedge`, `recent_obstacle_points`, `blocked_ahead` (inherited from `BlockedMixin`) and the private helpers `_lut`, `_corridor_cells`, `_apply`, `_footprint` | `collision._StaticMap` |
 | `blocked.py` | `BlockedMixin` | mixin with `blocked_ahead(bcfg)`: lane blocked by a wall or an obstacle and the free direction; reads `self.classes`, `conf`, `ob`, `lane_half`, `min_conf`, `_names`, `obs_widths`, `obs_min_w_frames`, `recent_obstacle_points()`; caches in `self._blk` | `collision._StaticMap.blocked_ahead` |
 | `staticmap.py` | `set_position(it, fwd, right)`, `mute_solid(it, smap)` | move an item to (forward, right) m keeping the image measurement in `image_dl`; `insideSolid.mode` "suppress" mutes an item inside a wall face | `collision._set_position`, `collision._mute_solid` |
+| `source.py` | `map_source(items, tracks, smap, wtracks, cfg, t, step_len, u, counts)` | `source.mode` "map": where each real item's position comes from (`item.srcsel` `map` / `track` / `image`) and the `counts` tally; calls `smap.region`, `smap._apply`, `set_position`, `ego_frame`, `trusted_track` | `collision._map_source` |
 
 `engine/worldmap/__init__.py` re-exports all of these with `__all__`; the face / edge API is exported as the submodule `faceedge` only (its `settings` must not shadow anything).
 
@@ -65,3 +66,4 @@ the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib a
   caches lazily in `self._blk` (`"_blk" not in self.__dict__`); both verbatim. The method `faceedge` and the module global `faceedge` share a
   name: method bodies resolve the module global. Config keys read: `roles.map*`, `roles.insideSolid`, `roles.faceEdge`, `spokenLabels`, `blocked`.
 - `BlockedMixin` (p3-07): no `__init__`, no class values (bare annotations only); `StaticMap(BlockedMixin)`; `blocked` does not import `staticmap`. Body verbatim, including the lazy `_blk` cache. Config keys read: `blocked.*` (`solidClasses`, `walkableClasses`, `wallClasses`, `obstacle`, `minAheadM`, `aheadM`, `widthFrac`, `walkableLabels`, `freeHalfWidthM`, `walkMinConf`, `angleStepDeg`, `angleDeg`, `minClearM`).
+- `map_source` (p3-08): body verbatim; `smap` and `wtracks` are typed by local Protocols (stubs in tests, no isinstance). Config keys read (`source.*`): `imageNetSteps`, `imageNetFrames`, `regionPadM`, `regionMinCells`, `maxTrackJumpM`, `maxTrackJumpFrac`. Mutates the items in place and `counts[srcsel] += 1` per real item.

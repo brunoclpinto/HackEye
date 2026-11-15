@@ -23,6 +23,7 @@ from engine.worldmap.helpers import (
 from engine.worldmap.map import WorldMap, build
 from engine.worldmap.observer import Observer
 from engine.worldmap.pose import PoseTracker, integrate_pose
+from engine.worldmap.source import map_source
 from engine.worldmap.staticmap import StaticMap, mute_solid, set_position
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "frames_from_hazards",
     "integrate_pose",
     "load_config",
+    "map_source",
     "mute_solid",
     "set_position",
     "settings_from_hazards",
