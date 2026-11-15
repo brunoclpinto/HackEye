@@ -11,6 +11,7 @@ from engine.worldmap.config import (
     class_kinds,
     load_config,
 )
+from engine.worldmap.fusion import Fusion
 from engine.worldmap.helpers import (
     face_contact_samples,
     first_depth_scale,
@@ -26,6 +27,7 @@ __all__ = [
     "KIND_OBJECT",
     "KIND_SURFACE",
     "UNKNOWN",
+    "Fusion",
     "Observer",
     "PoseTracker",
     "class_kinds",
