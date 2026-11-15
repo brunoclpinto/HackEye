@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from engine.worldmap import faceedge
 from engine.worldmap.config import (
     KIND_IGNORE,
     KIND_MOVER,
@@ -35,6 +36,7 @@ __all__ = [
     "build",
     "class_kinds",
     "face_contact_samples",
+    "faceedge",
     "first_depth_scale",
     "frames_from_hazards",
     "integrate_pose",

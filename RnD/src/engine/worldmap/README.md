@@ -1,8 +1,8 @@
 # engine/worldmap -- the fused bird's-eye world map
 
 The world map fuses the class grid, the depth map and the frame's horizon and ego block into an ego-centric map. This
-README covers the whole model (p3-01 to p3-04): the config loader, the pose integration, the hazards helpers, the observer, the fusion
-and the `WorldMap` driver. Imports only numpy, the stdlib and `engine.core`.
+README covers the whole model (p3-01 to p3-05): the config loader, the pose integration, the hazards helpers, the observer, the fusion,
+the `WorldMap` driver and the face / edge test. Imports only numpy, the stdlib and `engine.core`.
 
 ## API
 
@@ -19,8 +19,9 @@ and the `WorldMap` driver. Imports only numpy, the stdlib and `engine.core`.
 | `map.py` | `WorldMap(grids, times, class_names, frames, settings, coll_cfg, cfg=None, depth=None)` | drives the passes frame by frame (`step`: pose, optional pose alignment, observation, fusion, snapshot); `cfg=None` calls `config.default_config_loader()` | `worldmap.WorldMap` |
 | `map.py` | `build(grids, times, class_names, hazards, coll_cfg, cfg=None, depth=None, hook=None)` | the whole run -> the arrays of `worldmap.npz` (`classes`, `conf`, `surface`, `object`, `t`, `pose`, `cellM`, `origin`, `ms`, `alignDeg`, `alignM`, `agree`, `agreePrior`) | `worldmap.build` |
 | `helpers.py` | `face_contact_samples`, `frames_from_hazards`, `first_depth_scale`, `settings_from_hazards` | per-frame inputs and settings from a stored hazards dict | same names on `worldmap` |
+| `faceedge.py` | `EDGE`, `FACE`, `NONE`, `VERDICT_NAMES`, `DEFAULTS`, `settings`, `fit_line`, `fit_wall_lines`, `local_orientation`, `classify`, `summarize`, `lines_json` | face / edge verdict per corridor cell of a static family from wall-line fits and local orientation (whole legacy module, verbatim; `VERDICT_NAMES` is unused) | same names on `faceedge` |
 
-`engine/worldmap/__init__.py` re-exports all of these with `__all__`.
+`engine/worldmap/__init__.py` re-exports all of these with `__all__`; the face / edge API is exported as the submodule `faceedge` only (its `settings` must not shadow anything).
 
 ## Config keys read
 
@@ -29,6 +30,7 @@ and the `WorldMap` driver. Imports only numpy, the stdlib and `engine.core`.
   `confFullWeight`, `objectWinShare`, `objectClearFactor`, `objectClearMarginM`, `objectClearBottomM`, `surfaceHiddenFactor`.
 - `WorldMap`: `poseAlign`, `alignStride`, `alignMinVotes`, `alignMinCells`, `alignDeg`, `alignStepDeg`, `alignShiftM`, `alignShiftStepM`,
   `alignMinGain`, `alignWindow`, `alignMoveDeg`; `cellM` (read by `build`).
+- `faceedge`: the `DEFAULTS` keys (`enabled`, `maxAheadM`, `lineAheadM`, `lineMaxSideM`, `lineMinCells`, `lineMinSpanM`, `lineTrials`, `maxLineAngleDeg`, `edgeBandM`, `edgeBlurPerM`, `faceProtrusionM`, `crossRadiusM`, `crossAngleDeg`, `crossElongation`, `crossMinCells`, `minFaceCells`, `crossSideEdge`, `seed`), overridden by the dict passed in.
 - `PoseTracker`: `memory.speedHoldSeconds` of the `collision.json` dict passed in (default 5.0).
 
 ## Invariants
@@ -48,6 +50,8 @@ and the `WorldMap` driver. Imports only numpy, the stdlib and `engine.core`.
 - `WorldMap` takes its default config from `config.default_config_loader()` (call-time lookup on the module); `ms` from `step` is a
   `time.perf_counter` timing and is not part of any equivalence. `build` is monkeypatched on the facade by tests: the Lab calls `worldmap.build`.
 - `worldmap.py` is a pure facade: docstring, re-exports, the loader hook, `import collision`, `import groundfuse`.
+
+- `faceedge.py` (legacy) is a pure facade (docstring and re-exports). `DEFAULTS["seed"]` seeds `np.random.default_rng` per `fit_wall_lines` call: never reseed. Coordinates are the `Observer` ego frame (`fwd` ahead, `right` of the body line).
 
 ## Changelog lines (from the `worldmap.py` module docstring)
 
