@@ -1,0 +1,644 @@
+{
+ "_source": "engine.core.clock.clock_quarter / clock_text (bearing 0 = 12, + = right); generated p6-02",
+ "bearings": [
+  {
+   "bearing": -1000.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -360.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -180.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -172.5,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -165.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -157.5,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -150.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -142.5,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -135.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -127.5,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -120.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -112.5,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -105.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -97.5,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -91.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -90.0,
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "bearing": -82.5,
+   "quarter": -11,
+   "text": "9:15"
+  },
+  {
+   "bearing": -75.0,
+   "quarter": -10,
+   "text": "9:30"
+  },
+  {
+   "bearing": -67.5,
+   "quarter": -9,
+   "text": "9:45"
+  },
+  {
+   "bearing": -60.0,
+   "quarter": -8,
+   "text": "10"
+  },
+  {
+   "bearing": -52.5,
+   "quarter": -7,
+   "text": "10:15"
+  },
+  {
+   "bearing": -45.0,
+   "quarter": -6,
+   "text": "10:30"
+  },
+  {
+   "bearing": -37.5,
+   "quarter": -5,
+   "text": "10:45"
+  },
+  {
+   "bearing": -30.0,
+   "quarter": -4,
+   "text": "11"
+  },
+  {
+   "bearing": -22.5,
+   "quarter": -3,
+   "text": "11:15"
+  },
+  {
+   "bearing": -15.0,
+   "quarter": -2,
+   "text": "11:30"
+  },
+  {
+   "bearing": -11.25,
+   "quarter": -2,
+   "text": "11:30"
+  },
+  {
+   "bearing": -7.5,
+   "quarter": -1,
+   "text": "11:45"
+  },
+  {
+   "bearing": -3.7501,
+   "quarter": -1,
+   "text": "11:45"
+  },
+  {
+   "bearing": -3.75,
+   "quarter": -1,
+   "text": "11:45"
+  },
+  {
+   "bearing": -3.7499,
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "bearing": -1.0,
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "bearing": -0.1,
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "bearing": 0.0,
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "bearing": 0.1,
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "bearing": 1.0,
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "bearing": 3.7499,
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "bearing": 3.75,
+   "quarter": 1,
+   "text": "12:15"
+  },
+  {
+   "bearing": 3.7501,
+   "quarter": 1,
+   "text": "12:15"
+  },
+  {
+   "bearing": 7.5,
+   "quarter": 1,
+   "text": "12:15"
+  },
+  {
+   "bearing": 11.25,
+   "quarter": 2,
+   "text": "12:30"
+  },
+  {
+   "bearing": 15.0,
+   "quarter": 2,
+   "text": "12:30"
+  },
+  {
+   "bearing": 22.5,
+   "quarter": 3,
+   "text": "12:45"
+  },
+  {
+   "bearing": 30.0,
+   "quarter": 4,
+   "text": "1"
+  },
+  {
+   "bearing": 37.5,
+   "quarter": 5,
+   "text": "1:15"
+  },
+  {
+   "bearing": 45.0,
+   "quarter": 6,
+   "text": "1:30"
+  },
+  {
+   "bearing": 52.5,
+   "quarter": 7,
+   "text": "1:45"
+  },
+  {
+   "bearing": 60.0,
+   "quarter": 8,
+   "text": "2"
+  },
+  {
+   "bearing": 67.5,
+   "quarter": 9,
+   "text": "2:15"
+  },
+  {
+   "bearing": 75.0,
+   "quarter": 10,
+   "text": "2:30"
+  },
+  {
+   "bearing": 82.5,
+   "quarter": 11,
+   "text": "2:45"
+  },
+  {
+   "bearing": 89.99,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 90.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 91.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 93.75,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 97.5,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 105.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 112.5,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 120.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 127.5,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 135.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 142.5,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 150.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 157.5,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 165.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 172.5,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 180.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 360.0,
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "bearing": 1000.0,
+   "quarter": 12,
+   "text": "3"
+  }
+ ],
+ "quarters": [
+  {
+   "quarter": -24,
+   "text": "6"
+  },
+  {
+   "quarter": -23,
+   "text": "6:15"
+  },
+  {
+   "quarter": -22,
+   "text": "6:30"
+  },
+  {
+   "quarter": -21,
+   "text": "6:45"
+  },
+  {
+   "quarter": -20,
+   "text": "7"
+  },
+  {
+   "quarter": -19,
+   "text": "7:15"
+  },
+  {
+   "quarter": -18,
+   "text": "7:30"
+  },
+  {
+   "quarter": -17,
+   "text": "7:45"
+  },
+  {
+   "quarter": -16,
+   "text": "8"
+  },
+  {
+   "quarter": -15,
+   "text": "8:15"
+  },
+  {
+   "quarter": -14,
+   "text": "8:30"
+  },
+  {
+   "quarter": -13,
+   "text": "8:45"
+  },
+  {
+   "quarter": -12,
+   "text": "9"
+  },
+  {
+   "quarter": -11,
+   "text": "9:15"
+  },
+  {
+   "quarter": -10,
+   "text": "9:30"
+  },
+  {
+   "quarter": -9,
+   "text": "9:45"
+  },
+  {
+   "quarter": -8,
+   "text": "10"
+  },
+  {
+   "quarter": -7,
+   "text": "10:15"
+  },
+  {
+   "quarter": -6,
+   "text": "10:30"
+  },
+  {
+   "quarter": -5,
+   "text": "10:45"
+  },
+  {
+   "quarter": -4,
+   "text": "11"
+  },
+  {
+   "quarter": -3,
+   "text": "11:15"
+  },
+  {
+   "quarter": -2,
+   "text": "11:30"
+  },
+  {
+   "quarter": -1,
+   "text": "11:45"
+  },
+  {
+   "quarter": 0,
+   "text": "12"
+  },
+  {
+   "quarter": 1,
+   "text": "12:15"
+  },
+  {
+   "quarter": 2,
+   "text": "12:30"
+  },
+  {
+   "quarter": 3,
+   "text": "12:45"
+  },
+  {
+   "quarter": 4,
+   "text": "1"
+  },
+  {
+   "quarter": 5,
+   "text": "1:15"
+  },
+  {
+   "quarter": 6,
+   "text": "1:30"
+  },
+  {
+   "quarter": 7,
+   "text": "1:45"
+  },
+  {
+   "quarter": 8,
+   "text": "2"
+  },
+  {
+   "quarter": 9,
+   "text": "2:15"
+  },
+  {
+   "quarter": 10,
+   "text": "2:30"
+  },
+  {
+   "quarter": 11,
+   "text": "2:45"
+  },
+  {
+   "quarter": 12,
+   "text": "3"
+  },
+  {
+   "quarter": 13,
+   "text": "3:15"
+  },
+  {
+   "quarter": 14,
+   "text": "3:30"
+  },
+  {
+   "quarter": 15,
+   "text": "3:45"
+  },
+  {
+   "quarter": 16,
+   "text": "4"
+  },
+  {
+   "quarter": 17,
+   "text": "4:15"
+  },
+  {
+   "quarter": 18,
+   "text": "4:30"
+  },
+  {
+   "quarter": 19,
+   "text": "4:45"
+  },
+  {
+   "quarter": 20,
+   "text": "5"
+  },
+  {
+   "quarter": 21,
+   "text": "5:15"
+  },
+  {
+   "quarter": 22,
+   "text": "5:30"
+  },
+  {
+   "quarter": 23,
+   "text": "5:45"
+  },
+  {
+   "quarter": 24,
+   "text": "6"
+  },
+  {
+   "quarter": 25,
+   "text": "6:15"
+  },
+  {
+   "quarter": 26,
+   "text": "6:30"
+  },
+  {
+   "quarter": 27,
+   "text": "6:45"
+  },
+  {
+   "quarter": 28,
+   "text": "7"
+  },
+  {
+   "quarter": 29,
+   "text": "7:15"
+  },
+  {
+   "quarter": 30,
+   "text": "7:30"
+  },
+  {
+   "quarter": 31,
+   "text": "7:45"
+  },
+  {
+   "quarter": 32,
+   "text": "8"
+  },
+  {
+   "quarter": 33,
+   "text": "8:15"
+  },
+  {
+   "quarter": 34,
+   "text": "8:30"
+  },
+  {
+   "quarter": 35,
+   "text": "8:45"
+  },
+  {
+   "quarter": 36,
+   "text": "9"
+  },
+  {
+   "quarter": 37,
+   "text": "9:15"
+  },
+  {
+   "quarter": 38,
+   "text": "9:30"
+  },
+  {
+   "quarter": 39,
+   "text": "9:45"
+  },
+  {
+   "quarter": 40,
+   "text": "10"
+  },
+  {
+   "quarter": 41,
+   "text": "10:15"
+  },
+  {
+   "quarter": 42,
+   "text": "10:30"
+  },
+  {
+   "quarter": 43,
+   "text": "10:45"
+  },
+  {
+   "quarter": 44,
+   "text": "11"
+  },
+  {
+   "quarter": 45,
+   "text": "11:15"
+  },
+  {
+   "quarter": 46,
+   "text": "11:30"
+  },
+  {
+   "quarter": 47,
+   "text": "11:45"
+  },
+  {
+   "quarter": 48,
+   "text": "12"
+  }
+ ]
+}

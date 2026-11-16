@@ -19,3 +19,18 @@ Write `tests/js/*.test.mjs` (`node:test` + `node:assert/strict`) for the pure fu
   test that the JS functions (exported from `js/util/clock.js` after p6-03) match it.
 Prove: every test passes against the current module through a temporary import map / copy outside the worktree, and is red today only
 on missing paths / exports.
+
+## Opus notes (2026-11-16, after the tests worker)
+- **Tests:** 11 files and 65 tests, plus `tests/fixtures/clock_cases.json`.
+  - That fixture holds 69 bearings and 73 quarter indices, printed by `engine.core.clock` in the check image (with `PYTHONPATH=/rnd/src`).
+  - Every test was green against the current modules, through scratch re-export shims, and is red today only with `ERR_MODULE_NOT_FOUND`.
+- **Placement:**
+  - `windowKey`, `runDepth`, `runOrientation`, `runLabel`, `isActive` → `features/runs/runs.js`;
+  - `lsKey`, `shortVal`, `flatKeys`, `collTags`, `collSummary`, `collText` → `features/collisions/summary.js`;
+  - `clockQuarter` / `clockText` keep their names in `util/clock.js`.
+- **Constraint on p6-03:** `features/audio/speech.js` must import in node, with no top-level `window` / `document` / `navigator` / timers.
+  - The current `audio.js` needs them all at load, and its top-level `setInterval(flushClientLog, 2000)` would keep node alive.
+  - `rankVoice` reads the module constant `ANDROID` (from `navigator.userAgent`). The sanctioned edit is to guard it: `typeof navigator !== "undefined" && …`. The Android bonus is untested in node.
+- **Small notes:**
+  - JS `clockQuarter` gives `-0` for small negative bearings where Python gives `0`; the tests compare with `===`.
+  - `collText` pins `TZ=UTC`.
