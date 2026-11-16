@@ -2,9 +2,9 @@
 
 The threads of the Lab and the state they share: the FIFO of analysis runs with its cancel flags and idle / maintenance flags, the one
 GPU worker thread, the collision re-run job (one at a time, a daemon thread), the ffmpeg proxy builder and the `VERSION` watcher.
-May import `lab.store` and `lab.stages` only (`BOUNDARIES.toml`: `may_import = ["lab.stages", "lab.store"]`, `engine = []`). Until
-p5-04 the inference job (`_run_job`, `_ModelCache`) and the two collision passes are still read from the flat `analysis` module as
-module attributes at call time (a flat module is allowed by the scanner).
+May import `lab.store` and `lab.stages` only (`BOUNDARIES.toml`: `may_import = ["lab.stages", "lab.store"]`, `engine = []`). The
+worker reads the inference job and the model cache as attributes of `lab.stages.inference` / `lab.stages.models` at call time; the
+collision job still calls the two passes as attributes of the flat `analysis` facade, which forwards them to `lab.stages`.
 
 ## API
 
@@ -50,4 +50,4 @@ None here. `constants.IDLE_SECONDS` (store; `HACKEYE_LAB_IDLE_SECONDS`) decides 
   the queue); neither uses the other at import time.
 - `lab.store.collision_docs.read_doc` reads the live job as `lab.collisions._job` and `lab.store.recordings._proxy_status` calls
   `lab.recordings.proxy_status`; both flat facades forward to this package.
-- `_run_job` takes an optional third argument `ctx` (the `JobContext`); it is not used until p5-04 moves the job to `lab.stages`.
+- `lab.stages.inference._run_job(run_id, cache, ctx)` takes the `JobContext` the worker built and uses it for cancellation and finish.

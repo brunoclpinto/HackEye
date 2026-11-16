@@ -2,9 +2,9 @@
 
 The worker builds one `JobContext` per job (cancel flag of the run, `_finish`) and passes it to the inference job.
 The queue globals (`_jobs`, `_busy`, `_cancel_flags`, `_cache`, `_worker`) live in `lab.jobs.queue` and are read
-and written there as module attributes at call time, so a patch through the `analysis` facade is seen. Until p5-04
-the job is `analysis._run_job` and the model cache class is `analysis._ModelCache` (both read from the flat module
-at call time)."""
+and written there as module attributes at call time, so a patch through the `analysis` facade is seen. The job is
+`lab.stages.inference._run_job` and the model cache class is `lab.stages.models._ModelCache` (both read as module
+attributes at call time, so a patch through the `analysis` facade is seen)."""
 
 from __future__ import annotations
 
@@ -14,24 +14,21 @@ import time
 from typing import Any
 
 from lab.jobs import queue as jq
+from lab.stages import inference, models
 from lab.store import constants, errors, runs, util
 from lab.store.jobctx import JobContext
 
 
 def _ensure_worker() -> None:
-    from lab import analysis  # `_ModelCache` stays in analysis until p5-04 (lab.stages.models)
-
     with runs._state_lock:
         if jq._cache is None:
-            jq._cache = analysis._ModelCache()
+            jq._cache = models._ModelCache()
         if jq._worker is None or not jq._worker.is_alive():
             jq._worker = threading.Thread(target=_worker_loop, name="gpu-worker", daemon=True)
             jq._worker.start()
 
 
 def _worker_loop() -> None:
-    from lab import analysis  # the inference job `_run_job` stays in analysis until p5-04 (lab.stages.inference)
-
     cache = jq._cache
     while True:
         try:
@@ -46,7 +43,7 @@ def _worker_loop() -> None:
             jq._busy = run_id
         ctx = JobContext(run_id, is_cancelled=lambda run_id=run_id: _is_cancelled(run_id), finish=_finish)
         try:
-            analysis._run_job(run_id, cache, ctx)
+            inference._run_job(run_id, cache, ctx)
         except errors._Cancelled:
             jq._finish_cancelled(run_id)
         except BaseException as exc:  # incl. SystemExit from gpu_guard

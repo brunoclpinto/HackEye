@@ -4,7 +4,7 @@
 registers it and runs the passes in a daemon thread; `Job.report` raises `errors._Cancelled` once the job was
 cancelled. `_job` is the live job (a module global that tests rebind through the `collisions` facade;
 `lab.store.collision_docs.read_doc` reads it from the flat facade). The two passes are called as attributes of the
-flat `analysis` module at call time (`lab.stages.collision` / `worldmap` after p5-04)."""
+flat `analysis` facade at call time (it forwards them to `lab.stages.collision` / `worldmap`)."""
 
 from __future__ import annotations
 
