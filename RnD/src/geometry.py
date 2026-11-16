@@ -4,58 +4,13 @@ Pure logic, zero image-library imports — deliberately, mirroring Box.swift /
 the coordinate-math half of ImageLetterboxer.swift. This is exactly the math
 a shared `common/core` would carry in Stage 2, and it's the piece most likely
 to silently drift (see the plan's cross-implementation parity note). The
-actual pixel resize lives in letterbox.py, which does need cv2/numpy.
+letterbox math moved to engine.infer.segmentation.letterbox (re-exported here); the pixel resize is in letterbox.py.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from engine.core.geom import Box, iou  # noqa: F401
-
-
-@dataclass
-class LetterboxMeta:
-    """Mirrors LetterboxMeta.swift — maps boxes between original <-> detector
-    coordinate spaces (top-left origin)."""
-
-    src_w: float
-    src_h: float
-    dst_w: float
-    dst_h: float
-    scale: float
-    pad_x: float
-    pad_y: float
-
-    def dst_to_src(self, b: Box) -> Box:
-        inv = 1.0 / max(self.scale, 1e-9)
-        return Box(
-            x1=(b.x1 - self.pad_x) * inv,
-            y1=(b.y1 - self.pad_y) * inv,
-            x2=(b.x2 - self.pad_x) * inv,
-            y2=(b.y2 - self.pad_y) * inv,
-        )
-
-    def clamp_to_src(self, b: Box) -> Box:
-        x1 = max(0.0, min(self.src_w, b.x1))
-        x2 = max(0.0, min(self.src_w, b.x2))
-        y1 = max(0.0, min(self.src_h, b.y1))
-        y2 = max(0.0, min(self.src_h, b.y2))
-        return Box(x1=min(x1, x2), y1=min(y1, y2), x2=max(x1, x2), y2=max(y1, y2))
-
-
-def letterbox_params(src_w: float, src_h: float, dst_w: float, dst_h: float) -> LetterboxMeta:
-    """Compute letterbox scale/padding without touching any pixels."""
-    scale = min(dst_w / max(src_w, 1e-9), dst_h / max(src_h, 1e-9))
-    resized_w = max(1, round(src_w * scale))
-    resized_h = max(1, round(src_h * scale))
-    pad_x = (dst_w - resized_w) / 2.0
-    pad_y = (dst_h - resized_h) / 2.0
-    return LetterboxMeta(
-        src_w=float(src_w), src_h=float(src_h),
-        dst_w=float(dst_w), dst_h=float(dst_h),
-        scale=scale, pad_x=pad_x, pad_y=pad_y,
-    )
+from engine.infer.segmentation.letterbox import LetterboxMeta, letterbox_params  # noqa: F401
 
 
 def expand_box(b: Box, src_w: float, src_h: float, margin: float) -> Box:
