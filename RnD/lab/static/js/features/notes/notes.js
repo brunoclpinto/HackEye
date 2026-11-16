@@ -1,7 +1,7 @@
 // Notes box (v26.2.4 follow-up): one Lab-wide freeform document for reviews, remarks and fix requests (GET/PUT /api/notes).
 // Autosave 800 ms after the last keystroke and on blur; failed saves retry with backoff; a stale tab gets a conflict notice
 // (Load theirs / Keep mine) instead of silently overwriting newer text; focus / visibility re-sync when nothing is unsaved.
-import { $, fmtTime } from "./util.js";
+import { $, fmtTime } from "../../util/index.js";
 
 const DEBOUNCE_MS = 800;
 const RETRY_MS = [2000, 4000, 8000, 15000];

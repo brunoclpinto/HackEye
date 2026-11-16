@@ -2,8 +2,8 @@
 // The profile is Lab-wide and lives on the server (GET/PUT /api/sounds, debug/lab/display/sounds.json): every browser shares it.
 // Pitch, duration and speech speed apply to playback live (AudioEngine.setSounds); the intervals shape the tone schedule, so changing
 // one offers "Apply timing to this run" (the collision pass reads the profile).
-import { $, clamp } from "./util.js";
-import { api } from "./api.js";
+import { $, clamp } from "../../util/index.js";
+import { api } from "../../api.js";
 
 const SAVE_DEBOUNCE_MS = 400;
 export const PITCH_STEPS = 1000;                       // slider resolution

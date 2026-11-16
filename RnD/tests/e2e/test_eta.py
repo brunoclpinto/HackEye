@@ -8,7 +8,7 @@ LAB_DIR_MOUNT = os.environ.get("LAB_DIR_MOUNT", "")
 
 
 def _eta(page, expr):
-    return page.evaluate(f"async () => {{ const m = await import('/static/js/eta.js'); return ({expr}); }}")
+    return page.evaluate(f"async () => {{ const m = await import('/static/js/util/eta.js'); return ({expr}); }}")
 
 
 def test_format_eta(page):

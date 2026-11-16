@@ -8,9 +8,9 @@
 // reverts the local change. Rows are patched in place; only run/filter/add/
 // delete/time changes re-render the whole list, so a focused note never loses
 // its caret.
-import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole, beepRepeats } from "./util.js";
-import { api } from "./api.js";
-import { orderCandidates, fillFor } from "./autofill.js";
+import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole, beepRepeats } from "../../util/index.js";
+import { api } from "../../api.js";
+import { orderCandidates, fillFor } from "../../util/autofill.js";
 
 const VERDICTS = [["correct", "✓", "Correct (c)"], ["incorrect", "✗", "Incorrect (x)"], ["remove", "⊘", "Should not be said (r)"]];
 const ADD_ROLES = [...ROLES, "other"];

@@ -1,8 +1,8 @@
 // View-only class styling of the mask overlay: which classes are shown and which safety level
 // (hence colour + opacity) each is painted with. Nothing here touches shared config or collision logic;
 // the choices live in localStorage (one entry per safety-mapping file).
-import { $ } from "./util.js";
-import { api } from "./api.js";
+import { $ } from "../../util/index.js";
+import { api } from "../../api.js";
 
 const KEY = (mapping) => `hackeye.lab.classes.${mapping}`;
 const hex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");

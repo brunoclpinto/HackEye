@@ -981,7 +981,7 @@ def test_quarter_clock_labels(page):
     h = next(h for h in fr["hazards"] if h.get("role") in ("danger", "final", "feature"))
     open_lab(page, LONG_REC, t=fr["t"] + 0.01, run=FULL_RUN)
     page.wait_for_timeout(1500)
-    got = page.evaluate("""async (t) => { const m = await import('/static/js/autofill.js');
+    got = page.evaluate("""async (t) => { const m = await import('/static/js/util/autofill.js');
         const f = await (await fetch('/api/runs/%s/frame?t=' + t)).json();
         return f.frame.hazards.map((h) => m.fillFor(h, null).text); }""" % FULL_RUN, fr["t"])
     assert got and not any("o'clock" in x or " at ? " in x for x in got)
@@ -1215,7 +1215,7 @@ def test_queued_phrase_does_not_trigger_watchdog_or_cancel(browser):
 def test_voice_ranking(page):
     open_lab(page, SHORT_REC)
     res = page.evaluate("""async () => {
-      const m = await import('/static/js/audio.js');
+      const m = await import('/static/js/features/audio/speech.js');
       const v = (name, lang, localService = true, def = false) => ({name, lang, localService, default: def});
       const mac = [v('Albert', 'en-US'), v('Alice', 'it-IT'), v('Bahh', 'en-US'), v('Bad News', 'en-US'), v('Bells', 'en-US'),
         v('Daniel', 'en-GB', true, true), v('Eddy (English (US))', 'en-US'), v('Fred', 'en-US'), v('Samantha', 'en-US'), v('Zarvox', 'en-US')];
@@ -1235,7 +1235,7 @@ def test_speech_plan(page):
     """System voice rule: an English platform default voice -> no lang/voice set; otherwise lang en-US + ranked English voice."""
     open_lab(page, SHORT_REC)
     res = page.evaluate("""async () => {
-      const m = await import('/static/js/audio.js');
+      const m = await import('/static/js/features/audio/speech.js');
       const v = (name, lang, localService = true, def = false) => ({name, lang, localService, default: def});
       const mac = [v('Albert', 'en-US'), v('Alice', 'it-IT'), v('Daniel', 'en-GB', true, true), v('Samantha', 'en-US')];
       const ios = [v('Joana', 'pt-PT', true, true), v('Aaron', 'en-US'), v('Fred', 'en-US'), v('Samantha', 'en-US'), v('Daniel', 'en-GB')];
@@ -1253,7 +1253,7 @@ def test_pronunciation_map_changes_the_spoken_text_only(page):
     got = _client_log_collector(page)
     open_lab(page, SHORT_REC)
     res = page.evaluate("""async () => {
-      const m = await import('/static/js/audio.js');
+      const m = await import('/static/js/features/audio/speech.js');
       return [m.pronounce('curb at 12 in 3'), m.pronounce('Curb ahead, curb at 1'), m.pronounce('curbside'), m.pronounce('pole at 12 in 8')];
     }""")
     assert res == ["kerb at 12 in 3", "kerb ahead, kerb at 1", "curbside", "pole at 12 in 8"], res
@@ -1267,7 +1267,7 @@ def test_pronunciation_map_changes_the_spoken_text_only(page):
 
 
 def test_static_no_cache(page):
-    for path in ("/static/js/audio.js", "/"):
+    for path in ("/static/js/features/audio/audio.js", "/"):
         req = urllib.request.Request(BASE + path)
         with urllib.request.urlopen(req) as r:
             assert r.headers.get("Cache-Control") == "no-cache", (path, dict(r.headers))
@@ -1329,7 +1329,7 @@ def test_stuck_speech_engine_shows_notice_and_clears_on_start(browser):
 def test_stuck_hint_per_platform(page):
     open_lab(page, SHORT_REC)
     hints = page.evaluate("""async () => {
-      const m = await import('/static/js/audio.js');
+      const m = await import('/static/js/features/audio/speech.js');
       return [m.stuckHint('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0),
               m.stuckHint('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit CriOS/141', 'iPhone', 5),
               m.stuckHint('Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)', 'iPad', 5),
@@ -1375,7 +1375,7 @@ def _queue_page(browser):
 
 
 NEW_ENGINE = """async () => {
-  const m = await import('/static/js/audio.js');
+  const m = await import('/static/js/features/audio/audio.js');
   window.__eng = new m.AudioEngine(document.querySelector('#video'));
   window.__say = (text, role, extra = {}) => window.__eng.speak(text, 1, false, {t: document.querySelector('#video').currentTime, role, ...extra});
   return true;

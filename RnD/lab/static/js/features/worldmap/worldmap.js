@@ -1,12 +1,13 @@
 // World map panel (v26.2 step 1 spike): the fused ego-centric bird's-eye snapshot of the frame at the playhead
 // (GET /api/runs/{id}/worldmap/{i}.png, CONTRACTS 8.1), heading-up, forward only (v26.2.4): user at column 100 / row 200 (the bottom
 // edge), 0.10 m per cell, 20 m ahead. A click selects a cell (marker kept across frames); the box under the map reads it out.
-// Cells are coloured through the same class LUT as the mask (js/classes.js MaskStyle), so colours, hidden classes and
+// Cells are coloured through the same class LUT as the mask (js/features/classes/classes.js MaskStyle), so colours, hidden classes and
 // level edits follow the Classes panel. On top: the user marker, the +-0.6 m corridor to 10 steps, range rings every
 // 5 steps, and the current frame's hazards as dots (movers highlighted, the role danger outlined).
-import { $, ROLE_COLOR, lastAtOrBefore } from "./util.js";
-import { api } from "./api.js";
-import { itemTooltip, showTip } from "./selection.js";
+import { $, ROLE_COLOR, lastAtOrBefore } from "../../util/index.js";
+import { api } from "../../api.js";
+import { itemTooltip, showTip } from "../../util/selection.js";
+import { clockQuarter, clockText } from "../../util/clock.js";
 
 const SIZE = 200, ORIGIN_COL = 100, ORIGIN_ROW = 200, CELL_M = 0.1;
 const UNKNOWN = 255;
@@ -14,16 +15,6 @@ const ITEM_NEAR_M = 0.3;     // an item whose position lies within this of the c
 const CORRIDOR_HALF_M = 0.6, CORRIDOR_STEPS = 10, RING_EVERY = 5, DEFAULT_STEP_M = 0.7;
 const HIT_MIN_CSS_PX = 8;    // v26.2.6: a click hits an item marker within its drawn radius, at least this many CSS px
 const MAX_FETCH_HZ = 6, CACHE = 24, STALE_S = 1.0;
-
-/** Quarter-hour clock index / spoken text, same rules as collision.py clock_quarter / clock_text (bearing 0 = 12, + = right). */
-function clockQuarter(bearing) {
-  const v = bearing / 7.5, q = Math.floor(Math.abs(v) + 0.5) * (v < 0 ? -1 : 1);
-  return Math.max(-12, Math.min(12, q));
-}
-function clockText(q) {
-  const m = (720 + 15 * q) % 720, hour = Math.floor(m / 60) || 12, min = m % 60;
-  return min === 0 ? `${hour}` : `${hour}:${String(min).padStart(2, "0")}`;
-}
 
 /** v26.2.6: massive structures get no marker (their cells and wall lines show them); a click on their cells still reads them. */
 export function isMassive(h) { return /\b(building|bridge|tunnel)\b/i.test(h?.className ?? ""); }

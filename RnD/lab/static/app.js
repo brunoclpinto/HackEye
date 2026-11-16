@@ -1,18 +1,18 @@
-// HackEye Lab frontend: state + wiring. Heavy lifting lives in js/*.js.
-import { $, parseTime, fmtTime, toast, clamp, ROLES, ROLE_COLOR } from "./js/util.js";
+// HackEye Lab frontend: state + wiring. Heavy lifting lives in js/ (util/, features/*/).
+import { $, parseTime, fmtTime, toast, clamp, ROLES, ROLE_COLOR } from "./js/util/index.js";
 import { api } from "./js/api.js";
-import { Overlay } from "./js/overlay.js";
-import { AudioEngine } from "./js/audio.js";
-import { Timeline } from "./js/timeline.js";
-import { Reviews } from "./js/reviews.js";
-import { HazardWindow } from "./js/hazards.js";
-import { ClassesPanel } from "./js/classes.js";
-import { EtaTracker, runStartMs } from "./js/eta.js";
-import { SoundsPanel } from "./js/sounds.js";
-import { NotesPanel } from "./js/notes.js";
-import { IssuesPanel } from "./js/issues.js";
-import { WorldMapPanel } from "./js/worldmap.js";
-import { Selection } from "./js/selection.js";
+import { Overlay } from "./js/features/overlay/overlay.js";
+import { AudioEngine } from "./js/features/audio/audio.js";
+import { Timeline } from "./js/features/timeline/timeline.js";
+import { Reviews } from "./js/features/reviews/reviews.js";
+import { HazardWindow } from "./js/features/hazards/hazards.js";
+import { ClassesPanel } from "./js/features/classes/classes.js";
+import { EtaTracker, runStartMs } from "./js/util/eta.js";
+import { SoundsPanel } from "./js/features/sounds/sounds.js";
+import { NotesPanel } from "./js/features/notes/notes.js";
+import { IssuesPanel } from "./js/features/issues/issues.js";
+import { WorldMapPanel } from "./js/features/worldmap/worldmap.js";
+import { Selection } from "./js/util/selection.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 const video = $("#video");

@@ -187,7 +187,7 @@ def test_autofill_populates_time_phrase_role_and_type_without_saving(page):
     assert re.search(r" at \S+ in \d+| at \S+ in \?", text), text
     assert page.input_value("#rvAddRole") in ("final", "danger", "feature", "context")
     assert page.input_value("#rvAddType") == "speech"
-    got = page.evaluate("""async ([run, t]) => { const m = await import('/static/js/autofill.js');
+    got = page.evaluate("""async ([run, t]) => { const m = await import('/static/js/util/autofill.js');
         const f = (await (await fetch(`/api/runs/${run}/frame?t=` + t)).json()).frame;
         const o = m.orderCandidates(f, () => 0)[0]; return {role: o.role, cls: o.className, n: f.hazards.length}; }""", [run, t_play])
     assert page.input_value("#rvAddRole") == ("danger" if got["role"] == "none" else got["role"])

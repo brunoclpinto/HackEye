@@ -1,5 +1,6 @@
 // Collision-warning audio: look-ahead tone scheduler (WebAudio) + speech (speechSynthesis).
-import { clamp, firstAtOrAfter } from "./util.js";
+import { clamp, firstAtOrAfter } from "../../util/index.js";
+import { ANDROID, speechPlan, speechPriority, pronounce, canonSoundKind, stuckHint } from "./speech.js";
 
 const TICK_MS = 50;
 const LOOKAHEAD_S = 0.25;   // real seconds of audio scheduled ahead of the playhead
@@ -13,8 +14,6 @@ const LOG_MAX = 2000;
 // lower one waits here, and a waiting phrase that cannot start within SPEECH_LATE_S (media seconds) of its event time is dropped:
 // speech that is out of time is worse than none.
 export const SPEECH_LATE_S = 1.0;
-export const SPEECH_PRIORITY = { final: 5, danger: 4, feature: 3, surface: 2, context: 1 };   // thin notices are role "feature"; unknown roles = 1
-export const speechPriority = (role) => SPEECH_PRIORITY[role] ?? 1;
 const LOST_IDLE_MS = 500;       // handed to speechSynthesis, which then claims to be idle and never reported the end: the utterance is gone
 const SPEAK_MAX_BASE_MS = 4000, SPEAK_MAX_PER_CHAR_MS = 150;   // ...or it never reports the end at all: give up after this (scaled by 1/rate)
 
@@ -36,10 +35,6 @@ function logAudio(entry) {
 // voice that makes speak() error is dropped for good: the phrase is retried once with lang "en-US" only.
 // v26.1.12 (review 5: the Mac voice read "curb" as "tarmac"): the text sent to the synthesizer goes through a pronunciation
 // map, the display text (events, reviews) stays as it is. Lab-only; logged in the client-log "speak" entries as `spoken`.
-export const PRONUNCIATIONS = [[/\bcurb\b/gi, "kerb"]];
-export function pronounce(text) {
-  return PRONUNCIATIONS.reduce((s, [re, to]) => s.replace(re, to), text);
-}
 // Remote diagnostics (CONTRACTS 12.2): speech events are batched to POST /api/client-log (debug/lab/client-log.jsonl).
 const CLIENT_LOG_URL = "/api/client-log";
 const CLIENT_LOG_FLUSH_MS = 2000;
@@ -74,38 +69,10 @@ function synthState() {
   return { speaking: speechSynthesis.speaking, pending: speechSynthesis.pending, paused: speechSynthesis.paused };
 }
 
-// v26.1.16: the Lab-wide sound profile (GET/PUT /api/sounds). Pitch and duration per sound kind and the speech speed apply to playback
-// live (the player overrides the event's own values); the repeat intervals shape the tone schedule, so they need a collision re-run.
-export const SOUND_KIND_ALIASES = { collision: "collision-center", "crosswalk-enter": "crosswalk-in", "crosswalk-exit": "crosswalk-out" };
-export const canonSoundKind = (kind) => (kind ? SOUND_KIND_ALIASES[kind] ?? kind : "collision-center");
 
 const SPEECH_LANG = "en-US";
-const ANDROID = /Android/i.test(navigator.userAgent || "");
 let englishVoice = null;
 let voiceFailed = false;
-// macOS novelty / Eloquence voices (v26.1.11 follow-up: Chrome macOS picked "Albert"): never chosen (name prefix, case-insensitive).
-const NOVELTY_VOICES = ["Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos", "Good News", "Jester", "Organ", "Superstar",
-  "Trinoids", "Whisper", "Wobble", "Zarvox", "Fred", "Junior", "Ralph", "Kathy", "Eddy", "Flo", "Grandma", "Grandpa", "Reed", "Rocko", "Sandy", "Shelley"]
-  .map((n) => n.toLowerCase());
-const NATURAL_VOICES = /^(Samantha|Alex|Google US English|Google UK English (Female|Male)|Daniel|Karen|Moira|Tessa|Serena|Ava|Allison|Susan|Tom|Nicky)\b/i;
-// Ranking: [Android: localService] > default English voice of the platform > known natural voice ((Enhanced)/(Premium) first) > en-US > any en.
-export function rankVoice(v) {
-  const name = v.name || "";
-  return (v.localService && ANDROID ? 10000 : 0) + (v.default ? 1000 : 0) + (NATURAL_VOICES.test(name) ? 100 : 0)
-    + (/\((Enhanced|Premium)\)/i.test(name) ? 20 : 0) + (/^en[-_]US$/i.test(v.lang) ? 10 : 0) + (v.localService ? 1 : 0);
-}
-export function chooseEnglishVoice(voices) {
-  const en = voices.filter((v) => /^en([-_]|$)/i.test(v.lang || "") && !NOVELTY_VOICES.some((n) => (v.name || "").toLowerCase().startsWith(n)));
-  return en.sort((a, b) => rankVoice(b) - rankVoice(a))[0] || null;
-}
-// v26.1.11 follow-up 4: "system" mode = the voice the platform would use anyway is English, so speak as before v26.1.11
-// (neither lang nor voice set). "english" mode = lang "en-US" + the ranked English voice (the default voice is another
-// language, e.g. an iPhone listing Joana pt-PT first) or lang alone while the voices are not loaded / none is English.
-export function speechPlan(voices) {
-  const def = voices.find((v) => v.default) || voices[0];
-  if (def && /^en([-_]|$)/i.test(def.lang || "")) return { mode: "system", voice: null };
-  return { mode: "english", voice: chooseEnglishVoice(voices) };
-}
 let speechMode = "english";
 function refreshVoice() {
   if (!("speechSynthesis" in window)) return;
@@ -130,11 +97,6 @@ const WATCHDOG_MS = 1500;    // no onstart this long after speak() while the syn
 const STUCK_AFTER = 2;       // consecutive utterances (a phrase and its retry count separately) that never started
 let noStartRun = 0;
 let speechStuck = false;
-export function stuckHint(ua = navigator.userAgent, platform = navigator.platform || "", touch = navigator.maxTouchPoints || 0) {
-  if (/iPhone|iPad|iPod|CriOS/.test(ua) || (platform === "MacIntel" && touch > 1)) return "Close the browser from the app switcher, then reopen it.";
-  if (/Macintosh|Mac OS X/.test(ua)) return "Quit Chrome with Cmd+Q (closing the window is not enough), then reopen it.";
-  return "Close all browser windows and reopen it.";
-}
 function showStuckNotice() {
   const el = document.getElementById("speechStuck");
   if (!el) return;

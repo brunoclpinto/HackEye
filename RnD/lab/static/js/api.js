@@ -1,5 +1,5 @@
 // Thin fetch wrapper. Errors become toasts using FastAPI's {"detail": ...}.
-import { toast } from "./util.js";
+import { toast } from "./util/index.js";
 
 export async function api(path, { method = "GET", body, quiet = false } = {}) {
   let res;

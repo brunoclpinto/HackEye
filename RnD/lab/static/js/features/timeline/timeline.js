@@ -1,6 +1,6 @@
 // Timeline strip: speech ticks (role colours, filterable), beep episodes as bars (role colours; runs without
 // `beeps` events fall back to the tone-density heat row), playhead; click/drag to seek.
-import { eventColor, eventRole, URGENCY_RANK, fmtTime, clamp } from "./util.js";
+import { eventColor, eventRole, URGENCY_RANK, fmtTime, clamp } from "../../util/index.js";
 
 export class Timeline {
   constructor(canvas, onSeek) {

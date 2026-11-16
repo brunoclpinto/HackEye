@@ -1,7 +1,7 @@
 // v26.2.10: the selection shared by the video overlay and the world map, and the hover tooltip.
 // An ITEM is selected as a whole and followed by its track id (and class) frame to frame; a REGION (map only) is the 8-connected
 // same-class cells of the snapshot shown around a clicked object-layer cell. Esc or a click on nothing clears it.
-import { $ } from "./util.js";
+import { $ } from "./index.js";
 
 export class Selection {
   constructor() {

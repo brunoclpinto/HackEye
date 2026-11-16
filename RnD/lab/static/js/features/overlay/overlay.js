@@ -1,6 +1,6 @@
 // Canvas overlay: mask PNG, walking region, danger lane, horizon, role-coloured item outlines / boxes, ego HUD. Frame-synchronised to the <video>.
-import { ROLE_COLOR, lastAtOrBefore } from "./util.js";
-import { itemTooltip, showTip } from "./selection.js";
+import { ROLE_COLOR, lastAtOrBefore } from "../../util/index.js";
+import { itemTooltip, showTip } from "../../util/selection.js";
 
 const PRELOAD = 20;          // frames each side of the playhead
 const CACHE_MAX = 160;       // LRU size (> 2*PRELOAD+1)
@@ -22,7 +22,7 @@ export class Overlay {
     this.cache = new Map();   // key -> {img, ready}; Map order = LRU order. Pre-rendered masks/<i>.png (fallback path)
     this.dcache = new Map();  // key -> {img, ready, failed}: depth/<i>.png
     this.ccache = new Map();  // key -> {img, ready, failed, grid, w, h, canvas, ver}: class grids (classes.png), coloured client-side
-    this.style = null;        // MaskStyle (js/classes.js) once the run's class list is known
+    this.style = null;        // MaskStyle (js/features/classes/classes.js) once the run's class list is known
     this.styleState = "pending"; // "pending" (class list loading: draw no mask yet) | "classes" | "png" (fallback)
     this.mt = null;           // last mediaTime reported by requestVideoFrameCallback
     this.lastK = -2;

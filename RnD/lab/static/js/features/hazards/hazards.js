@@ -3,7 +3,7 @@
 // next stretch when the playhead gets within AHEAD_S of the window's end, and refetches on a
 // seek outside the window. `frames` is always sorted by t; `onChange(frames, head)` fires
 // whenever it is replaced so the overlay can pick the new array up.
-import { api } from "./api.js";
+import { api } from "../../api.js";
 
 const HALF_S = 90;
 const AHEAD_S = 30;

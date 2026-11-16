@@ -1,7 +1,7 @@
 // Open issues panel (v26.2.4 follow-up): the catalogue (lab/issues.json) in groups, with the user's Close / Reopen and a comment per issue
 // (GET /api/issues, PUT /api/issues/{id}; state in LAB_DIR/issues-state.json). Close / Reopen is optimistic; all writes go through one serial queue.
-import { $ } from "./util.js";
-import { api } from "./api.js";
+import { $ } from "../../util/index.js";
+import { api } from "../../api.js";
 
 const SAVE_DELAY_MS = 600;
 const KEY = "hackeye.lab.issues.ui";
