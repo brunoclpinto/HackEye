@@ -1,0 +1,17 @@
+# GPU overlay for the opt-in real-model tests (tests/test_depth_gpu.py, tests/test_channel_order.py), which the gate skips:
+#   docker compose -f tools/check.compose.yaml -f tools/check.gpu.compose.yaml run --rm --no-deps -T --entrypoint python check \
+#     -m pytest -rsxX -v tests/test_depth_gpu.py tests/test_channel_order.py
+# check.compose.yaml sets `deploy: {}` (no GPU) and has no segmentation release; this adds both. Run only while the GPU is idle.
+services:
+  check:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      HACKEYE_GPU_TESTS: "1"
+    volumes:
+      - ${HACKEYE_MODELS_HOST_DIR:-${HOME}/repos/HackEye-Models/models}:/hackeye-models:ro

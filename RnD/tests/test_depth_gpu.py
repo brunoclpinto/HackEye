@@ -9,11 +9,12 @@ import pytest
 
 pytestmark = pytest.mark.skipif(os.environ.get("HACKEYE_GPU_TESTS") != "1", reason="set HACKEYE_GPU_TESTS=1")
 
-VIDEO = Path("/media/GOPR4929.MP4")
+# v26.3.0: recording 4929 is gone since the v26.1.14 footage rename (see tests/e2e/conftest.py); HACKEYE_GPU_RECORDING overrides.
+VIDEO = Path("/media") / os.environ.get("HACKEYE_GPU_RECORDING", "Chest-center-0004.MP4")
 
 
 @pytest.mark.parametrize("variant", ["da3-small", "da3-base"])
-def test_da3_relative_on_gopr4929(variant):
+def test_da3_relative_on_recording(variant):
     import depth
     import gpu_guard
 
@@ -39,7 +40,7 @@ def test_da3_relative_on_gopr4929(variant):
 
 
 @pytest.mark.parametrize("variant", ["da2-metric-outdoor-small", "unidepth-v2-s"])
-def test_metric_on_gopr4929(variant):
+def test_metric_on_recording(variant):
     import depth
     import gpu_guard
 
