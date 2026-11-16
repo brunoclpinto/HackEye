@@ -1,0 +1,140 @@
+{
+  "version": "v26.1.8",
+  "defaultMount": "chest",
+  "defaultHfovDeg": 118,
+  "mountPresets": {
+    "chest":    {"label": "Chest",         "horizon": 0.45, "cameraHeightM": 1.30},
+    "head":     {"label": "Head / helmet", "horizon": 0.40, "cameraHeightM": 1.65},
+    "handheld": {"label": "Handheld",      "horizon": 0.50, "cameraHeightM": 1.10}
+  },
+  "geometry": {
+    "defaultStepLengthM": 0.70,
+    "laneHalfWidthM": 0.60,
+    "maxRangeM": 30.0,
+    "horizonEma": 0.05,
+    "horizonMaxStep": 0.004,
+    "horizonValidRange": [0.25, 0.75],
+    "minRegionRows": 12
+  },
+  "surfaces": {
+    "groups": {
+      "pedestrian": {"label": "sidewalk",  "classes": ["flat sidewalk", "flat pedestrian-area", "flat traffic-island"]},
+      "bikeLane":   {"label": "bike lane", "classes": ["flat bike-lane"]},
+      "road":       {"label": "road",      "classes": ["flat road", "flat road-shoulder", "flat service-lane", "flat driveway", "parking"]},
+      "rail":       {"label": "rail track", "classes": ["flat rail-track"]}
+    },
+    "inside": ["crosswalk", "curb", "lane-line-dashed", "continuous solid", "marking-other", "discrete stop-line",
+               "symbol bicycle", "utility-cover", "object pothole", "void ground"],
+    "seedBox": [0.40, 0.90, 0.60, 1.00],
+    "debounceSeconds": 3.0,
+    "minPersistSeconds": 8.0,
+    "windowSeconds": 10.0,
+    "majority": 0.7,
+    "announceFirstSurface": false,
+    "requireCrossingEvidence": true,
+    "passUnderRows": 6,
+    "passUnderGoneSeconds": 1.5,
+    "passUnderMinWidth": 0.15,
+    "evidenceLookbackSeconds": 10.0,
+    "announceGroups": ["road", "rail"]
+  },
+  "classes": {
+    "static":  ["pole", "sign", "traffic-light", "traffic-light pedestrians", "traffic-sign", "sidewalk-obstacle",
+                "barrier", "barrier fence", "barrier guard-rail", "divider", "barrier wall", "nature vegetation", "building"],
+    "moving":  ["person", "rider", "vehicle", "animal"],
+    "feature": ["curb", "crosswalk", "object pothole"],
+    "people":  ["person", "rider", "animal"],
+    "thin":    ["pole", "traffic-light", "traffic-light pedestrians", "traffic-sign", "sign"],
+    "landmark": ["crosswalk"]
+  },
+  "spokenLabels": {
+    "pole": "pole",
+    "sign": "sign",
+    "traffic-light": "traffic light",
+    "traffic-light pedestrians": "pedestrian light",
+    "traffic-sign": "traffic sign",
+    "sidewalk-obstacle": "obstacle",
+    "barrier": "obstacle",
+    "barrier fence": "obstacle",
+    "barrier guard-rail": "obstacle",
+    "divider": "divider",
+    "barrier wall": "obstacle",
+    "nature vegetation": "vegetation",
+    "building": "building",
+    "person": "person",
+    "rider": "cyclist",
+    "vehicle": "vehicle",
+    "animal": "animal",
+    "curb": "curb",
+    "crosswalk": "crosswalk",
+    "object pothole": "pothole",
+    "utility-cover": "manhole"
+  },
+  "contextSpeak": ["obstacle", "building", "vehicle", "parked car"],
+  "parkedLabels": {"vehicle": "parked car"},
+  "minComponentFraction": 0.0004,
+  "roles": {
+    "dangerSteps": 10, "finalSteps": 3,
+    "featureSteps": 10,
+    "contextMaxDistanceM": 25.0,
+    "contextMinAreaFraction": 0.003,
+    "featureMinLaneCover": 0.2,
+    "alongPathRatio": 0.5,
+    "minObstacleAreaM2": 0.08,
+    "boundaryMarginPx": 2,
+    "stationaryMps": 0.5,
+    "approachingMps": 0.5,
+    "confirmFrames": 2,
+    "contextMaxSteps": 8,
+    "contextMaxLateralM": 3.0,
+    "movingLaneHalfWidthM": 3.0,
+    "movingCollisionHalfWidthM": 1.5,
+    "movingDangerSteps": 15,
+    "landmarkSteps": 15,
+    "thinNoticeSteps": 15,
+    "thinNoticeLateralM": 2.5
+  },
+  "tracking": {"iouMatch": 0.2, "maxMissedSeconds": 1.0, "historySeconds": 2.0,
+               "groundGateLateralM": 0.6, "groundGateDistanceFrac": 0.2,
+               "motionMinRowsBelowHorizon": 8, "motionMinSeconds": 0.75, "contactEma": 0.5},
+  "ego": {
+    "cadenceWindowSeconds": 4.0, "cadenceBandHz": [0.8, 3.5], "cadenceMinPeakRatio": 3.0,
+    "minStepHz": 1.4, "harmonicMinRatio": 0.25,
+    "speedMinTracks": 1, "speedMaxMps": 6.0, "speedEma": 0.3, "stepLengthRangeM": [0.3, 1.8],
+    "calibrationWindowSeconds": 20.0, "calibrationMinSamples": 12, "calibrationEmaMinSeconds": 3.0, "calibrationEmaSeconds": 40.0,
+    "priorStepLengthM": 0.70, "scalePrior": null, "scalePriorSeconds": 30.0, "scaleMaxChangePerSecond": 0.25, "scaleRange": [0.5, 4.0], "calibrationMinRawSpeed": 0.2
+  },
+  "contextMemory": {"forgetAfterSeconds": 30.0},
+  "memory": {
+    "enabled": true,
+    "matchRadiusM": 2.5, "matchRangeFraction": 0.10,
+    "maxRangeM": 30.0, "behindM": -1.0,
+    "speedHoldSeconds": 5.0,
+    "seenHoldSeconds": 1.0, "moverTakeoverSeconds": 1.0, "ownerAdoptSeconds": 3.0,
+    "radiusOverrides": {}
+  },
+  "pathChange": {"headingDeg": 20.0, "sustainSeconds": 2.0, "referenceTauSeconds": 30.0, "onSurfaceChange": false},
+  "speech": {
+    "globalMinGapSeconds": 2.5, "contextMaxDelaySeconds": 3.0, "contextMaxItems": 3, "summaryHoldSeconds": 0.5,
+    "maxEntries": 3, "peopleMotionWaitSeconds": 1.5, "peopleMotionWaitSteps": 6, "priorityMinGapSeconds": 1.0, "thinRearmSeconds": 8.0, "featureLabelGapSeconds": 6.0, "featureNewCrossingSteps": 5,
+    "featureLabelOverrides": {"crosswalk": {"gapSeconds": 20, "newCrossingSteps": 14}},
+    "templates": {
+      "context":  "{label} at {clock} in {steps}",
+      "surface":  "{label}",
+      "feature":  "{label} at {clock} in {steps}",
+      "danger":   "{label} at {clock} in {steps}",
+      "approach": "{label} approaching at {clock} in {steps}",
+      "final":    "{label} at {clock} in {steps}",
+      "contextGroup": "{items}",
+      "multi":    "{label} at {clocks} in {steps}",
+      "thinNotice": "{label} at {clocks} in {steps}"
+    }
+  },
+  "tones": {
+    "frequencyHz": 880,
+    "bySteps": [[10, 1.0], [6, 0.5], [3, 0.25], [2, 0.12]],
+    "durationSeconds": 0.08,
+    "continuousSteps": 1.5, "continuousChunkSeconds": 0.25,
+    "maxSteps": 10, "holdSeconds": 0.5, "episodeGapSeconds": 1.5
+  }
+}

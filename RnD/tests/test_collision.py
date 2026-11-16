@@ -1679,34 +1679,52 @@ def test_role_none_items_have_no_outline():
 
 
 def test_outline_change_leaves_hazards_and_events_unchanged_vs_committed_v26_1_7(tmp_path):
-    """Everything but the new field is identical to the committed v26.1.7 module on the review fixtures."""
+    """Everything but the new field is identical to the committed v26.1.7 module on the review fixtures.
+
+    Pinned history: the v26.1.8 module (ce4dd81, the commit that added outlines) against the v26.1.7 module (5ff8e98),
+    both with the v26.1.8 config and the helpers (geometry, common_paths) of that time, stored in tests/fixtures/v26_1_8
+    and v26_1_7. The assertions only held at that commit; the current module has moved on since.
+    """
     import importlib.util
-    import os
-    import subprocess
     import sys
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
-    baseline = os.environ.get("HACKEYE_COLLISION_V26_1_7")      # path to `git show 5ff8e98:RnD/src/collision.py`
-    try:
-        if baseline:
-            old_src = Path(baseline).read_text()
-        else:
-            old_src = subprocess.run(["git", "show", "5ff8e98:RnD/src/collision.py"], cwd=root, check=True,
-                                     capture_output=True, text=True).stdout
-    except (OSError, subprocess.CalledProcessError):   # e.g. inside the container: no git, no history
-        pytest.skip("git history for v26.1.7 not available")
-    path = tmp_path / "collision_v26_1_7.py"
-    path.write_text(old_src)
-    spec = importlib.util.spec_from_file_location("collision_v26_1_7", path)
-    old = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = old                                # dataclasses look the module up by name
-    spec.loader.exec_module(old)
     fx = root / "tests" / "fixtures"
+    helpers = ("geometry", "common_paths")
+    saved = {n: sys.modules.get(n) for n in helpers}
+    for n in helpers:
+        sys.modules.pop(n, None)
+    sys.path.insert(0, str(fx / "v26_1_8"))                    # the pinned helpers; src/ is not on this path entry
+    loaded: list[str] = []
+
+    def load(name: str, path: Path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod                                # dataclasses look the module up by name
+        loaded.append(name)
+        spec.loader.exec_module(mod)
+        return mod
+
+    try:
+        new = load("collision_v26_1_8", fx / "v26_1_8" / "collision.py")
+        old = load("collision_v26_1_7", fx / "v26_1_7" / "collision.py")
+        cfg_new = new.load_config(fx / "v26_1_8" / "collision.json")
+        _run_outline_comparison(new, old, cfg_new, fx)
+    finally:
+        sys.path.remove(str(fx / "v26_1_8"))
+        for n in loaded:
+            sys.modules.pop(n, None)
+        for n in helpers:
+            sys.modules.pop(n, None)
+            if saved[n] is not None:
+                sys.modules[n] = saved[n]
+
+
+def _run_outline_comparison(col, old, cfg_new, fx):
     for name in ("4929_review1", "4929_review2", "4929_review3"):
         meta = json.load(open(fx / f"{name}.json"))
         npz = np.load(fx / f"{name}.npz")
         s = meta["settings"]
-        cfg_new = col.load_config()
         cfg_old = json.loads(json.dumps(cfg_new))
         cfg_old["version"] = "v26.1.7"
         for i, _w in enumerate(meta["windows"][:2]):

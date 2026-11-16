@@ -87,16 +87,14 @@ def test_a_person_in_front_of_another_splits_on_the_depth_jump():
     assert len(_items(g, dmap=dmap)) == 2
 
 
-@pytest.mark.skipif(not Path("/debug/lab/runs/5fda5626e808/collisions/c2/hazards.json").exists(), reason="the Chest-center-0004 run is not present")
 def test_chest0004_at_zero_seconds_has_three_people():
-    z = np.load("/debug/lab/runs/5fda5626e808/grids.npz")
-    doc = json.load(open("/debug/lab/runs/5fda5626e808/run.json"))
-    ids = col.resolve_class_ids(CONFIG, doc["classNames"])
-    hz = json.load(open("/debug/lab/runs/5fda5626e808/collisions/c2/hazards.json"))
-    horizon = hz["frames"][0]["horizonY"]
-    s = hz["settings"]
-    region = col.walking_region(z["grids"][0], ids, CONFIG)
-    geo = col._frame_geometry(135, 240, horizon, s["cameraHeightM"], col.focal_px(240, 118.0), 118.0, 0.6, region,
-                              CONFIG["roles"]["boundaryMarginPx"], hz.get("projection") or "rectilinear")
-    items = [i for i in col.detect_items(z["grids"][0], ids, geo, _cfg()) if i.class_name == "person"]
+    fx = Path(__file__).resolve().parent / "fixtures"      # frame 0 of Lab run 5fda5626e808 (Chest-center-0004) + its c1 horizon / camera height
+    meta = json.load(open(fx / "chest0004_frame0.json"))
+    grid = np.load(fx / "chest0004_frame0.npz")["grid0"]
+    ids = col.resolve_class_ids(CONFIG, meta["classNames"])
+    horizon = meta["horizonY"]
+    region = col.walking_region(grid, ids, CONFIG)
+    geo = col._frame_geometry(135, 240, horizon, meta["cameraHeightM"], col.focal_px(240, 118.0), 118.0, 0.6, region,
+                              CONFIG["roles"]["boundaryMarginPx"], meta.get("projection") or "rectilinear")
+    items = [i for i in col.detect_items(grid, ids, geo, _cfg()) if i.class_name == "person"]
     assert len([i for i in items if i.area_frac > 0.0004]) == 3
