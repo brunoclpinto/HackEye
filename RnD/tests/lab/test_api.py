@@ -94,6 +94,8 @@ HAZARDS: dict[str, Any] = {
 def lab(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, Path]:
     """A tmp LAB_DIR with one done run that has two collision runs (c1, c2) and the recording ``rec1``."""
     monkeypatch.setattr(recordings, "get_recording", lambda i: REC if i == "rec1" else None)
+    # Opus (p5-06): no host recordings in the scan (the check container mounts the real ones at /media).
+    monkeypatch.setattr(recordings, "MEDIA_DIR", tmp_path / "no-media")
     for mod in (analysis, recordings, reviews):
         monkeypatch.setattr(mod, "LAB_DIR", tmp_path)
     monkeypatch.setattr(analysis, "_active", {})
