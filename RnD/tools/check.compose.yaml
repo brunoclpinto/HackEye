@@ -16,3 +16,15 @@ services:
       - ${HACKEYE_MEDIA_HOST_DIR:-${HOME}/media/hackeye}:/media:ro
       - ${HACKEYE_BASE_MODELS_DIR:-${HOME}/models}:/base-models:ro
     deploy: {}
+
+  # JS gate (tools/js-check.Dockerfile): pinned node + eslint, used by tools/check.sh when --files has .js/.mjs files.
+  js-check:
+    image: hackeye-rnd-js-check
+    build:
+      context: ..
+      dockerfile: tools/js-check.Dockerfile
+    working_dir: /rnd
+    user: "${UID:-1000}:${GID:-1000}"
+    entrypoint: ["bash"]
+    volumes:
+      - ..:/rnd:ro

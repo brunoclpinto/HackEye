@@ -6,6 +6,10 @@ subpackages, plus per-model extras). **Only `engine.pipeline` imports other mode
 re-export of the same object. `tests/test_module_boundaries.py` enforces the import rules.
 
 The gate command is `tools/check.sh` (ruff, mypy --strict, pytest). Run it before reporting; 0 errors, 0 warnings.
+For front-end files (`--files` with `.js`/`.mjs`) it also runs, first and in its own pinned image (`tools/js-check.Dockerfile`,
+packages in `tools/js/package.json` + `package-lock.json`, never installed on the host), `eslint` with `tools/js/eslint.config.js`
+(recommended + `import/no-cycle` + `no-unused-vars`, 0 errors / 0 warnings on the given files) and `node --test 'tests/js/**/*.test.mjs'`.
+Python-only invocations skip that step.
 
 ## Moving code (verbatim)
 

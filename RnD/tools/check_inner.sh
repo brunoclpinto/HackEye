@@ -89,5 +89,6 @@ else
   summary+=("pytest: ${#targets[@]} target(s) ok")
 fi
 
+[ -n "${CHECK_JS_SUMMARY:-}" ] && summary+=("$CHECK_JS_SUMMARY")
 echo; echo "=== CHECK OK"
 printf '  %s\n' "${summary[@]}"

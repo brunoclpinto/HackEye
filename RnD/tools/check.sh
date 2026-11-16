@@ -13,6 +13,8 @@
 #   2 pyflakes-level ruff on the other changed .py files
 #   3 mypy --strict (tools/mypy-engine.ini) on the strict files
 #   4 pytest: --tests, always-tests (boundaries, field ownership, equivalence quick), --related, --full
+#   5 JS, only when --files has .js/.mjs files, in the separate hackeye-rnd-js-check image (tools/js-check.Dockerfile, run first):
+#     eslint (tools/js/eslint.config.js) on those files, then `node --test tests/js`
 set -euo pipefail
 
 RND="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +26,7 @@ for a in "$@"; do
     --tests) mode=tests ;;
     --related) related=1; mode="" ;;
     --full) full=1; mode="" ;;
-    -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) echo "unknown option $a" >&2; exit 2 ;;
     *) case "$mode" in
          files) files+=("$a") ;;
@@ -46,5 +48,15 @@ for f in "${files[@]}"; do
   [ -f "$RND/$p" ] && rel+=("$p")
 done
 
-export CHECK_FILES="${rel[*]:-}" CHECK_TESTS="${tests[*]:-}" CHECK_RELATED="$related" CHECK_FULL="$full"
-exec docker compose -f "$RND/tools/check.compose.yaml" run --rm --no-deps --build -e CHECK_FILES -e CHECK_TESTS -e CHECK_RELATED -e CHECK_FULL check tools/check_inner.sh
+jsfiles=()
+for f in "${rel[@]}"; do
+  case "$f" in *.js|*.mjs) jsfiles+=("$f") ;; esac
+done
+CHECK_JS_SUMMARY=""
+if [ ${#jsfiles[@]} -gt 0 ]; then
+  CHECK_JS_FILES="${jsfiles[*]}" docker compose -f "$RND/tools/check.compose.yaml" run --rm --no-deps --build -e CHECK_JS_FILES js-check tools/check_js_inner.sh || exit 1
+  CHECK_JS_SUMMARY="eslint + node --test tests/js: ${#jsfiles[@]} JS file(s) ok"
+fi
+
+export CHECK_FILES="${rel[*]:-}" CHECK_TESTS="${tests[*]:-}" CHECK_RELATED="$related" CHECK_FULL="$full" CHECK_JS_SUMMARY
+exec docker compose -f "$RND/tools/check.compose.yaml" run --rm --no-deps --build -e CHECK_FILES -e CHECK_TESTS -e CHECK_RELATED -e CHECK_FULL -e CHECK_JS_SUMMARY check tools/check_inner.sh
