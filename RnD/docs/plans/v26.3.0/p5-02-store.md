@@ -33,3 +33,13 @@ keep them re-exported).
 - The three `LAB_DIR` names are independent: patching one does not change the others.
 - Run-doc round trip on a `tmp_path` `LAB_DIR` (`_update_run`, `get_run`, `list_runs`), collision-doc round trip (`allocate`, `write_doc`,
   `read_doc`, `ids`, `latest`), `_normalise_request` on 6 requests from the existing lab tests: pin results from the legacy functions.
+
+## Note (Opus, 2026-11-16, from the tests workers)
+- `JobContext` constructor (pinned by `tests/lab/test_jobs.py`): `JobContext(run_id, is_cancelled: Callable[[], bool], finish:
+  Callable[..., None])`; `check_cancel()` raises `errors._Cancelled` when `is_cancelled()`; `progress(p)` writes the run doc through
+  `runs._update_run(run_id, ..., persist=False)` exactly as today's `_run_job` does; `finish(**fields)` calls `finish(run_id, **fields)`.
+  The worker (p5-03) builds it with the job's cancel flag and `worker._finish`.
+- `write_doc` / `_write_json` keep raising `FileNotFoundError` when the parent directory is missing (no added `mkdir`).
+- `lab.store.requests` reads `recordings.get_recording` and `analysis.list_models` patches through the home modules at call time
+  (the tests patch them on the flat modules, which forward).
+- `lab.store.recordings` holds `scan_recordings`, `get_recording`, `list_recordings`, `get_settings`, `save_settings`, `sensors_path`.
