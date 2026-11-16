@@ -12,7 +12,7 @@ for f in "${files[@]}"; do
     *) continue ;;
   esac
   case "$f" in
-    src/engine/*|tests/engine/*|tests/test_module_boundaries.py|tests/test_field_ownership.py|tools/equivalence.py|tests/test_equivalence_*.py|lab/store/*|lab/jobs/*|lab/stages/*|lab/api/*) strict+=("$f") ;;
+    src/engine/*|tests/engine/*|tests/test_module_boundaries.py|tests/test_field_ownership.py|tools/equivalence.py|tests/test_equivalence_*.py|lab/store/*|lab/jobs/*|lab/stages/*|lab/features/*|lab/api/*) strict+=("$f") ;;
     *) legacy+=("$f") ;;
   esac
 done
