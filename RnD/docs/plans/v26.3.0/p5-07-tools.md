@@ -8,3 +8,11 @@ LAST_WORLD_TRACKS_MS`, ...), keeping every facade name the tests rely on. Tools 
 
 ## Tests (Haiku): `tests/test_tools_imports.py`
 - Each tool module imports cleanly; the names each tool reads exist and are the engine objects.
+
+## Note (Opus, 2026-11-16)
+`tools/depth_delta_calibration.py`, `depth_lens_diagnostic.py` and `depth_lens_fit.py` run their analysis at module level (no `main()`,
+no `__main__` guard), so `tests/test_tools_imports.py` has to skip importing them (3 skips, against the zero-skip criterion). The
+implementation wraps each script's module-level work in `main()` + `if __name__ == "__main__": main()` (statements verbatim, their
+order unchanged; module-level constants and functions stay at module level). Opus then removes the skip from
+`test_script_import_skipped` so the three scripts are imported like the others. The tests also keep `segmentation._CONFIG_DIR` and
+`_load_mapping` reachable (read by `worldmap_render.py`).
