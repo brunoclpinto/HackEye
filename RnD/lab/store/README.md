@@ -47,6 +47,6 @@ module here, under the same (legacy) spelling. `monkeypatch.setattr(analysis, "_
   (`recordings.get_recording`, `models.list_models`, `constants.MODEL_DIRS`, `runs.get_run`), never a from-imported copy.
   Code that stays in a flat module does the same (`runs._active`, `cdocs._lock`).
 - `_active` is a `dict`, `_state_lock` a `threading.Lock`, `collision_docs._lock` a `threading.RLock`; the flat names are the same objects.
-- Two lazy reads of flat modules remain until p5-03: `recordings._proxy_status` calls `lab.recordings.proxy_status` (the proxy builder
+- Two lazy reads of flat modules remain: `recordings._proxy_status` calls `lab.recordings.proxy_status` (the proxy builder, forwarded to `lab.jobs.proxy`
   and its `_building` dict), and `collision_docs.read_doc` reads the live job `lab.collisions._job`.
 - `_proxy_status` is the only new name (the old `get_recording` called `proxy_status` directly).

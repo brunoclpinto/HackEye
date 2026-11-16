@@ -22,9 +22,7 @@ from __future__ import annotations
 
 import json
 import os
-import queue
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -37,8 +35,10 @@ import egoflow  # noqa: E402
 import profiles  # noqa: E402
 from lab import recordings  # noqa: E402
 from lab._forward import install  # noqa: E402
-from lab.store import constants, errors, runs, util  # noqa: E402
+from lab.jobs import worker as jobs_worker  # noqa: E402
+from lab.store import constants, runs, util  # noqa: E402
 from lab.store import requests as store_requests  # noqa: E402
+from lab.store.jobctx import JobContext  # noqa: E402
 
 # v26.3.0 p5-02: the names below moved to lab.store (audit 7.4) and stay reachable here as forwards to their home module
 # (reads, writes and deletes); code in this module reads them as attributes of the home (`runs._active`), never as a local copy.
@@ -56,167 +56,15 @@ install(__name__, {
         ("_normalise_request", "request_side", "run_window", "DEVICES", "_parse_device", "_cpu_threads", "_run_id"),
         "lab.store.requests"),
     "list_models": "lab.store.models",
+    # v26.3.0 p5-03: the run queue and the GPU worker moved to lab.jobs (audit 7.4); the inference job still reads the worker's
+    # `_check_cancel` / `_finish` as attributes of `lab.jobs.worker`.
+    **dict.fromkeys(
+        ("_jobs", "_worker", "_cache", "_cancel_flags", "_busy", "_maintenance", "submit_run", "cancel_run", "_finish_cancelled",
+         "cancel_all", "is_idle", "analysis_active", "wait_idle", "release_model", "begin_maintenance", "end_maintenance"),
+        "lab.jobs.queue"),
+    **dict.fromkeys(("_ensure_worker", "_worker_loop", "_check_cancel", "_finish"), "lab.jobs.worker"),
 })
 
-
-
-_jobs: "queue.Queue[str]" = queue.Queue()
-_worker: threading.Thread | None = None
-_cache: "_ModelCache | None" = None  # the worker's model cache (set when the worker starts)
-_cancel_flags: dict[str, threading.Event] = {}  # run_id -> set when cancellation requested
-_busy: str | None = None  # run id the worker is executing right now
-_maintenance = False  # True while a version wipe is in progress: submissions are refused
-
-
-def submit_run(req: dict) -> dict:
-    """Queue a run, or return the existing one (done, or already in flight).
-
-    A reused finished run comes back with the response-only marker `"reused": true`
-    (never stored in run.json). `"force": true` re-runs a finished/cancelled/failed
-    run from scratch under the same id (old outputs removed, reviews untouched); an
-    in-flight run is returned as is."""
-    device = store_requests._parse_device(req)
-    request = store_requests._normalise_request(req)
-    rec = recordings.get_recording(request["recording"])
-    force = req.get("force") is True
-    run_id = store_requests._run_id(request)
-    existing = runs.get_run(run_id)
-    if existing and existing["status"] in ("done", "queued", "running"):
-        # A run.json left as queued/running by a crashed service has no live
-        # entry in _active; fall through and redo it.
-        with runs._state_lock:
-            live = run_id in runs._active
-        if live:
-            return existing
-        if existing["status"] == "done" and not force:
-            return {**existing, "reused": True}
-    from lab import collisions
-    if collisions.job_active():
-        raise errors.RunConflict("A collision re-run is running; wait for it or cancel it")
-    with runs._state_lock:
-        if _maintenance:
-            raise errors.RunConflict("Lab is cleaning up for a new version; try again in a minute")
-        busy = runs.find_active_for_recording(runs._active, request["recording"])
-        if busy is not None:
-            raise errors.RunConflict(runs._conflict_message(busy))
-
-    doc = {
-        "id": run_id, "request": request, "orientation": request.get("orientation", "landscape"),
-        "side": request.get("side") or req.get("side") or "center",
-        "window": store_requests.run_window(rec, request) if rec else None,
-        "device": device, "analysisVersion": constants.ANALYSIS_VERSION, "status": "queued", "progress": 0.0, "error": None,
-        "createdAt": util._now(), "finishedAt": None,
-        "frameCount": 0, "motionFrames": 0, "gridW": constants.GRID_W, "gridH": 0, "srcW": 0, "srcH": 0,
-        "inputSpec": None, "modelName": Path(request["model"]).name, "classNames": [],
-        "msPerFrame": None, "collisionVersion": None,
-        "depth": request.get("depth", "none"), "depthUnits": None, "depthMsPerFrame": None,
-    }
-    runs.run_dir(run_id).mkdir(parents=True, exist_ok=True)
-    with runs._state_lock:
-        # Re-check under the same lock that registers the run, so two racing
-        # POSTs for one recording can't both pass the guard above.
-        busy = runs.find_active_for_recording(runs._active, request["recording"])
-        if busy is not None:
-            raise errors.RunConflict(runs._conflict_message(busy))
-        if existing:  # a forced / retried run starts clean (reviews live outside the run dir)
-            runs._remove_partial_outputs(run_id)
-        runs._active[run_id] = doc
-        _cancel_flags[run_id] = threading.Event()
-    util._write_json(runs.run_dir(run_id) / "run.json", doc)
-    _ensure_worker()
-    _jobs.put(run_id)
-    return dict(doc)
-
-
-def _finish_cancelled(run_id: str) -> None:
-    runs._remove_partial_outputs(run_id)
-    _finish(run_id, status="cancelled", error=None)
-    with runs._state_lock:
-        _cancel_flags.pop(run_id, None)
-    util._log(f"run {run_id}: cancelled")
-
-
-def cancel_run(run_id: str) -> dict | None:
-    """Cancel a queued/running run (CONTRACTS 11a).
-
-    Returns the run doc (a queued run is already `cancelled`; a running one
-    flips as soon as the worker sees the flag between frames). None if the
-    run is unknown; raises RunConflict if it is not queued/running."""
-    doc = runs.get_run(run_id)
-    if doc is None:
-        return None
-    with runs._state_lock:
-        live = run_id in runs._active
-        flag = _cancel_flags.get(run_id)
-    if not live or doc["status"] not in runs.ACTIVE_STATUSES:
-        raise errors.RunConflict(f"Run {run_id} is {doc['status']}; nothing to cancel")
-    if flag is not None:
-        flag.set()
-    with _jobs.mutex:  # not started yet: pull it out of the queue
-        try:
-            _jobs.queue.remove(run_id)
-            dequeued = True
-        except ValueError:
-            dequeued = False
-    if dequeued:
-        _jobs.task_done()
-        _finish_cancelled(run_id)
-    return runs.get_run(run_id)
-
-
-def cancel_all() -> list[str]:
-    """Cancel every queued and running run; returns their ids. (v26.2.10: and the collision re-run job.)"""
-    from lab import collisions
-    collisions.cancel_job()
-    with runs._state_lock:
-        ids = [i for i, d in runs._active.items() if d["status"] in runs.ACTIVE_STATUSES]
-    for i in ids:
-        try:
-            cancel_run(i)
-        except errors.RunConflict:
-            pass
-    return ids
-
-
-def is_idle() -> bool:
-    from lab import collisions
-    with runs._state_lock:
-        return _busy is None and not runs._active and _jobs.empty() and not collisions.job_active()
-
-
-def analysis_active() -> bool:
-    """A run is queued or running (v26.2.10: a collision re-run job never runs together with one)."""
-    with runs._state_lock:
-        return any(d["status"] in runs.ACTIVE_STATUSES for d in runs._active.values())
-
-
-def wait_idle(timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while True:
-        if is_idle():
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.1)
-
-
-def release_model() -> None:
-    if _cache is not None:
-        _cache.release()
-
-
-def begin_maintenance() -> None:
-    """Refuse new submissions and cancel everything in flight (version wipe)."""
-    global _maintenance
-    with runs._state_lock:
-        _maintenance = True
-    cancel_all()
-
-
-def end_maintenance() -> None:
-    global _maintenance
-    with runs._state_lock:
-        _maintenance = False
 
 
 # --------------------------------------------------------------------------
@@ -293,55 +141,6 @@ class _ModelCache:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         util._log(f"model released: {name}{' + depth' if had_depth else ''}")
-
-
-def _ensure_worker() -> None:
-    global _worker, _cache
-    with runs._state_lock:
-        if _cache is None:
-            _cache = _ModelCache()
-        if _worker is None or not _worker.is_alive():
-            _worker = threading.Thread(target=_worker_loop, name="gpu-worker", daemon=True)
-            _worker.start()
-
-
-def _worker_loop() -> None:
-    global _busy
-    cache = _cache
-    while True:
-        try:
-            run_id = _jobs.get(timeout=1.0)
-        except queue.Empty:
-            if (cache.model is not None or cache.depth_model is not None) and time.monotonic() - cache.last_used > constants.IDLE_SECONDS:
-                cache.release()
-            continue
-        with runs._state_lock:
-            _busy = run_id
-        try:
-            _run_job(run_id, cache)
-        except errors._Cancelled:
-            _finish_cancelled(run_id)
-        except BaseException as exc:  # noqa: BLE001 - incl. SystemExit from gpu_guard
-            util._log(f"run {run_id} FAILED: {exc!r}")
-            _finish(run_id, status="error", error=str(exc) or repr(exc))
-            if isinstance(exc, MemoryError) or "CUDA" in str(exc):
-                cache.release()
-        finally:
-            with runs._state_lock:
-                _busy = None
-                _cancel_flags.pop(run_id, None)
-
-
-def _check_cancel(run_id: str) -> None:
-    flag = _cancel_flags.get(run_id)
-    if flag is not None and flag.is_set():
-        raise errors._Cancelled()
-
-
-def _finish(run_id: str, **fields) -> None:
-    runs._update_run(run_id, finishedAt=util._now(), **fields)
-    with runs._state_lock:
-        runs._active.pop(run_id, None)
 
 
 MOTION_W, MOTION_H = 160, 90
@@ -486,7 +285,7 @@ class _FrameReader:
             self.cap.release()
 
 
-def _run_job(run_id: str, cache: _ModelCache) -> None:
+def _run_job(run_id: str, cache: _ModelCache, ctx: JobContext | None = None) -> None:
     import segmentation
     from letterbox import letterbox_with_meta
     from profiles import resolve_input_spec
@@ -498,7 +297,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     rec = recordings.get_recording(req["recording"])
     if rec is None:
         raise RuntimeError("Recording disappeared")
-    _check_cancel(run_id)
+    jobs_worker._check_cancel(run_id)
     runs._update_run(run_id, status="running", progress=0.0)
 
     model = cache.get(req["model"], device)
@@ -547,7 +346,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     t_start = time.perf_counter()
     try:
         for k in range(n_target):
-            _check_cancel(run_id)
+            jobs_worker._check_cancel(run_id)
             got = reader.read(start + k / fps)
             if got is None:
                 break
@@ -593,7 +392,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
             if i == 0:
                 util._log(f"run {run_id}: first frame ready, seek {reader.seek_seconds:.2f}s")
             runs._update_run(run_id, persist=False, progress=(k + 1) / n_target)
-        _check_cancel(run_id)
+        jobs_worker._check_cancel(run_id)
         reader.finish_motion()
     finally:
         reader.close()
@@ -617,7 +416,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                 seekSeconds=round(reader.seek_seconds, 3), progress=1.0)
     util._log(f"run {run_id}: {len(grids)} frames in {elapsed:.1f}s")
 
-    _check_cancel(run_id)
+    jobs_worker._check_cancel(run_id)
     cdoc = None
     try:
         cdoc = collision_pass(run_id)
@@ -625,7 +424,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
         util._log(f"run {run_id}: collision pass failed: {exc!r}")
     if cdoc is not None:
         _build_worldmap(run_id, cdoc["id"])
-    _finish(run_id, status="done", progress=1.0)
+    jobs_worker._finish(run_id, status="done", progress=1.0)
 
 
 def _build_worldmap(run_id: str, cid: str) -> None:

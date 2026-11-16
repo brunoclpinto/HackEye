@@ -9,8 +9,6 @@ overrides, labels, delete and the A/B comparison. Errors are CollisionError(stat
 from __future__ import annotations
 
 import json
-import shutil
-import threading
 
 from engine.core import config as _config
 from lab import analysis
@@ -25,96 +23,9 @@ install(__name__, {
          "read_doc", "_add_effective", "list_docs", "write_doc", "update_doc", "allocate", "register", "set_label", "delete"),
         "lab.store.collision_docs"),
     "CollisionError": "lab.store.errors",
+    # v26.3.0 p5-03: the re-run job moved to lab.jobs.collision (audit 7.5)
+    **dict.fromkeys(("Job", "_job", "job_active", "cancel_job", "start_job", "_run_job"), "lab.jobs.collision"),
 })
-
-
-# --------------------------------------------------------------------------
-# Re-run job (v26.2.10): one at a time per Lab, in a thread (pure numpy, never the GPU queue)
-# --------------------------------------------------------------------------
-
-class Job:
-    def __init__(self, run_id: str, cid: str):
-        self.run_id, self.cid = run_id, cid
-        self.cancel = threading.Event()
-        self.progress = 0.0
-        self.thread: threading.Thread | None = None
-
-    def report(self, fraction: float) -> None:
-        """Called between frames by the passes; raises when the job was cancelled."""
-        if self.cancel.is_set():
-            raise analysis._Cancelled()
-        self.progress = min(max(float(fraction), 0.0), 1.0)
-
-
-_job: Job | None = None
-
-
-def job_active() -> bool:
-    j = _job
-    return j is not None and j.thread is not None and j.thread.is_alive()
-
-
-def cancel_job(run_id: str | None = None, cid: str | None = None) -> bool:
-    """Ask the running job to stop (between frames); True when there was one (and it is the named one)."""
-    j = _job
-    if not job_active() or (run_id is not None and (j.run_id, j.cid) != (run_id, cid)):
-        return False
-    j.cancel.set()
-    return True
-
-
-def start_job(run_id: str, overrides, label: str) -> dict:
-    """Allocate the next id, write its collision.json as `running`, register it and run the passes in a thread.
-    409 when a collision job or an analysis is running. Returns the new document."""
-    global _job
-    try:
-        import collision
-        import worldmap
-    except ImportError as exc:
-        raise errors.CollisionError(503, f"collision module unavailable ({exc})") from None
-    overrides = validate_overrides(overrides)
-    check_overrides(overrides, collision.load_config(), worldmap.load_config())
-    with cdocs._lock:
-        if job_active():
-            raise errors.CollisionError(409, f"A collision re-run is already running ({_job.run_id} {_job.cid})")
-        if analysis.analysis_active():
-            raise errors.CollisionError(409, "An analysis is running; wait for it to finish")
-        cid = cdocs.allocate(run_id)
-        cdocs.collision_dir(run_id, cid).mkdir(parents=True, exist_ok=True)
-        doc = {"id": cid, "runId": run_id, "createdAt": analysis._now(), "collisionVersion": None, "worldmapVersion": None,
-               "settings": {}, "resolved": {}, "overrides": overrides, "label": (label or "")[:cdocs.MAX_LABEL],
-               "elapsedSeconds": None, "counts": {}, "status": "running", "progress": 0.0, "error": None}
-        cdocs.write_doc(run_id, cid, doc)
-        cdocs.register(run_id, cid)
-        job = Job(run_id, cid)
-        job.thread = threading.Thread(target=_run_job, args=(job, overrides, label), name=f"collision-{run_id}-{cid}", daemon=True)
-        _job = job
-        job.thread.start()
-    return doc
-
-
-def _run_job(job: Job, overrides: dict, label: str) -> None:
-    run_id, cid = job.run_id, job.cid
-    try:
-        analysis.collision_pass(run_id, overrides, label, job=job)
-        try:      # v26.2.6: the map is always rebuilt after a collision re-run (object distance / horizon switch change it)
-            analysis.worldmap_pass(run_id, cid, job=job)
-        except analysis._Cancelled:
-            raise
-        except Exception as exc:  # noqa: BLE001 - the collision result stands
-            analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
-        cdocs.update_doc(run_id, cid, status="done", progress=1.0, error=None)
-    except analysis._Cancelled:
-        with cdocs._lock:
-            shutil.rmtree(cdocs.collision_dir(run_id, cid), ignore_errors=True)
-            run = analysis.get_run(run_id) or {}
-            analysis._update_run(run_id, collisions=[c for c in cdocs.ids(run) if c != cid])
-        analysis._log(f"run {run_id}: collision {cid} cancelled")
-    except BaseException as exc:  # noqa: BLE001
-        analysis._log(f"run {run_id}: collision {cid} FAILED: {exc!r}")
-        cdocs.update_doc(run_id, cid, status="error", error=getattr(exc, "message", None) or str(exc) or repr(exc))
-
-
 
 
 # --------------------------------------------------------------------------
