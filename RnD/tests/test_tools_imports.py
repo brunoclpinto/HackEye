@@ -34,11 +34,8 @@ sys.path.insert(0, str(RND / "tests"))
 sys.path.insert(0, str(RND / "src"))
 sys.path.insert(0, str(RND))
 
-SCRIPTS_WITHOUT_MAIN = {
-    "depth_delta_calibration.py": "module-level analysis of /debug/lab/runs (no main(), no __main__ guard)",
-    "depth_lens_diagnostic.py": "module-level analysis of /debug/lab/runs (no main(), no __main__ guard)",
-    "depth_lens_fit.py": "module-level analysis of /debug/lab/runs (no main(), no __main__ guard)",
-}
+# p5-07 (2026-11-16): the depth_* scripts got main() + a __main__ guard, so every tool imports without running; none is excluded.
+SCRIPTS_WITHOUT_MAIN: dict[str, str] = {}
 
 # tool file -> {module the tool reads from -> names it reads}. Dotted names (``WorldMap.resolve_frame``) are resolved by attribute.
 FACADE_READS: dict[str, dict[str, tuple[str, ...]]] = {
@@ -174,9 +171,8 @@ def test_tool_imports_cleanly(tool: str) -> None:
     assert mod.__file__ == str(TOOLS / tool)
 
 
-@pytest.mark.parametrize("tool", sorted(SCRIPTS_WITHOUT_MAIN))
-def test_script_import_skipped(tool: str) -> None:
-    pytest.skip(f"{tool}: {SCRIPTS_WITHOUT_MAIN[tool]}; names checked statically")
+def test_every_tool_is_importable() -> None:
+    assert sorted(IMPORTABLE_TOOLS) == TOOL_FILES
 
 
 def test_every_tool_listed() -> None:

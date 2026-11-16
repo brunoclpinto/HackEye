@@ -16,3 +16,9 @@ implementation wraps each script's module-level work in `main()` + `if __name__ 
 order unchanged; module-level constants and functions stay at module level). Opus then removes the skip from
 `test_script_import_skipped` so the three scripts are imported like the others. The tests also keep `segmentation._CONFIG_DIR` and
 `_load_mapping` reachable (read by `worldmap_render.py`).
+
+## Outcome (Opus, 2026-11-16)
+The tools keep reading engine code through the facades (`collision`, `worldmap`, `sensors`, `segmentation`, `groundfuse`, `lab.*`):
+the facades are the stable public names, and `tests/test_tools_imports.py` pins each tool's reads against them. The switch to engine
+homes is dropped. The depth_* scripts got `main()` (their helper functions became closures of `main()` because they read its locals),
+and the test's 3 skips are gone.
