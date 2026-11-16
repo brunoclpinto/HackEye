@@ -14,7 +14,7 @@
 #   3 mypy --strict (tools/mypy-engine.ini) on the strict files
 #   4 pytest: --tests, always-tests (boundaries, field ownership, equivalence quick), --related, --full
 #   5 JS, only when --files has .js/.mjs files, in the separate hackeye-rnd-js-check image (tools/js-check.Dockerfile, run first):
-#     eslint (tools/js/eslint.config.js) on those files, then `node --test tests/js`
+#     eslint (tools/js/eslint.config.js) on lab/static + tests/js, then `node --test tests/js`
 set -euo pipefail
 
 RND="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

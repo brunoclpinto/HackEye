@@ -4,7 +4,6 @@
 import { $ } from "../../util/index.js";
 import { api } from "../../api.js";
 
-const KEY = (mapping) => `hackeye.lab.classes.${mapping}`;
 const hex = (rgb) => "#" + rgb.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
 const unhex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 
@@ -171,7 +170,7 @@ export class ClassesPanel {
 
   dirty(name) { return canon(SECTIONS[name].diff(this.style)) !== canon(this.saved[name]); }
 
-  changed(name) {
+  changed() {
     this.flash = {};
     this.style.rebuild();
     this.writeDraft();
