@@ -6,14 +6,12 @@ Each stage is the verbatim block of ``run_collision`` between two boundaries of 
 """
 
 # ruff: noqa: E501
-# mypy: ignore-errors
-# (the bodies are untyped legacy code; p4-06 removes this ignore)
 from __future__ import annotations
 
 import math
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -52,9 +50,6 @@ from engine.core.settings import (
 )
 from engine.core.types import (
     LANE_PART_ID_BASE,
-)
-from engine.core.types import (
-    Item as _Item,
 )
 from engine.core.types import (
     Track as _Track,
@@ -250,18 +245,18 @@ class Stage:
 
 
 def setup(
-    grids,
-    times,
-    class_names,
-    config,
-    settings,
-    motion,
-    depth,
-    window,
-    sounds,
-    worldmap_config,
-    progress,
-    sensors,
+    grids: Any,
+    times: Any,
+    class_names: Any,
+    config: Any,
+    settings: Any,
+    motion: Any,
+    depth: Any,
+    window: Any,
+    sounds: Any,
+    worldmap_config: Any,
+    progress: Any,
+    sensors: Any,
 ) -> RunState:
     """The setup block of ``run_collision`` (everything before the frame loop): builds, fills and returns the run state ``s``."""
     s = RunState()
@@ -457,7 +452,7 @@ def setup(
     s.crosswalk = _CrosswalkTracker(s.config["crosswalk"])
     s.cw_name = s.config["crosswalk"].get("class", "crosswalk")
     s.cw_class = list(s.class_names).index(s.cw_name) if s.cw_name in s.class_names else None
-    s.cw_marks: list[tuple[float, str]] = []
+    s.cw_marks = []
     s.scale = _Scale(s.ego_cfg, s.step_len)
     s.policy = SpeechPolicy(s.config)
     s.world = _WorldMemory(s.config.get("memory", {}), enabled=s.mser is not None)
@@ -487,11 +482,11 @@ def setup(
             s.obj_mode,
             wcfg=s.worldmap_config,
         )
-    s.map_ms: list[float] = []
+    s.map_ms = []
     s.jump_cfg = s.config.get("distance", {}).get("jump") or {}
     s.stable_s = float(s.config["speech"].get("thinStableS", 0.0))
     s.follow_cfg = s.config.get("beeps") or {}
-    s.follow: dict = {}  # (family, side) -> {"t": last activity, "t_real": last real beep, "lat": the episode's lateral}
+    s.follow = {}  # (family, side) -> {"t": last activity, "t_real": last real beep, "lat": the episode's lateral}
     s.follow_cfg = {**s.follow_cfg, **(s.follow_cfg.get("follow") or {})}
     s.wfollow = _WallFollow(s.follow_cfg)  # v26.2.13: the ratio rule (the distance closes less than the walking speed)
     s.pass_cfg = s.follow_cfg.get("passing") or {}  # v26.2.13: soft beeps for a person passing close
@@ -504,7 +499,7 @@ def setup(
         -math.inf,
         False,
     )  # follow-up (O26): one phrase per blockage; it ends after clearS s without one
-    s.meas_hist: list[tuple[float, float]] = []
+    s.meas_hist = []
     s.meas_win = float((s.config["speech"].get("predictive") or {}).get("measuredWindowS", 1.5))
     s.reset_classes = frozenset(s.jump_cfg.get("resetClasses", ("vehicle", "rider")))
     s.tree_cfg_run = s.config.get("tree") or {}
@@ -515,12 +510,12 @@ def setup(
     s.under_rows = int(s.config["surfaces"].get("passUnderRows", 6))
     s.under_gone_s = float(s.config["surfaces"].get("passUnderGoneSeconds", 1.5))
     s.under_min_w = float(s.config["surfaces"].get("passUnderMinWidth", 0.15))
-    s.tracks: dict[int, _Track] = {}
+    s.tracks = {}
     s.next_id = 1
     s.next_lane_part_id = (
         LANE_PART_ID_BASE  # lane parts have their own id range: they do not shift the ids of the ordinary tracks
     )
-    s.prev_group: str | None = None
+    s.prev_group = None
     s.prev_left = s.prev_right = None
     s.horizon = s.settings.horizon_default
     s.h_state = s.horizon  # the image horizon estimate's own state (the gravity horizon never feeds back into it)
@@ -537,26 +532,22 @@ def setup(
         if s.hz_source != "image"
         else None
     )
-    s.raws: list[float] = []
+    s.raws = []
     s.last_estimate_t = -math.inf
-    s.first_t: float | None = None
-    s.frames_out: list[dict] = []
-    s.frame_collision: list[tuple[_Item | None, set]] = []
-    s.frame_proximity: list[tuple[_Item | None, set]] = []
-    s.events: list[dict] = []
+    s.first_t = None
+    s.frames_out = []
+    s.frame_collision = []
+    s.frame_proximity = []
+    s.events = []
     s.prev_t = float(s.times[0]) if s.n else 0.0
     s.beep_run = 0  # consecutive frames with a collision beep driver
     s.people_classes = frozenset(s.config["classes"].get("people", []))
     s.last_hard_pan_t = -math.inf  # the last frame with a hard camera pan (see ``_match`` / ``roles.panSettleSeconds``)
-    s.prev_heading: float | None = (
-        None  # camera heading of the previous frame: the scene's pan since then moves the tracks' boxes
-    )
-    s.held_speed: float | None = None  # last cadence-based ego speed and when (v26.1.11, item 7)
+    s.prev_heading = None  # camera heading of the previous frame: the scene's pan since then moves the tracks' boxes
+    s.held_speed = None  # last cadence-based ego speed and when (v26.1.11, item 7)
     s.held_t = -math.inf
-    s.ego_hist: list[
-        tuple[float, float]
-    ] = []  # recent ego speeds for the robust (median) speed of the motion states (v26.1.13)
-    s.ego_hist_t0: float | None = None  # when the current continuous history began (v26.1.15: the window must be full)
+    s.ego_hist = []  # recent ego speeds for the robust (median) speed of the motion states (v26.1.13)
+    s.ego_hist_t0 = None  # when the current continuous history began (v26.1.15: the window must be full)
     return s
 
 
@@ -599,7 +590,7 @@ def surface_horizon(s: RunState, f: FrameState) -> None:
 def egosignals_lookup(s: RunState, f: FrameState) -> None:
     f.cadence = f.heading = f.flow_heading = None
     f.stationary = False
-    f.ego_sens: dict = {}
+    f.ego_sens = {}
     if s.mser is not None:
         f.mt, f.cad, f.hcum, f.stat = s.mser
         f.j = int(np.clip(np.searchsorted(f.mt, f.t), 0, len(f.mt) - 1))
@@ -1495,7 +1486,7 @@ def output_frame(s: RunState, f: FrameState) -> None:
     )
 
 
-def finish(s: RunState) -> tuple[dict, dict]:
+def finish(s: RunState) -> tuple[dict[str, Any], dict[str, Any]]:
     s.tone_events, s.episodes = _tone_events(
         s.frame_collision,
         s.times,

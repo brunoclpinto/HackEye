@@ -1,28 +1,28 @@
-"""The frame pipeline driver: ``run_collision`` (moved verbatim from collision.py; v26.3.0 p4-02)."""
+"""The frame pipeline entry point: ``run_collision`` (moved from collision.py in p4-02)."""
 
 # ruff: noqa: E501
-# mypy: ignore-errors
-# (the body is untyped legacy code; p4-06 removes this ignore)
 from __future__ import annotations
+
+from typing import Any
 
 from engine.pipeline.stages import STAGES, finish, setup
 from engine.pipeline.state import FrameState
 
 
 def run_collision(
-    grids,
-    times,
-    class_names,
-    config,
-    settings,
-    motion=None,
-    depth=None,
-    window=None,
-    sounds=None,
-    worldmap_config=None,
-    progress=None,
-    sensors=None,
-) -> tuple[dict, dict]:
+    grids: Any,
+    times: Any,
+    class_names: Any,
+    config: Any,
+    settings: Any,
+    motion: Any = None,
+    depth: Any = None,
+    window: Any = None,
+    sounds: Any = None,
+    worldmap_config: Any = None,
+    progress: Any = None,
+    sensors: Any = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Per-frame hazards and the speech/tone event list. ``motion`` = {"t","dx","dy"} arrays or None.
 
     ``sensors`` (v26.2.11): the recording's device telemetry (``sensors.extract``, on the recording's time line) or None; with it the heading

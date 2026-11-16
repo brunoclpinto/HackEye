@@ -14,7 +14,7 @@ Phase 4: `run_collision` has moved here (p4-02), is converted to state objects (
 | `run.py` | `run_collision(grids, times, class_names, config, settings, motion=None, depth=None, window=None, sounds=None, worldmap_config=None, progress=None, sensors=None)` | per-frame hazards document and the speech/tone event list (the whole Lab logic, one function) | `collision.run_collision` (same object, no wrapper) |
 | `glue.py` | `LAST_WORLD_TRACKS_MS` | list of the world-track step ms per frame of the last run (metrics tool only; not in the output) | `collision.LAST_WORLD_TRACKS_MS` |
 
-`engine/pipeline/__init__.py` re-exports these four names (`__all__`). No function shares a name with a submodule.
+`engine/pipeline/__init__.py` re-exports these names plus `Pipeline` and `PipelineStats` (`__all__`). No function shares a name with a submodule.
 
 ## Inputs / outputs
 
@@ -46,7 +46,7 @@ Phase 4: `run_collision` has moved here (p4-02), is converted to state objects (
 - One sanctioned added statement, first after the docstring: `if worldmap_config is None: worldmap_config = wm_config.default_config_loader()`.
   The facade `worldmap.py` installs the hook, so a patched `worldmap.load_config` is still seen; the two `... else wmap.load_config()`
   fallbacks stay (dead when called with None).
-- `# noqa` only on three lines (B023, PLR1714, SIM114); no expression was rewritten. File-level `# ruff: noqa: E501` and `# mypy: ignore-errors` (the body is untyped legacy code; p4-06 removes it).
+- `# noqa` only on three lines (B023, PLR1714, SIM114); no expression was rewritten. File-level `# ruff: noqa: E501` (the `# mypy: ignore-errors` of p4-02 is gone since p4-06).
 - `collision.run_collision is engine.pipeline.run.run_collision`; tests that monkeypatch `collision.run_collision` still work because
   the Lab calls it through the module.
 
@@ -345,7 +345,7 @@ Edits beyond the cut and paste:
 - `f.i` (new `FrameState` field, first): the frame-loop variable `i` is read by `worldmap_step` (`s.smap.update(f.i, ...)`), so the
   preamble sets `f.i = i` right after `f = FrameState()`. The loop and `s.progress(i, ...)` keep the bare `i`.
 - the `# noqa: B023` on the coast lambda is gone: the lambda no longer sits in a loop that rebinds `f`, so it is not a B023 case (RUF100).
-- `Callable` is imported under `TYPE_CHECKING` (TC003); `stages.py` carries the same file-level `E501` / mypy ignores as `run.py`.
+- `Callable` is imported under `TYPE_CHECKING` (TC003); `stages.py` carries the file-level `E501` ignore (the mypy one went in p4-06).
 - no stage block holds a `continue` / `break` aimed at the frame loop (the ones inside are in inner `for` loops).
 
 ## stages.py, part B (p4-05)
@@ -378,3 +378,20 @@ Edits beyond the cut and paste:
 - `continue` in `motion_roles` (coast branch) is aimed at that stage's own `for it in f.items` loop, not the frame loop; no stage holds
   a `continue` / `break` aimed at the frame loop. The `blk_*` state machine stays inside `speech`, the inline motion block inside `motion_roles`.
 - the `s.progress` call and the other preamble lines stay in `run_collision`.
+
+
+## pipeline.py (p4-06)
+
+| name | purpose |
+|---|---|
+| `Pipeline(stages=STAGES)` | `run(grids, times, class_names, config, settings, motion=None, depth=None, window=None, sounds=None, worldmap_config=None, progress=None, sensors=None)` = `setup`, the frame loop over `self.stages`, `finish`; the loop is the one that used to be in `run_collision` |
+| `PipelineStats` | `world_tracks_ms`, `map_ms`: the timings of the last run (`s.wtracks.ms`, `s.map_ms`); reset at the start of every `run`; never in hazards or events |
+
+- `run.run_collision(...)` (same signature, typed) keeps the setup / frame loop / `finish` shape that the locked p4-05 tests (`test_stages_b.py`, `test_state.py`) pin by AST, so it does NOT call `Pipeline().run`; the two loops are the same 12 statements (open question for the planner). `collision.run_collision` is still `run.run_collision`.
+- `glue.LAST_WORLD_TRACKS_MS[:]` is still filled inside `finish` (so after `Pipeline.run` itself), then `stats.world_tracks_ms` is a copy of it
+  (the same values as `s.wtracks.ms`).
+- `collision.py` is the module docstring, `from __future__` and imports only (checked by `test_pipeline.py`); it defined no names of its own
+  by p4-06, so nothing was moved or deleted there.
+- Typing: no `engine/pipeline/*.py` file carries `# mypy: ignore-errors` any more. The state fields stay `Any` (the legacy values are
+  dynamic); `setup` / `run_collision` parameters are `Any`; the annotated attribute assignments of the legacy locals (`s.x: list[...] = []`,
+  which mypy rejects on a non-self attribute) lost only their annotation, and the `Item` import that served one of them is gone.
