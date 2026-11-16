@@ -57,3 +57,24 @@ would shadow the submodule `engine.tracking.match`), nor are `coast` / `velocity
   (``_cross_velocity``) is too weak to name a direction; it only vetoes "standing"."
 - Function docstrings carry the rest: v26.1.11 own sideways velocity (`lateral_velocity`), v26.1.12 review 5
   (`cross_velocity`), v26.1.16 review 8 pan-shifted matching and lane parts (`match`), v26.2.2 coasting (`Coast`).
+
+## Contract rules moved from `lab/CONTRACTS.md` (v26.3.0 Phase 7)
+
+The rules below used to be sections of the Lab contract. Section references (`§n`) point to `lab/CONTRACTS.md`; `§7.x`, `§8.1` and `§9.x` live in the README that the index of `lab/CONTRACTS.md` names. Text is verbatim apart from file paths; legacy names (`collision._X`, `src/x.py`) are facades of the engine names.
+
+### 7.5 Tracking
+
+- Greedy matching within the same group **and** class. A pair matches if `iou(bbox) ≥ iouMatch` **or** the ground gate holds: `|Δlateral| ≤ groundGateLateralM` and `|Δdistance − expected| ≤ groundGateDistanceFrac × distance`, where `expected = −closing·dt` (0 if unknown). Score = IoU, plus 0.5 if the gate holds; highest first.
+- **Pan-compensated person match (v26.1.16, review 8, 27.3 s).** `_match` gets the scene shift since the previous frame from the heading change (`−Δheading / hfov`, normalised x, capped ±0.25). For **people** (`classes.people`) and a shift of at least `tracking.panMatchMinShift` (0.04, a turn of ~5° per frame) the IoU is also taken against the track's box moved by that shift. At 27.2 s the head turned 9° in one frame: a person 5.7 m away jumped a full box width, lost its track three times in 0.5 s (age 0, no motion, confirmation restarting) and was announced 1.2 s late. The same hard pan makes the ego speed **unsettled** for `roles.panSettleSeconds` (1 s): a head turn throws the cadence off (2.09 against 1.2 m/s around 27 s), so the person read "standing" while crossing; now they get the plain phrase ("person at 11:45 in 8") at once. Poles, buildings and vehicles are not compensated (they are re-found by the ground gate; compensating them reshuffled the speech of reviews 3–7).
+- A track survives `maxMissedSeconds` without a match. It keeps its contact **rows** (not distances) over `historySeconds`; a clipped detection clears the history.
+- **Closing speed:** the (negative) slope of the distances obtained by re-projecting *all* history rows through the **current** smoothed horizon (so horizon wobble cannot fake motion). Points less than `motionMinRowsBelowHorizon` rows below the horizon are left out; it needs ≥ 3 points, ≥ `motionMinSeconds` of history and the latest point included; otherwise `None`. `closingMps` = raw closing × `k`.
+- Per track: `present_run` (consecutive frames matched) and `role_run` (consecutive frames holding the same role). A track is `settled` after `MIN_TRACK_AGE_S` (v26.1.15: always during the first `WARMUP_S` of a run; `confirmFrames` = 2 still applies).
+
+
+### 7.4 Items — coasting movers
+
+- **Coasting movers** (v26.2.2, `coast.*`): a mover (`group "moving"`) measured for ≥ `minPoints` frames over ≥ `minSpanSeconds` (least-squares world velocity from the dead-reckoned pose) that disappears (out of frame, occluded, a segmentation dropout) is emitted as a predicted item (`coasting: true`, `clipped`, no outline) on its last world velocity for ≤ `seconds` (`vehicleSeconds` for vehicles). It keeps its track and motion state, is judged by the normal roles (collision course, beeps, proximity) but is never spoken (`speak` false); it ends on a rematch (the same track, or a new item of its class within `rematchRadiusM` + 10 % of range of the prediction), when passed (ahead ≤ 0), beyond `maxRangeM`, when the time is up, or inside solid. `hazards.json` top level `coast: {episodes: [{track, class, t0, t1, steps0, speedMps, moving, end}]}`.
+
+### 7.11d v26.2.12 collision rules — distance jumps
+
+- **Distance jumps** (`distance.jump`: `enabled`, `frac` 0.4, `minM` 1.0, `nearM` 15, `maxGapS` 0.4, `resetClasses` [vehicle, rider]): a track whose measured distance changes by more than max(`minM`, `frac` x the previous distance) between consecutive frames (nearer one <= `nearM`) is a measurement glitch. Its `jump_t` makes thin items / trees `unstable` (`thinStableS`), and for the `resetClasses` its closing history, along speed and motion state are cut (no "approaching" from a history across the glitch; a vehicle with unknown motion is judged with the static lane) and its coasting history is dropped. A second check on the FINAL distance (after the map / solid snap) feeds `thinStableS` only.

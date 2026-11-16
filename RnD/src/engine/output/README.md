@@ -45,3 +45,11 @@ None; the callers pass `lane_half_m`, `far_distance_m` and `full_all`.
 - The twelve names are the same objects as the `collision` ones; the private names (`_DIRS`, `_dp_open`,
   `_lane_polygon`, `_region_rows`, `_hazard_json`, `_hazard_dict`) stay on `collision`.
 - The key order of `hazard_dict` is pinned by the tests and by `hazards.json` consumers.
+
+## Contract rules moved from `lab/CONTRACTS.md` (v26.3.0 Phase 7)
+
+The rules below used to be sections of the Lab contract. Section references (`§n`) point to `lab/CONTRACTS.md`; `§7.x`, `§8.1` and `§9.x` live in the README that the index of `lab/CONTRACTS.md` names. Text is verbatim apart from file paths; legacy names (`collision._X`, `src/x.py`) are facades of the engine names.
+
+### 7.11d v26.2.12 collision rules — whole component
+
+- **Whole component** (`hazards[].bboxFull`, `outlineFull`): for every item with a role (the ones that have an `outline`): the bounding box and outline of its whole connected component, the rows above the horizon included (the item itself is judged below the horizon); person pieces, ghosts and coasting items have none. Decisions and events do not read them.

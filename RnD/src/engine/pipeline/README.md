@@ -395,3 +395,45 @@ Edits beyond the cut and paste:
 - Typing: no `engine/pipeline/*.py` file carries `# mypy: ignore-errors` any more. The state fields stay `Any` (the legacy values are
   dynamic); `setup` / `run_collision` parameters are `Any`; the annotated attribute assignments of the legacy locals (`s.x: list[...] = []`,
   which mypy rejects on a non-self attribute) lost only their annotation, and the `Item` import that served one of them is gone.
+
+## Contract rules moved from `lab/CONTRACTS.md` (v26.3.0 Phase 7)
+
+The rules below used to be sections of the Lab contract. Section references (`§n`) point to `lab/CONTRACTS.md`; `§7.x`, `§8.1` and `§9.x` live in the README that the index of `lab/CONTRACTS.md` names. Text is verbatim apart from file paths; legacy names (`collision._X`, `src/x.py`) are facades of the engine names.
+
+### 7 Collision logic — the pass contract  (`run_collision`)
+
+
+**Pure logic:** numpy + scipy and `geometry.Box`/`geometry.iou` only. No cv2, no torch, no file I/O except `load_config`. It must stay portable to Swift.
+
+```python
+@dataclass
+class CollisionSettings:
+    mount: str; hfov_deg: float; camera_height_m: float
+    step_length_m: float | None        # None = use ego.priorStepLengthM
+    horizon_default: float             # from the mount preset
+
+load_config(path=None) -> dict
+resolve_settings(config, mount=None, hfov_deg=None, camera_height_m=None, step_length_m=None,
+                 projection=None, distance_source="ground") -> CollisionSettings
+resolve_projection(projection, hfov_deg) -> "rectilinear" | "fisheye"   # None/"auto": fisheye when hfov >= 100
+bearing_deg(x_norm, hfov_deg, projection)     # rectilinear: atan((x-0.5)*2*tan(hfov/2)); fisheye: (x-0.5)*hfov; + = right
+clock_from_bearing(bearing) -> int            # whole hour: 12 + round(bearing/30), clamped to ±90°, as 9..12 and 1..3 (side logic, back-compat)
+clock_quarter(bearing) -> int                 # q = round(bearing/7.5°) (half away from zero), clamped to ±12
+clock_text(q) -> str                          # m = (720+15q) mod 720; "H" when on the hour, else "H:MM": 12, 12:15, 11:45, 1:30
+focal_px(grid_w, hfov_deg)                    # (grid_w/2) / tan(hfov/2)
+ground_distance_m(y_norm, horizon_y, camera_height_m, grid_h, f_px)   # H*f / ((y-horizon)*grid_h); None if y <= horizon
+lateral_m(x_norm, distance_m, grid_w, f_px)   # (x-0.5)*grid_w*distance/f   (+ = right)
+estimate_cadence(t, dy, window_s, band_hz, min_peak_ratio, dx=None, ...) -> per-sample Hz or nan
+walking_region(grid, ids, config) -> Region | None
+run_collision(grids, times, class_names, config, settings, motion=None, depth=None) -> (hazards_doc, events_doc)
+    # depth: {"t", "depth" (N, 68, 120) metres} or None
+    # motion: {"t","dx","dy"[, "resid"]} arrays or None -> no cadence, heading, ego speed from gait, or world memory;
+    #         without "resid" the user is never stationary
+```
+
+Frames are processed in order; every state below carries over from frame to frame. "Frame" = analysed frame.
+
+
+### 7.11d v26.2.12 collision rules — defaults of the pass
+
+- **Defaults = c2:** `source.mode` `map`, `ego.headingSource` `imu`, `horizon.source` `fused`, `ego.cadenceSource` `imu` (without sensors the heading / cadence / horizon fall back to the image ones as before); `tones.speechRate` 1.25. **Heading label:** `imu` (and `auto`) is the gyro heading WITH the slow GPS course pull (`ego.gps.course`), so `settings.headingSource` reads `imu+gps` once >= 1 GPS update was applied (`settings.gpsUpdates`); the new value `gyro` is the pure gyro heading (label `imu`, `gpsUpdates` 0).

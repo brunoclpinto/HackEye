@@ -53,3 +53,21 @@ Passed in as the `memory` block of `collision.json`: `enabled`, `matchRadiusM`, 
 >   distance of a remembered object is that object and is not announced again; a track that matched keeps the link and
 >   refreshes the object's position. Objects are forgotten when passed (behind the user) or more than
 >   `memory.maxRangeM` away. Without motion data the old per-track and per-label rules apply unchanged.
+
+## Contract rules moved from `lab/CONTRACTS.md` (v26.3.0 Phase 7)
+
+The rules below used to be sections of the Lab contract. Section references (`§n`) point to `lab/CONTRACTS.md`; `§7.x`, `§8.1` and `§9.x` live in the README that the index of `lab/CONTRACTS.md` names. Text is verbatim apart from file paths; legacy names (`collision._X`, `src/x.py`) are facades of the engine names.
+
+### 7.11 World memory — object permanence  (class `_WorldMemory`)
+
+- **Active only with a motion track** (heading known) and `memory.enabled`. The user's ground position is dead-reckoned in an arbitrary metric frame (x east, y north; heading 0 = the initial direction, + = right turn) from `cadence × stepLength` (else ego speed; the last speed held `speedHoldSeconds`) along the heading. Items are located from their distance and lateral.
+- Every announced object — every member of a "poles" cluster, a grouped context phrase or a merged entry, of any role — is stored as `{label family, world x/y, named, approach, seen, owner}`. Objects covered by a thin notice but not named individually are stored `named = false`.
+- **Same object:** same label family within `matchRadiusM` (or `radiusOverrides`) + `matchRangeFraction × distance` of an entry. A track that matched keeps the link. Mover entries (people, or `moving`) match only within `moverTakeoverSeconds` of their last refresh (a person walks on). An announced object that matches is **not announced again**, with these exceptions: a covered-but-unnamed entry does not silence a named announcement, and an entry named but not as "approaching" does not silence an `approach` phrase (it is news once the person approaches).
+- **Position upkeep:** a standing object stays where it was first put; a mover is followed by its owning track (or a hand-off within `moverTakeoverSeconds`). A track that has shown the entry for `ownerAdoptSeconds` becomes its owner; the owner seeing it keeps it "seen".
+- **Forgotten when passed:** behind the user (`ahead < behindM` along the current heading) or farther than `maxRangeM`, unless seen within `seenHoldSeconds`.
+- **v26.1.16 (rule 6):** each entry also has `danger` (a danger / final phrase was said for it). Context, feature and thin phrases are muted by any entry as before; **danger and final phrases are muted only by an entry with `danger`** (and, for an "approaching" phrase, `approach`): collision and danger supersede notify-once. The final-call rule (§7.10, item 1) therefore asks `_seen_before(danger=True)`.
+
+
+### 7.17 Device sensors — one pose
+
+- **One pose** (`ego.onePose` `auto` = on with sensors, `on`, `off`; a string so the override keeps its type): `_WorldMemory.advance(pose=...)` takes the online map's corrected pose (`_StaticMap.pose` = dead reckoning + `poseAlign`, computed before the world memory in the same frame) instead of integrating its own, so the memory, the world tracks (`wtracks.step`) and the map agree; `settings.onePose` true when active.

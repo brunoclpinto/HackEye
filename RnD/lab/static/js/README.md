@@ -51,3 +51,14 @@ Name: handler (feature) <- emitters. Arguments in parentheses.
 | `load-run-colls` (runId) | collisions | runs |
 | `colls-of` (runId) | collisions (returns the list) | runs |
 | `coll-row` (runId, d) | collisions (returns the `<li>`) | runs |
+
+## Contract rules moved from `lab/CONTRACTS.md` (v26.3.0 Phase 7)
+
+The rules below used to be sections of the Lab contract. Section references (`§n`) point to `lab/CONTRACTS.md`; `§7.x`, `§8.1` and `§9.x` live in the README that the index of `lab/CONTRACTS.md` names. Text is verbatim apart from file paths; legacy names (`collision._X`, `src/x.py`) are facades of the engine names.
+
+### 9 Frontend — page layout
+
+**Layout (v26.2.0):** header (title, version badge from `/api/version`, run badge, the collision-run bar is gone since v26.2.10: collision runs are rows of their run's group in the Past runs list). Grid areas: `#viewer` (video stage + transport + seek bar on the left, `#secWorldmap` on the right; columns 16fr:9fr so the square map is as tall as the 16:9 video), `#sidebar` (Recordings, Analyse, Collision settings, Past runs), `#main` (Audio, Overlay, Sounds, Classes, the Compare section `#secCompare`, timeline, role chips), `#reviewPanel`.
+- >= 1200 px: columns 320 px | 1fr | 380 px; row 1 = viewer over columns 1-2, row 2 = sidebar | main; the review panel in column 3 spans both rows (sticky, own scroll, full viewport height). 900-1199 px: viewer full width on top, then sidebar | main, the review panel below. < 900 px: one column: video, world map (square, up to 480 px), sidebar, main, review (the Recordings section collapses after selecting).
+- No horizontal page scroll at 390 px: wide tables (Sounds: `.snd-scroll`) scroll inside their own wrapper. E2E: `test_worldmap.py` layout tests.
+- State is kept in the URL hash `#rec=<id>&run=<runId>&t=<s>` and restored on load.

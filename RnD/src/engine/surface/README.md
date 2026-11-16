@@ -63,3 +63,32 @@ and the trackers that decide surface changes and crosswalk enter / exit. Modules
   by `gravityWeight`.
 - "``WARMUP_S`` ... the horizon is the mean of the raw estimates so far (else the mount / body preset); the last good
   horizon is held ``HORIZON_HOLD_S`` when an estimate fails" (in `engine.core.settings`).
+
+## Contract rules moved from `lab/CONTRACTS.md` (v26.3.0 Phase 7)
+
+The rules below used to be sections of the Lab contract. Section references (`§n`) point to `lab/CONTRACTS.md`; `§7.x`, `§8.1` and `§9.x` live in the README that the index of `lab/CONTRACTS.md` names. Text is verbatim apart from file paths; legacy names (`collision._X`, `src/x.py`) are facades of the engine names.
+
+### 7.1 Walking region
+
+- The majority surface class inside `seedBox` (surface-group classes only; ties → the group with more pixels) picks the group. No surface pixels → `region = None` for this frame.
+- Region = the 4-connected components, containing seed-box pixels, of (that group's classes ∪ `surfaces.inside`).
+- Per grid row: `left`/`right` = min/max region column (normalised). Rows without region pixels are invalid. After the horizon fit (below), `left/right` are smoothed per row with EMA 0.5 across frames (reset when the frame's group changes).
+- The region follows the model frame by frame. The **adopted surface** (§7.14) is separate and slower.
+
+
+### 7.2 Horizon
+
+- Raw estimate: fit `x = a·y + b` to the left and the right bound, each over the lowest 70 % of that side's valid rows, **excluding rows where the bound is clamped to the image border** (a clamp is a crop, not an edge); each side needs ≥ `minRegionRows` rows. Accept only if the lines converge upward (`a_left < −0.02`, `a_right > 0.02`) and the intersection's y lies within `horizonValidRange`. Otherwise no estimate this frame.
+- During the first `WARMUP_S` (1.5 s) the horizon is the mean of the raw estimates so far (the mount / body preset if none; v26.1.15: roles, speech and beeps work on it from the first confirmed frames). Afterwards: a failed estimate keeps the last horizon for `HORIZON_HOLD_S` (3 s), then the target is the preset; otherwise EMA (`horizonEma`) toward the target with each step clamped to `±horizonMaxStep`.
+- `horizonEstimated` in the output = a raw estimate was accepted this frame.
+
+
+### 7.14 Surface  (class `_SurfaceTracker`)
+
+- The adopted surface changes only when **all** hold:
+  1. the new group holds ≥ `majority` of the frames of the last `windowSeconds`, and the window spans ≥ `minPersistSeconds`;
+  2. the new group has run uninterrupted for ≥ `minPersistSeconds`;
+  3. **evidence:** a curb or crosswalk really passed *under* the user (`requireCrossingEvidence`): an item of class curb/crosswalk with `lane_hit`, its contact within the bottom `passUnderRows` rows, bbox width ≥ `passUnderMinWidth`, whose track was gone within `passUnderGoneSeconds`; the track must also have **crossed the lane** (§7.9: role feature with `lane_hit`, not along the path, for ≥ `confirmFrames` frames) so that a curb that merely flickers under the feet is not evidence, and the evidence must belong to the change: no earlier than `evidenceLookbackSeconds` (3 s) before and no later than `evidenceLeadSeconds` (2 s) after the start of the new group's stretch (its first frame in the window, flickers of ≤ 1.5 s bridged). Review 4: a crosswalk at the left edge of the lane 7 s before and one 5 s after the road run began had backed the wrong "road" at 159.8 s.
+- Otherwise the old surface is kept silently: the region still follows the model, nothing is spoken and no memory is reset.
+- The **first** surface of a run needs only the majority and is adopted silently (`announceFirstSurface: false`).
+- A change is spoken only if the new or the old group is in `announceGroups` (road, rail); sidewalk ↔ bike lane is silent. The phrase is the group's label; it waits for the gap and for dangers.
