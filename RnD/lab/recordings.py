@@ -1,40 +1,36 @@
 """Media discovery, GoPro chapter grouping and the browser-proxy builder.
 
-GoPro splits a long take into ~4 GB chapters (GOPR4927, GP014927, GP024927).
-The Lab treats them as one continuous timeline: recording time `t` is the
-sum of the preceding chapters' durations plus the time inside the chapter,
-and the proxy is a concat of all chapters so proxy time equals recording
-time. Chapter duration is `frames / fps` (not the container duration) so the
-analysis reader can address a frame by index and land on the same `t` the
-proxy plays at.
+Discovery, chapter grouping, per-recording settings and the sensors path moved to `lab.store.recordings` (v26.3.0 p5-02, audit 7.8);
+every moved name stays reachable here as a forward to its home (`recordings.LAB_DIR`, `recordings.get_recording`, ...). What stays
+here is the proxy builder (an ffmpeg thread; it moves to `lab.jobs.proxy` in p5-03) and the proxy file paths.
 
-Metadata comes from cv2.VideoCapture properties (header only, no decoding)
-and is cached per (path, mtime, size) because listing runs on every page load.
+GoPro splits a long take into ~4 GB chapters (GOPR4927, GP014927, GP024927).
+The Lab treats them as one continuous timeline: the proxy is a concat of all chapters so proxy time equals recording time.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-import profiles  # noqa: E402
 
-MEDIA_DIR = Path(os.environ.get("HACKEYE_MEDIA_DIR", "/media"))
-LAB_DIR = Path(os.environ.get("HACKEYE_LAB_DIR", "/debug/lab"))
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".mkv", ".avi"}
+from lab._forward import install  # noqa: E402
+from lab.store import recordings as store_recordings  # noqa: E402
+from lab.store import util  # noqa: E402
 
-_GOPR = re.compile(r"^GOPR(\d{4})$", re.IGNORECASE)
-_GP = re.compile(r"^GP(\d{2})(\d{4})$", re.IGNORECASE)
+install(__name__, {
+    **dict.fromkeys(
+        ("MEDIA_DIR", "LAB_DIR", "VIDEO_EXTENSIONS", "_GOPR", "_GP", "sensors_path", "sensors_for", "_VideoInfo", "_info_cache",
+         "_probe", "_group_key", "scan_recordings", "_NAME", "name_hints", "_input_sizes", "list_recordings", "get_recording",
+         "recording_frame_at", "_settings_path", "_body_locations", "_distance_defaults", "get_settings", "save_settings"),
+        "lab.store.recordings"),
+    "_atomic_write_json": "lab.store.util",
+})
 
 PROXY_WIDTH = 960
 
@@ -44,181 +40,11 @@ def _log(msg: str) -> None:
 
 
 def proxies_dir() -> Path:
-    return LAB_DIR / "proxies"
-
-
-def sensors_path(rec_id: str) -> Path:
-    return LAB_DIR / "sensors" / f"{rec_id}.npz"
-
-
-def sensors_for(rec_id: str) -> dict | None:
-    """v26.2.11: the device telemetry of a recording (GoPro GPMF: gyro, accelerometer, GPS, exposure; ``src/sensors.py``) on the recording's time
-    line, cached in ``LAB_DIR/sensors/<recId>.npz`` (kept across version wipes like the proxies; the cache records the chapter files'
-    size / mtime and is rebuilt when they change). None for a recording without telemetry (an empty marker is cached too) or an unknown id."""
-    rec = get_recording(rec_id)
-    if rec is None:
-        return None
-    try:
-        import sensors
-    except ImportError:
-        return None
-    key = ";".join(f"{c['file']}|{Path(c['file']).stat().st_size}|{int(Path(c['file']).stat().st_mtime)}" for c in rec["chapters"])
-    path = sensors_path(rec_id)
-    cached = sensors.load(path)
-    if cached is not None and str(cached.get("_src", "")) == key:
-        return None if "gyro" not in cached else {k: v for k, v in cached.items() if k != "_src"}
-    parts = [(float(c["start"]), sensors.extract(c["file"])) for c in rec["chapters"]]
-    got = sensors.concat(parts)
-    sensors.save(path, {**(got or {}), "_src": np.array(key)})
-    return got
+    return store_recordings.LAB_DIR / "proxies"
 
 
 def proxy_path(rec_id: str) -> Path:
     return proxies_dir() / f"{rec_id}.mp4"
-
-
-def _atomic_write_json(path: Path, doc: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(doc))
-    os.replace(tmp, path)
-
-
-# --------------------------------------------------------------------------
-# Discovery
-# --------------------------------------------------------------------------
-
-@dataclass
-class _VideoInfo:
-    width: int
-    height: int
-    fps: float
-    frames: int
-
-
-_info_cache: dict[tuple[str, float, int], _VideoInfo] = {}
-
-
-def _probe(path: Path) -> _VideoInfo | None:
-    st = path.stat()
-    key = (str(path), st.st_mtime, st.st_size)
-    if key in _info_cache:
-        return _info_cache[key]
-    cap = cv2.VideoCapture(str(path))
-    try:
-        if not cap.isOpened():
-            return None
-        info = _VideoInfo(
-            width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-            height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-            fps=float(cap.get(cv2.CAP_PROP_FPS)),
-            frames=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-        )
-    finally:
-        cap.release()
-    if info.fps <= 0 or info.frames <= 0:
-        return None
-    _info_cache[key] = info
-    return info
-
-
-def _group_key(path: Path) -> tuple[str, int]:
-    """(recording id, chapter number starting at 1) for a media file."""
-    m = _GOPR.match(path.stem)
-    if m:
-        return m.group(1), 1
-    m = _GP.match(path.stem)
-    if m:
-        return m.group(2), int(m.group(1)) + 1
-    return path.stem, 1
-
-
-def scan_recordings() -> list[dict]:
-    """Recordings (without proxy state) found in MEDIA_DIR, sorted by id."""
-    groups: dict[str, list[tuple[int, Path]]] = {}
-    if MEDIA_DIR.is_dir():
-        for p in MEDIA_DIR.iterdir():
-            if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS:
-                rec_id, chapter = _group_key(p)
-                groups.setdefault(rec_id, []).append((chapter, p))
-
-    recs: list[dict] = []
-    for rec_id, items in sorted(groups.items()):
-        items.sort()
-        chapters: list[dict] = []
-        infos: list[_VideoInfo] = []
-        t = 0.0
-        for _, p in items:
-            info = _probe(p)
-            if info is None:
-                _log(f"skipping unreadable file {p}")
-                continue
-            dur = info.frames / info.fps
-            chapters.append({"file": str(p), "start": round(t, 6), "duration": round(dur, 6), "frames": info.frames})
-            infos.append(info)
-            t += dur
-        if not chapters:
-            continue
-        first = infos[0]
-        is_gopro = bool(_GOPR.match(Path(chapters[0]["file"]).stem))
-        recs.append({
-            "id": rec_id,
-            "name": f"GoPro {rec_id}" if is_gopro else rec_id,
-            "chapters": chapters,
-            "duration": round(t, 3),
-            "width": first.width, "height": first.height, "fps": round(first.fps, 3),
-            "inputSizes": _input_sizes(first.width, first.height),
-            "inputSizesPortrait": _input_sizes(first.width, first.height, "portrait"),
-            "nameHints": name_hints(rec_id),
-        })
-    return recs
-
-
-_NAME = re.compile(r"^([A-Za-z]+)-(left|center|right)-\d+$", re.IGNORECASE)
-
-
-def name_hints(rec_id: str) -> dict:
-    """Body location and camera side encoded in a recording name ``<Location>-<side>-<nnnn>`` ({} when it has none)."""
-    m = _NAME.match(rec_id)
-    return {"cameraLocation": m.group(1).lower(), "cameraSide": m.group(2).lower()} if m else {}
-
-
-def _input_sizes(width: int, height: int, orientation: str = "landscape") -> dict[str, list[int]]:
-    """Model input (w, h) per offered resolution of the full frame (landscape) or the portrait window; options that would upscale are omitted."""
-    sizes = {}
-    for n in profiles.SHORT_SIDE_OPTIONS:
-        try:
-            spec = profiles.window_spec(width, height, n, orientation)
-        except ValueError:
-            continue
-        sizes[f"{n}p"] = [spec.dst_w, spec.dst_h]
-    return sizes
-
-
-def list_recordings() -> list[dict]:
-    recs = scan_recordings()
-    for rec in recs:
-        rec["proxy"] = proxy_status(rec["id"])
-    return recs
-
-
-def get_recording(rec_id: str) -> dict | None:
-    for rec in scan_recordings():
-        if rec["id"] == rec_id:
-            rec["proxy"] = proxy_status(rec_id)
-            return rec
-    return None
-
-
-def recording_frame_at(rec: dict, t: float) -> tuple[str, float]:
-    """Map recording time `t` to (chapter file, time inside that chapter).
-    Times past the end clamp to the last chapter's end."""
-    chapters = rec["chapters"]
-    for ch in chapters:
-        if t < ch["start"] + ch["duration"]:
-            return ch["file"], max(0.0, t - ch["start"])
-    last = chapters[-1]
-    return last["file"], last["duration"]
 
 
 # --------------------------------------------------------------------------
@@ -254,7 +80,7 @@ def _set_proxy(rec_id: str, **fields) -> None:
         st = _building.setdefault(rec_id, {"status": "building", "progress": 0.0, "error": None})
         st.update(fields)
         snapshot = dict(st)
-    _atomic_write_json(proxies_dir() / f"{rec_id}.json", snapshot)
+    util._atomic_write_json(proxies_dir() / f"{rec_id}.json", snapshot)
 
 
 def start_proxy(rec: dict) -> dict:
@@ -318,56 +144,4 @@ def _build_proxy(rec: dict) -> None:
         with _proxy_lock:
             final = _building.pop(rec_id, None)
         if final is not None:
-            _atomic_write_json(proxies_dir() / f"{rec_id}.json", final)
-
-
-# --------------------------------------------------------------------------
-# Per-recording settings (§4)
-# --------------------------------------------------------------------------
-
-def _settings_path(rec_id: str) -> Path:
-    return LAB_DIR / "recordings" / f"{rec_id}.json"
-
-
-def _body_locations() -> list[str]:
-    try:
-        import collision
-
-        return list((collision.load_config().get("body") or {}).get("cameraLocations", {}))
-    except Exception:  # noqa: BLE001 - no config: no location default
-        return []
-
-
-def _distance_defaults() -> tuple[str, bool]:
-    """The object distance and horizon switch of collision.json (distance.objectDistance / useHorizon)."""
-    try:
-        import collision
-
-        d = collision.load_config().get("distance", {})
-        return d.get("objectDistance", "depth"), bool(d.get("useHorizon", True))
-    except Exception:  # noqa: BLE001 - no config: the v26.2.2 behaviour
-        return "depth", True
-
-
-def get_settings(rec_id: str, default_mount: str) -> dict:
-    """Stored settings, or the defaults when nothing was saved. Camera location and side default from the recording
-    name (``Chest-center-0004``: chest, center) where the body calibration has that location."""
-    hints = name_hints(rec_id)
-    location = hints.get("cameraLocation")
-    if location not in _body_locations():
-        location = None
-    obj_dist, use_h = _distance_defaults()
-    defaults = {"mount": default_mount, "hfovDeg": None,
-                "cameraHeightM": None, "stepLengthM": None,
-                "projection": "auto", "distanceSource": "depth",
-                "userHeightM": None, "cameraLocation": location, "cameraSide": hints.get("cameraSide", "center"),
-                "orientation": "landscape", "objectDistance": obj_dist, "useHorizon": use_h}
-    try:
-        stored = json.loads(_settings_path(rec_id).read_text())
-    except (OSError, ValueError):
-        return defaults
-    return {**defaults, **{k: stored[k] for k in defaults if k in stored}}
-
-
-def save_settings(rec_id: str, settings: dict) -> None:
-    _atomic_write_json(_settings_path(rec_id), settings)
+            util._atomic_write_json(proxies_dir() / f"{rec_id}.json", final)

@@ -20,15 +20,12 @@ Design notes:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import queue
-import re
 import sys
 import threading
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
@@ -39,218 +36,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import egoflow  # noqa: E402
 import profiles  # noqa: E402
 from lab import recordings  # noqa: E402
+from lab._forward import install  # noqa: E402
+from lab.store import constants, errors, runs, util  # noqa: E402
+from lab.store import requests as store_requests  # noqa: E402
 
-LAB_DIR = recordings.LAB_DIR
-GRID_W = 240
-NO_DATA = 255   # grid cell outside the analysed window of a portrait run (collision.NO_DATA)
-ANALYSIS_VERSION = 3  # 3: motion.npz adds `resid` (v26.1.11); 2: ego-motion track (motion.npz); v26.1.0 runs are implicitly 1
-PROFILES = ["default", "production", "half", "quarter"]  # legacy names, still accepted
-RESOLUTIONS = [f"{n}p" for n in profiles.SHORT_SIDE_OPTIONS]  # what the UI offers
-IDLE_SECONDS = float(os.environ.get("HACKEYE_LAB_IDLE_SECONDS", "300"))
-RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")
-DEPTH_MODELS = ("none", "da3-small", "da3-base", "da2-metric-outdoor-small", "unidepth-v2-s")
-# anchor mode of each depth variant (collision.run_collision depth["anchor"])
-DEPTH_ANCHOR = {"da3-small": "per-frame", "da3-base": "per-frame",
-                "da2-metric-outdoor-small": "plane", "unidepth-v2-s": "none"}
-# One-off: DA2 runs analysed before the default became "plane" stored anchor "initial" in depth.npz.
-# The npz value normally beats the variant table, but these superseded values are ignored so a
-# collision re-run of an old DA2 run uses the current default.
-SUPERSEDED_ANCHORS = {"da2-metric-outdoor-small": {"initial"}}
-DEPTH_W, DEPTH_H = 120, 68          # stored depth map size (CONTRACTS depth.npz)
-DEPTH_MIN_REL = 1e-3             # floor for relative depth (non-finite / <= 0 become nan)
-DEPTH_MIN_M, DEPTH_MAX_M = 0.1, 200.0   # clip range for metric depth (metres)
-DEFAULT_MODEL = os.environ.get("HACKEYE_LAB_DEFAULT_MODEL", "Yolo26m-sem-HackEye26.1-48-1280.pt")
-MODEL_DIRS = [(Path(os.environ.get("HACKEYE_MODELS_DIR", "/models")), "*.pt"),
-              (Path(os.environ.get("HACKEYE_RELEASES_DIR", "/hackeye-models")), "*HackEye*.pt")]
+# v26.3.0 p5-02: the names below moved to lab.store (audit 7.4) and stay reachable here as forwards to their home module
+# (reads, writes and deletes); code in this module reads them as attributes of the home (`runs._active`), never as a local copy.
+install(__name__, {
+    **dict.fromkeys(
+        ("GRID_W", "NO_DATA", "ANALYSIS_VERSION", "PROFILES", "RESOLUTIONS", "IDLE_SECONDS", "RUN_ID_RE", "DEPTH_MODELS",
+         "DEPTH_ANCHOR", "SUPERSEDED_ANCHORS", "DEPTH_W", "DEPTH_H", "DEPTH_MIN_REL", "DEPTH_MIN_M", "DEPTH_MAX_M",
+         "DEFAULT_MODEL", "MODEL_DIRS"), "lab.store.constants"),
+    **dict.fromkeys(("RunError", "RunConflict", "_Cancelled"), "lab.store.errors"),
+    **dict.fromkeys(("_now", "_log", "_write_json"), "lab.store.util"),
+    **dict.fromkeys(
+        ("LAB_DIR", "run_dir", "_state_lock", "_active", "get_run", "list_runs", "_update_run", "ACTIVE_STATUSES",
+         "find_active_for_recording", "_conflict_message", "_remove_partial_outputs", "_PARTIAL_OUTPUTS"), "lab.store.runs"),
+    **dict.fromkeys(
+        ("_normalise_request", "request_side", "run_window", "DEVICES", "_parse_device", "_cpu_threads", "_run_id"),
+        "lab.store.requests"),
+    "list_models": "lab.store.models",
+})
 
-
-class RunError(ValueError):
-    """Bad request (maps to HTTP 4xx)."""
-
-
-class RunConflict(RunError):
-    """Request conflicts with current state (maps to HTTP 409)."""
-
-
-class _Cancelled(Exception):
-    """Raised inside the worker when a run's cancel flag is seen."""
-
-
-def _log(msg: str) -> None:
-    print(f"[lab] {msg}", file=sys.stderr, flush=True)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-# --------------------------------------------------------------------------
-# Models
-# --------------------------------------------------------------------------
-
-def list_models() -> list[dict]:
-    paths: list[Path] = []
-    for directory, pattern in MODEL_DIRS:
-        if directory.is_dir():
-            paths += sorted(directory.glob(pattern))
-    releases = [p for p in paths if "HackEye" in p.name]
-    # Newest app release first: versioned names ("...HackEye26.1-48-1280") by version, then
-    # legacy dated names ("...HackEye20261011") by date. Dataset-creation models
-    # ("...-Vistas124-HackEye-1280") and other unversioned names rank last, so the
-    # fallback never picks one while an app release exists.
-    def release_key(p: Path) -> tuple[int, tuple[int, ...], str]:
-        v = re.search(r"HackEye(\d+)\.(\d+)(?:\.(\d+))?-", p.name)
-        if v:
-            return (2, tuple(int(x or 0) for x in v.groups()), p.name)
-        d = re.search(r"HackEye(\d{8})", p.name)
-        if d:
-            return (1, (int(d.group(1)),), p.name)
-        return (0, (), p.name)
-
-    # Pinned default (by file name); without that file, the newest release.
-    default = next((p for p in releases if p.name == DEFAULT_MODEL), None)
-    if default is None and releases:
-        default = max(releases, key=release_key)
-    return [{"path": str(p), "name": p.name, "default": p == default} for p in paths]
-
-
-# --------------------------------------------------------------------------
-# Run storage
-# --------------------------------------------------------------------------
-
-def run_dir(run_id: str) -> Path:
-    return LAB_DIR / "runs" / run_id
-
-
-def _write_json(path: Path, doc: dict) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(doc))
-    os.replace(tmp, path)
-
-
-_state_lock = threading.Lock()
-_active: dict[str, dict] = {}  # run_id -> live run.json (queued/running)
-
-
-def get_run(run_id: str) -> dict | None:
-    with _state_lock:
-        if run_id in _active:
-            return dict(_active[run_id])
-    try:
-        return json.loads((run_dir(run_id) / "run.json").read_text())
-    except (OSError, ValueError):
-        return None
-
-
-def list_runs(recording: str | None) -> list[dict]:
-    runs = []
-    root = LAB_DIR / "runs"
-    if root.is_dir():
-        for d in root.iterdir():
-            if RUN_ID_RE.match(d.name):
-                doc = get_run(d.name)
-                if doc and (recording is None or doc["request"]["recording"] == recording):
-                    runs.append(doc)
-    runs.sort(key=lambda r: r["createdAt"], reverse=True)
-    return runs
-
-
-def _update_run(run_id: str, persist: bool = True, **fields) -> dict:
-    with _state_lock:
-        doc = _active.get(run_id)
-        if doc is None:
-            doc = json.loads((run_dir(run_id) / "run.json").read_text())
-        doc.update(fields)
-        if run_id in _active:
-            _active[run_id] = doc
-        snapshot = dict(doc)
-    if persist:
-        _write_json(run_dir(run_id) / "run.json", snapshot)
-    return snapshot
-
-
-# --------------------------------------------------------------------------
-# Request handling
-# --------------------------------------------------------------------------
-
-def _normalise_request(req: dict) -> dict:
-    rec = recordings.get_recording(str(req.get("recording", "")))
-    if rec is None:
-        raise RunError(f"Unknown recording: {req.get('recording')!r}")
-    try:
-        start, end, fps = float(req["start"]), float(req["end"]), float(req.get("fps", 6.0))
-    except (KeyError, TypeError, ValueError):
-        raise RunError("start, end and fps must be numbers") from None
-    # An end past the footage is clamped (the UI's default range may overshoot
-    # a short clip); the clamped value is what gets stored and hashed.
-    end = min(end, rec["duration"])
-    if not (0 <= start < end):
-        raise RunError(f"Range must satisfy 0 <= start < end <= {rec['duration']:.1f}")
-    if not (0 < fps <= 60):
-        raise RunError("fps must be in (0, 60]")
-    profile = req.get("profile") or "default"
-    if profile not in RESOLUTIONS + PROFILES:
-        raise RunError(f"profile must be one of {RESOLUTIONS + PROFILES}")
-    orientation = req.get("orientation") or "landscape"
-    if orientation not in profiles.ORIENTATIONS:
-        raise RunError(f"orientation must be one of {list(profiles.ORIENTATIONS)}")
-    side = request_side(req, rec)
-    if profile in RESOLUTIONS:
-        try:
-            profiles.window_spec(rec["width"], rec["height"], int(profile[:-1]), orientation, side)
-        except ValueError as e:
-            raise RunError(str(e)) from None
-    model = req.get("model")
-    if model not in {m["path"] for m in list_models()}:
-        raise RunError(f"Unknown model: {model!r}")
-    depth = req.get("depth") or "none"
-    if depth not in DEPTH_MODELS:
-        raise RunError(f"depth must be one of {list(DEPTH_MODELS)}")
-    request = {"recording": rec["id"], "start": start, "end": end,
-               "model": model, "profile": profile, "fps": fps}
-    if depth != "none":  # omitted for "none" so ids of depth-less requests stay stable
-        request["depth"] = depth
-    if orientation != "landscape":  # a landscape run is the full frame: its request (and id) stay as they were
-        request["orientation"] = orientation
-        request["side"] = side      # the window depends on the side
-    return request
-
-
-def request_side(req: dict, rec: dict) -> str:
-    """Camera side of a request: its own `side`, else the recording's saved Camera side."""
-    side = req.get("side") or recordings.get_settings(rec["id"], "")["cameraSide"]
-    if side not in profiles.SIDES:
-        raise RunError(f"side must be one of {list(profiles.SIDES)}")
-    return side
-
-
-def run_window(rec: dict, request: dict) -> dict:
-    """Source-pixel window of a run's request ({x0, y0, w, h})."""
-    return profiles.camera_window(rec["width"], rec["height"], request.get("orientation", "landscape"),
-                                  request.get("side", "center"))
-
-
-DEVICES = ["gpu", "cpu"]
-
-
-def _parse_device(req: dict) -> str:
-    """The execution device of a request. Not part of the hashed request: it changes speed, not results."""
-    # HACKEYE_LAB_DEFAULT_DEVICE: default for requests that name no device (staging Lab runs on CPU); unset = "gpu".
-    device = req.get("device") or os.environ.get("HACKEYE_LAB_DEFAULT_DEVICE") or "gpu"
-    if device not in DEVICES:
-        raise RunError(f"device must be one of {DEVICES}")
-    return device
-
-
-def _cpu_threads() -> int:
-    return int(os.environ.get("HACKEYE_LAB_CPU_THREADS") or max(1, (os.cpu_count() or 2) - 2))
-
-
-def _run_id(request: dict) -> str:
-    mtime = Path(request["model"]).stat().st_mtime
-    canon = json.dumps({**request, "analysisVersion": ANALYSIS_VERSION}, sort_keys=True,
-                       separators=(",", ":")) + f"|{mtime}"
-    return hashlib.sha1(canon.encode()).hexdigest()[:12]
 
 
 _jobs: "queue.Queue[str]" = queue.Queue()
@@ -259,20 +66,6 @@ _cache: "_ModelCache | None" = None  # the worker's model cache (set when the wo
 _cancel_flags: dict[str, threading.Event] = {}  # run_id -> set when cancellation requested
 _busy: str | None = None  # run id the worker is executing right now
 _maintenance = False  # True while a version wipe is in progress: submissions are refused
-ACTIVE_STATUSES = ("queued", "running")
-
-
-def find_active_for_recording(active: dict[str, dict], rec_id: str) -> dict | None:
-    """The queued/running run doc of `rec_id` among `active`, if any (CONTRACTS 11a)."""
-    for doc in active.values():
-        if doc["request"]["recording"] == rec_id and doc["status"] in ACTIVE_STATUSES:
-            return doc
-    return None
-
-
-def _conflict_message(doc: dict) -> str:
-    return (f"Analysis already running for {doc['request']['recording']} "
-            f"(run {doc['id']}, {round((doc.get('progress') or 0) * 100)}%)")
 
 
 def submit_run(req: dict) -> dict:
@@ -282,81 +75,65 @@ def submit_run(req: dict) -> dict:
     (never stored in run.json). `"force": true` re-runs a finished/cancelled/failed
     run from scratch under the same id (old outputs removed, reviews untouched); an
     in-flight run is returned as is."""
-    device = _parse_device(req)
-    request = _normalise_request(req)
+    device = store_requests._parse_device(req)
+    request = store_requests._normalise_request(req)
     rec = recordings.get_recording(request["recording"])
     force = req.get("force") is True
-    run_id = _run_id(request)
-    existing = get_run(run_id)
+    run_id = store_requests._run_id(request)
+    existing = runs.get_run(run_id)
     if existing and existing["status"] in ("done", "queued", "running"):
         # A run.json left as queued/running by a crashed service has no live
         # entry in _active; fall through and redo it.
-        with _state_lock:
-            live = run_id in _active
+        with runs._state_lock:
+            live = run_id in runs._active
         if live:
             return existing
         if existing["status"] == "done" and not force:
             return {**existing, "reused": True}
     from lab import collisions
     if collisions.job_active():
-        raise RunConflict("A collision re-run is running; wait for it or cancel it")
-    with _state_lock:
+        raise errors.RunConflict("A collision re-run is running; wait for it or cancel it")
+    with runs._state_lock:
         if _maintenance:
-            raise RunConflict("Lab is cleaning up for a new version; try again in a minute")
-        busy = find_active_for_recording(_active, request["recording"])
+            raise errors.RunConflict("Lab is cleaning up for a new version; try again in a minute")
+        busy = runs.find_active_for_recording(runs._active, request["recording"])
         if busy is not None:
-            raise RunConflict(_conflict_message(busy))
+            raise errors.RunConflict(runs._conflict_message(busy))
 
     doc = {
         "id": run_id, "request": request, "orientation": request.get("orientation", "landscape"),
         "side": request.get("side") or req.get("side") or "center",
-        "window": run_window(rec, request) if rec else None,
-        "device": device, "analysisVersion": ANALYSIS_VERSION, "status": "queued", "progress": 0.0, "error": None,
-        "createdAt": _now(), "finishedAt": None,
-        "frameCount": 0, "motionFrames": 0, "gridW": GRID_W, "gridH": 0, "srcW": 0, "srcH": 0,
+        "window": store_requests.run_window(rec, request) if rec else None,
+        "device": device, "analysisVersion": constants.ANALYSIS_VERSION, "status": "queued", "progress": 0.0, "error": None,
+        "createdAt": util._now(), "finishedAt": None,
+        "frameCount": 0, "motionFrames": 0, "gridW": constants.GRID_W, "gridH": 0, "srcW": 0, "srcH": 0,
         "inputSpec": None, "modelName": Path(request["model"]).name, "classNames": [],
         "msPerFrame": None, "collisionVersion": None,
         "depth": request.get("depth", "none"), "depthUnits": None, "depthMsPerFrame": None,
     }
-    run_dir(run_id).mkdir(parents=True, exist_ok=True)
-    with _state_lock:
+    runs.run_dir(run_id).mkdir(parents=True, exist_ok=True)
+    with runs._state_lock:
         # Re-check under the same lock that registers the run, so two racing
         # POSTs for one recording can't both pass the guard above.
-        busy = find_active_for_recording(_active, request["recording"])
+        busy = runs.find_active_for_recording(runs._active, request["recording"])
         if busy is not None:
-            raise RunConflict(_conflict_message(busy))
+            raise errors.RunConflict(runs._conflict_message(busy))
         if existing:  # a forced / retried run starts clean (reviews live outside the run dir)
-            _remove_partial_outputs(run_id)
-        _active[run_id] = doc
+            runs._remove_partial_outputs(run_id)
+        runs._active[run_id] = doc
         _cancel_flags[run_id] = threading.Event()
-    _write_json(run_dir(run_id) / "run.json", doc)
+    util._write_json(runs.run_dir(run_id) / "run.json", doc)
     _ensure_worker()
     _jobs.put(run_id)
     return dict(doc)
 
 
-_PARTIAL_OUTPUTS = ("grids.npz", "motion.npz", "depth.npz")
-
-
-def _remove_partial_outputs(run_id: str) -> None:
-    import shutil
-
-    out = run_dir(run_id)
-    shutil.rmtree(out / "masks", ignore_errors=True)
-    shutil.rmtree(out / "collisions", ignore_errors=True)
-    for name in _PARTIAL_OUTPUTS:
-        try:
-            (out / name).unlink()
-        except FileNotFoundError:
-            pass
-
-
 def _finish_cancelled(run_id: str) -> None:
-    _remove_partial_outputs(run_id)
+    runs._remove_partial_outputs(run_id)
     _finish(run_id, status="cancelled", error=None)
-    with _state_lock:
+    with runs._state_lock:
         _cancel_flags.pop(run_id, None)
-    _log(f"run {run_id}: cancelled")
+    util._log(f"run {run_id}: cancelled")
 
 
 def cancel_run(run_id: str) -> dict | None:
@@ -365,14 +142,14 @@ def cancel_run(run_id: str) -> dict | None:
     Returns the run doc (a queued run is already `cancelled`; a running one
     flips as soon as the worker sees the flag between frames). None if the
     run is unknown; raises RunConflict if it is not queued/running."""
-    doc = get_run(run_id)
+    doc = runs.get_run(run_id)
     if doc is None:
         return None
-    with _state_lock:
-        live = run_id in _active
+    with runs._state_lock:
+        live = run_id in runs._active
         flag = _cancel_flags.get(run_id)
-    if not live or doc["status"] not in ACTIVE_STATUSES:
-        raise RunConflict(f"Run {run_id} is {doc['status']}; nothing to cancel")
+    if not live or doc["status"] not in runs.ACTIVE_STATUSES:
+        raise errors.RunConflict(f"Run {run_id} is {doc['status']}; nothing to cancel")
     if flag is not None:
         flag.set()
     with _jobs.mutex:  # not started yet: pull it out of the queue
@@ -384,33 +161,33 @@ def cancel_run(run_id: str) -> dict | None:
     if dequeued:
         _jobs.task_done()
         _finish_cancelled(run_id)
-    return get_run(run_id)
+    return runs.get_run(run_id)
 
 
 def cancel_all() -> list[str]:
     """Cancel every queued and running run; returns their ids. (v26.2.10: and the collision re-run job.)"""
     from lab import collisions
     collisions.cancel_job()
-    with _state_lock:
-        ids = [i for i, d in _active.items() if d["status"] in ACTIVE_STATUSES]
+    with runs._state_lock:
+        ids = [i for i, d in runs._active.items() if d["status"] in runs.ACTIVE_STATUSES]
     for i in ids:
         try:
             cancel_run(i)
-        except RunConflict:
+        except errors.RunConflict:
             pass
     return ids
 
 
 def is_idle() -> bool:
     from lab import collisions
-    with _state_lock:
-        return _busy is None and not _active and _jobs.empty() and not collisions.job_active()
+    with runs._state_lock:
+        return _busy is None and not runs._active and _jobs.empty() and not collisions.job_active()
 
 
 def analysis_active() -> bool:
     """A run is queued or running (v26.2.10: a collision re-run job never runs together with one)."""
-    with _state_lock:
-        return any(d["status"] in ACTIVE_STATUSES for d in _active.values())
+    with runs._state_lock:
+        return any(d["status"] in runs.ACTIVE_STATUSES for d in runs._active.values())
 
 
 def wait_idle(timeout: float) -> bool:
@@ -431,14 +208,14 @@ def release_model() -> None:
 def begin_maintenance() -> None:
     """Refuse new submissions and cancel everything in flight (version wipe)."""
     global _maintenance
-    with _state_lock:
+    with runs._state_lock:
         _maintenance = True
     cancel_all()
 
 
 def end_maintenance() -> None:
     global _maintenance
-    with _state_lock:
+    with runs._state_lock:
         _maintenance = False
 
 
@@ -463,7 +240,7 @@ class _ModelCache:
         if device == "cpu":
             import torch
 
-            torch.set_num_threads(_cpu_threads())
+            torch.set_num_threads(store_requests._cpu_threads())
             return torch.device("cpu")
         import gpu_guard
 
@@ -472,8 +249,8 @@ class _ModelCache:
     def get(self, path: str, device: str = "gpu"):
         if self.path != path or self.device != device:
             self.release()
-            (LAB_DIR / ".ultralytics").mkdir(parents=True, exist_ok=True)
-            os.environ.setdefault("YOLO_CONFIG_DIR", str(LAB_DIR / ".ultralytics"))
+            (runs.LAB_DIR / ".ultralytics").mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("YOLO_CONFIG_DIR", str(runs.LAB_DIR / ".ultralytics"))
             import segmentation
             from models import SegmentationModel
 
@@ -481,7 +258,7 @@ class _ModelCache:
             self.model = SegmentationModel(path, self._torch_device(device))
             self.path, self.device = path, device
             self.class_names = [segmentation.CLASSES[i]["name"] for i in sorted(segmentation.CLASSES)]
-            _log(f"model loaded: {Path(path).name} on {device} ({time.perf_counter() - t0:.1f}s)")
+            util._log(f"model loaded: {Path(path).name} on {device} ({time.perf_counter() - t0:.1f}s)")
         self.last_used = time.monotonic()
         return self.model
 
@@ -498,7 +275,7 @@ class _ModelCache:
             t0 = time.perf_counter()
             self.depth_model = DepthModel(self._torch_device(device), variant)
             self.depth_variant, self.depth_device = variant, device
-            _log(f"depth model {variant} loaded ({time.perf_counter() - t0:.1f}s)")
+            util._log(f"depth model {variant} loaded ({time.perf_counter() - t0:.1f}s)")
         self.last_used = time.monotonic()
         return self.depth_model
 
@@ -515,12 +292,12 @@ class _ModelCache:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        _log(f"model released: {name}{' + depth' if had_depth else ''}")
+        util._log(f"model released: {name}{' + depth' if had_depth else ''}")
 
 
 def _ensure_worker() -> None:
     global _worker, _cache
-    with _state_lock:
+    with runs._state_lock:
         if _cache is None:
             _cache = _ModelCache()
         if _worker is None or not _worker.is_alive():
@@ -535,22 +312,22 @@ def _worker_loop() -> None:
         try:
             run_id = _jobs.get(timeout=1.0)
         except queue.Empty:
-            if (cache.model is not None or cache.depth_model is not None) and time.monotonic() - cache.last_used > IDLE_SECONDS:
+            if (cache.model is not None or cache.depth_model is not None) and time.monotonic() - cache.last_used > constants.IDLE_SECONDS:
                 cache.release()
             continue
-        with _state_lock:
+        with runs._state_lock:
             _busy = run_id
         try:
             _run_job(run_id, cache)
-        except _Cancelled:
+        except errors._Cancelled:
             _finish_cancelled(run_id)
         except BaseException as exc:  # noqa: BLE001 - incl. SystemExit from gpu_guard
-            _log(f"run {run_id} FAILED: {exc!r}")
+            util._log(f"run {run_id} FAILED: {exc!r}")
             _finish(run_id, status="error", error=str(exc) or repr(exc))
             if isinstance(exc, MemoryError) or "CUDA" in str(exc):
                 cache.release()
         finally:
-            with _state_lock:
+            with runs._state_lock:
                 _busy = None
                 _cancel_flags.pop(run_id, None)
 
@@ -558,13 +335,13 @@ def _worker_loop() -> None:
 def _check_cancel(run_id: str) -> None:
     flag = _cancel_flags.get(run_id)
     if flag is not None and flag.is_set():
-        raise _Cancelled()
+        raise errors._Cancelled()
 
 
 def _finish(run_id: str, **fields) -> None:
-    _update_run(run_id, finishedAt=_now(), **fields)
-    with _state_lock:
-        _active.pop(run_id, None)
+    runs._update_run(run_id, finishedAt=util._now(), **fields)
+    with runs._state_lock:
+        runs._active.pop(run_id, None)
 
 
 MOTION_W, MOTION_H = 160, 90
@@ -715,26 +492,26 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     from profiles import resolve_input_spec
     from segmentation import grid_from_semantic_mask
 
-    doc = get_run(run_id)
+    doc = runs.get_run(run_id)
     req = doc["request"]
     device = doc.get("device") or "gpu"  # older run docs predate the field
     rec = recordings.get_recording(req["recording"])
     if rec is None:
         raise RuntimeError("Recording disappeared")
     _check_cancel(run_id)
-    _update_run(run_id, status="running", progress=0.0)
+    runs._update_run(run_id, status="running", progress=0.0)
 
     model = cache.get(req["model"], device)
     src_w, src_h = rec["width"], rec["height"]
     profile = None if req["profile"] == "default" else req["profile"]
     # The analysed window of the frame (CONTRACTS section 1a): the full frame, or a portrait window of it. The stored grids,
     # masks and depth maps always span the whole source frame at the same cell size; cells outside the window hold NO_DATA.
-    win = run_window(rec, req)
+    win = store_requests.run_window(rec, req)
     windowed = not profiles.is_full_window(win, src_w, src_h)
     spec = resolve_input_spec(win["w"], win["h"], profile, None, None)
-    grid_h = round(GRID_W * src_h / src_w)
-    g0, gcols = profiles.grid_columns(win, src_w, GRID_W) if windowed else (0, GRID_W)
-    d0, d1 = round(g0 * DEPTH_W / GRID_W), round((g0 + gcols) * DEPTH_W / GRID_W)
+    grid_h = round(constants.GRID_W * src_h / src_w)
+    g0, gcols = profiles.grid_columns(win, src_w, constants.GRID_W) if windowed else (0, constants.GRID_W)
+    d0, d1 = round(g0 * constants.DEPTH_W / constants.GRID_W), round((g0 + gcols) * constants.DEPTH_W / constants.GRID_W)
 
     # class id -> RGBA; safety level 0 (ignored) stays fully transparent. Row 255 (no data) too.
     lut = np.zeros((max(max(segmentation.CLASSES) + 1, 256 if windowed else 0), 4), np.uint8)
@@ -745,13 +522,13 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
 
     start, end, fps = req["start"], req["end"], req["fps"]
     n_target = int(np.ceil((end - start) * fps - 1e-9))
-    out = run_dir(run_id)
+    out = runs.run_dir(run_id)
     masks_dir = out / "masks"
     if masks_dir.exists():
         for old in masks_dir.glob("*.png"):
             old.unlink()
     masks_dir.mkdir(parents=True, exist_ok=True)
-    _update_run(run_id, gridW=GRID_W, gridH=grid_h, srcW=src_w, srcH=src_h,
+    runs._update_run(run_id, gridW=constants.GRID_W, gridH=grid_h, srcW=src_w, srcH=src_h,
                 inputSpec={"w": spec.dst_w, "h": spec.dst_h, "description": spec.description},
                 classNames=cache.class_names, window=win,
                 gridWindow={"c0": g0, "cols": gcols} if windowed else None)
@@ -759,7 +536,7 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     depth_model = None
     if req.get("depth", "none") != "none":
         depth_model = cache.get_depth(req["depth"], device)
-        _log(f"run {run_id}: depth {req['depth']}")
+        util._log(f"run {run_id}: depth {req['depth']}")
     depth_units = None
     depth_maps: list[np.ndarray] = []
     depth_seconds = 0.0
@@ -781,16 +558,16 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
             if depth_model is not None:
                 td = time.perf_counter()
                 raw, depth_units = depth_model.predict(rgb)
-                small_d = cv2.resize(raw, (d1 - d0, DEPTH_H) if windowed else (DEPTH_W, DEPTH_H), interpolation=cv2.INTER_AREA)
+                small_d = cv2.resize(raw, (d1 - d0, constants.DEPTH_H) if windowed else (constants.DEPTH_W, constants.DEPTH_H), interpolation=cv2.INTER_AREA)
                 small_d[~np.isfinite(small_d) | (small_d <= 0)] = np.nan
                 if windowed:     # full-frame depth map: NaN outside the window
-                    full_d = np.full((DEPTH_H, DEPTH_W), np.nan, small_d.dtype)
+                    full_d = np.full((constants.DEPTH_H, constants.DEPTH_W), np.nan, small_d.dtype)
                     full_d[:, d0:d1] = small_d
                     small_d = full_d
                 if depth_units == "metric":
-                    depth_maps.append(np.clip(small_d, DEPTH_MIN_M, DEPTH_MAX_M).astype(np.float16))
+                    depth_maps.append(np.clip(small_d, constants.DEPTH_MIN_M, constants.DEPTH_MAX_M).astype(np.float16))
                 else:
-                    depth_maps.append(np.maximum(small_d, DEPTH_MIN_REL).astype(np.float16))
+                    depth_maps.append(np.maximum(small_d, constants.DEPTH_MIN_REL).astype(np.float16))
                 depth_seconds += time.perf_counter() - td
             letterboxed, meta = letterbox_with_meta(rgb, spec.dst_w, spec.dst_h)
             class_ids = model.predict_class_grid(letterboxed, spec.dst_w, spec.dst_h)
@@ -803,10 +580,10 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
             x1 = round(meta.pad_x + meta.src_w * meta.scale)
             crop = grid[y0:y1, x0:x1].astype(np.uint8)
             if windowed:
-                small = np.full((grid_h, GRID_W), NO_DATA, np.uint8)
+                small = np.full((grid_h, constants.GRID_W), constants.NO_DATA, np.uint8)
                 small[:, g0:g0 + gcols] = cv2.resize(crop, (gcols, grid_h), interpolation=cv2.INTER_NEAREST)
             else:
-                small = cv2.resize(crop, (GRID_W, grid_h), interpolation=cv2.INTER_NEAREST)
+                small = cv2.resize(crop, (constants.GRID_W, grid_h), interpolation=cv2.INTER_NEAREST)
 
             i = len(grids)
             rgba = lut[small]
@@ -814,8 +591,8 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
             grids.append(small)
             times.append(frame_t)
             if i == 0:
-                _log(f"run {run_id}: first frame ready, seek {reader.seek_seconds:.2f}s")
-            _update_run(run_id, persist=False, progress=(k + 1) / n_target)
+                util._log(f"run {run_id}: first frame ready, seek {reader.seek_seconds:.2f}s")
+            runs._update_run(run_id, persist=False, progress=(k + 1) / n_target)
         _check_cancel(run_id)
         reader.finish_motion()
     finally:
@@ -828,24 +605,24 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
                         index=np.arange(len(grids), dtype=np.int32))
     if depth_model is not None:
         np.savez_compressed(out / "depth.npz", depth=np.stack(depth_maps), t=np.array(times, np.float64),
-                            units=np.array(depth_units), anchor=np.array(DEPTH_ANCHOR.get(req["depth"], "")))
-        _update_run(run_id, depth=req["depth"], depthUnits=depth_units,
+                            units=np.array(depth_units), anchor=np.array(constants.DEPTH_ANCHOR.get(req["depth"], "")))
+        runs._update_run(run_id, depth=req["depth"], depthUnits=depth_units,
                     depthMsPerFrame=round(depth_seconds * 1000 / len(depth_maps), 1))
     motion = reader.motion_track()
     np.savez_compressed(out / "motion.npz", **motion)
     n_motion = len(motion["t"])
-    _log(f"run {run_id}: motion {n_motion} source frames, {reader.motion_seconds * 1000 / max(n_motion, 1):.2f} ms/frame")
-    _update_run(run_id, analysisVersion=ANALYSIS_VERSION, motionFrames=n_motion,
+    util._log(f"run {run_id}: motion {n_motion} source frames, {reader.motion_seconds * 1000 / max(n_motion, 1):.2f} ms/frame")
+    runs._update_run(run_id, analysisVersion=constants.ANALYSIS_VERSION, motionFrames=n_motion,
                 frameCount=len(grids), msPerFrame=round(elapsed * 1000 / len(grids), 1),
                 seekSeconds=round(reader.seek_seconds, 3), progress=1.0)
-    _log(f"run {run_id}: {len(grids)} frames in {elapsed:.1f}s")
+    util._log(f"run {run_id}: {len(grids)} frames in {elapsed:.1f}s")
 
     _check_cancel(run_id)
     cdoc = None
     try:
         cdoc = collision_pass(run_id)
     except Exception as exc:  # noqa: BLE001 - inference results are still usable
-        _log(f"run {run_id}: collision pass failed: {exc!r}")
+        util._log(f"run {run_id}: collision pass failed: {exc!r}")
     if cdoc is not None:
         _build_worldmap(run_id, cdoc["id"])
     _finish(run_id, status="done", progress=1.0)
@@ -856,7 +633,7 @@ def _build_worldmap(run_id: str, cid: str) -> None:
     try:
         worldmap_pass(run_id, cid)
     except Exception as exc:  # noqa: BLE001 - the run is usable without a map
-        _log(f"run {run_id}: worldmap pass failed: {exc!r}")
+        util._log(f"run {run_id}: worldmap pass failed: {exc!r}")
 
 
 # --------------------------------------------------------------------------
@@ -875,11 +652,11 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", 
         import collision
         import worldmap
     except ImportError as exc:
-        _log(f"collision module unavailable ({exc}); skipping collision pass")
+        util._log(f"collision module unavailable ({exc}); skipping collision pass")
         return None
     from lab import collisions
 
-    doc = get_run(run_id)
+    doc = runs.get_run(run_id)
     overrides = collisions.validate_overrides(overrides)
     base_config = collision.load_config()
     base_wcfg = worldmap.load_config()
@@ -901,7 +678,7 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", 
     gwin = doc.get("gridWindow")
     if gwin:
         window = {**gwin, **doc["window"], "srcW": doc["srcW"], "srcH": doc["srcH"]}
-    out = run_dir(run_id)
+    out = runs.run_dir(run_id)
     with np.load(out / "grids.npz") as z:
         grids, times = z["grids"], z["t"]
     motion = None  # v26.1.0 runs have no motion track
@@ -916,10 +693,10 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", 
             units = str(z["units"]) if "units" in z.files else "metric"   # pre-v26.2.x runs are metric
             anchor = str(z["anchor"]) if "anchor" in z.files else ""
             variant = doc["request"].get("depth") or doc.get("depth") or ""
-            if anchor in SUPERSEDED_ANCHORS.get(variant, ()):
+            if anchor in constants.SUPERSEDED_ANCHORS.get(variant, ()):
                 anchor = ""
             if anchor not in ("per-frame", "initial", "plane", "none"):  # npz field > variant table > default rule
-                anchor = DEPTH_ANCHOR.get(variant)
+                anchor = constants.DEPTH_ANCHOR.get(variant)
             if anchor is None:
                 anchor = "per-frame" if units == "relative" else "none"
             depth = {"t": z["t"], "depth": z["depth"], "units": units, "anchor": anchor}
@@ -939,10 +716,10 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", 
         elapsed = round(time.perf_counter() - t0, 3)
         hazards.setdefault("settings", {})["mount"] = stored["mount"]
         cdir.mkdir(parents=True, exist_ok=True)
-        _write_json(cdir / "hazards.json", hazards)
-        _write_json(cdir / "events.json", events)
+        util._write_json(cdir / "hazards.json", hazards)
+        util._write_json(cdir / "events.json", events)
         evs = events.get("events", [])
-        cdoc = {"id": cid, "runId": run_id, "createdAt": _now(), "collisionVersion": config["version"],
+        cdoc = {"id": cid, "runId": run_id, "createdAt": util._now(), "collisionVersion": config["version"],
                 "worldmapVersion": None, "settings": stored,
                 "resolved": {**hazards.get("settings", {}), "distanceSource": hazards.get("distanceSource"),
                              "projection": hazards.get("projection")},
@@ -964,8 +741,8 @@ def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", 
     fields = {"collisionVersion": config["version"]}
     if window is None and doc.get("side") is not None:
         fields["side"] = side          # a full-frame run shows the side its lane offset was last computed for
-    _update_run(run_id, **fields)
-    _log(f"run {run_id}: collision pass {cid} {elapsed:.2f}s")
+    runs._update_run(run_id, **fields)
+    util._log(f"run {run_id}: collision pass {cid} {elapsed:.2f}s")
     return cdoc
 
 
@@ -977,8 +754,8 @@ def worldmap_pass(run_id: str, cid: str | None = None, job=None) -> dict:
     import worldmap
     from lab import collisions
 
-    out = run_dir(run_id)
-    doc = get_run(run_id)
+    out = runs.run_dir(run_id)
+    doc = runs.get_run(run_id)
     cid = collisions.resolve(doc, cid)
     cdir = collisions.collision_dir(run_id, cid)
     for name, base in (("grids.npz", out), ("hazards.json", cdir)):
@@ -1008,7 +785,7 @@ def worldmap_pass(run_id: str, cid: str | None = None, job=None) -> dict:
     if cdoc:
         cdoc["worldmapVersion"] = cfg["version"]
         collisions.write_doc(run_id, cid, cdoc)
-    _log(f"run {run_id}: worldmap pass {cid} {elapsed:.2f}s")
+    util._log(f"run {run_id}: worldmap pass {cid} {elapsed:.2f}s")
     ms = arrays["ms"]
     return {"version": cfg["version"], "elapsedSeconds": elapsed, "frames": int(len(ms)),
             "msMean": round(float(ms.mean()), 2), "msP95": round(float(np.percentile(ms, 95)), 2)}

@@ -9,107 +9,23 @@ overrides, labels, delete and the A/B comparison. Errors are CollisionError(stat
 from __future__ import annotations
 
 import json
-import re
 import shutil
 import threading
 
 from engine.core import config as _config
 from lab import analysis
+from lab._forward import install
+from lab.store import collision_docs as cdocs
+from lab.store import errors
 
-CID_RE = re.compile(r"^c[1-9][0-9]{0,5}$")
-MAX_LABEL = 60
-MATCH_WINDOW_S = 1.0
-FILES = ("hazards.json", "events.json", "worldmap.npz", "collision.json")
-
-_lock = threading.RLock()
-
-
-class CollisionError(Exception):
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
-
-
-def collisions_root(run_id: str):
-    return analysis.run_dir(run_id) / "collisions"
-
-
-def collision_dir(run_id: str, cid: str):
-    return collisions_root(run_id) / cid
-
-
-def ids(run: dict) -> list[str]:
-    return list(run.get("collisions") or [])
-
-
-def latest(run: dict) -> str | None:
-    """The newest collision run that is usable (v26.2.10: not one still running, cancelled or failed)."""
-    for cid in reversed(ids(run)):
-        doc = read_doc(run.get("id", ""), cid)
-        if doc is None or doc.get("status", "done") == "done":
-            return cid
-    return None
-
-
-def resolve(run: dict, cid: str | None) -> str:
-    """`cid` (404 when unknown) or, when none is named, the run's latest collision run (404 when it has none)."""
-    if cid is None or cid == "":
-        got = latest(run)
-        if got is None:
-            raise CollisionError(404, "This run has no collision run")
-        return got
-    if not CID_RE.match(cid) or cid not in ids(run):
-        raise CollisionError(404, f"Unknown collision run: {cid}")
-    return cid
-
-
-def read_doc(run_id: str, cid: str) -> dict | None:
-    """collision.json with the live job's progress; a `running` doc without a live job (the service died) reads as `error`."""
-    try:
-        doc = json.loads((collision_dir(run_id, cid) / "collision.json").read_text())
-    except (OSError, ValueError):
-        return None
-    if doc.get("status") == "running":
-        job = _job
-        if job is not None and job.run_id == run_id and job.cid == cid:
-            doc["progress"] = round(job.progress, 4)
-        else:
-            doc.update(status="error", error="interrupted")
-    _add_effective(doc)
-    return doc
-
-
-def _add_effective(doc: dict) -> None:
-    """v26.2.11: `objectDistanceEffective` (what the run really used: no ground ray without the horizon) in the doc and its `resolved`."""
-    st = doc.get("settings") or {}
-    if not st.get("objectDistance"):
-        return
-    import groundfuse
-    eff = groundfuse.resolved_mode(st.get("objectDistance"), st.get("useHorizon", True))
-    doc["objectDistanceEffective"] = eff
-    if isinstance(doc.get("resolved"), dict):
-        doc["resolved"]["objectDistanceEffective"] = eff
-
-
-def list_docs(run_id: str) -> list[dict]:
-    run = analysis.get_run(run_id) or {}
-    return [d for d in (read_doc(run_id, c) for c in ids(run)) if d is not None]
-
-
-def write_doc(run_id: str, cid: str, doc: dict) -> None:
-    analysis._write_json(collision_dir(run_id, cid) / "collision.json", doc)
-
-
-def update_doc(run_id: str, cid: str, **fields) -> dict | None:
-    with _lock:
-        try:
-            doc = json.loads((collision_dir(run_id, cid) / "collision.json").read_text())
-        except (OSError, ValueError):
-            return None
-        doc.update(fields)
-        write_doc(run_id, cid, doc)
-        return doc
+# v26.3.0 p5-02: the collision docs moved to lab.store (audit 7.5); every moved name stays reachable here as a forward to its home.
+install(__name__, {
+    **dict.fromkeys(
+        ("CID_RE", "MAX_LABEL", "MATCH_WINDOW_S", "FILES", "_lock", "collisions_root", "collision_dir", "ids", "latest", "resolve",
+         "read_doc", "_add_effective", "list_docs", "write_doc", "update_doc", "allocate", "register", "set_label", "delete"),
+        "lab.store.collision_docs"),
+    "CollisionError": "lab.store.errors",
+})
 
 
 # --------------------------------------------------------------------------
@@ -155,21 +71,21 @@ def start_job(run_id: str, overrides, label: str) -> dict:
         import collision
         import worldmap
     except ImportError as exc:
-        raise CollisionError(503, f"collision module unavailable ({exc})") from None
+        raise errors.CollisionError(503, f"collision module unavailable ({exc})") from None
     overrides = validate_overrides(overrides)
     check_overrides(overrides, collision.load_config(), worldmap.load_config())
-    with _lock:
+    with cdocs._lock:
         if job_active():
-            raise CollisionError(409, f"A collision re-run is already running ({_job.run_id} {_job.cid})")
+            raise errors.CollisionError(409, f"A collision re-run is already running ({_job.run_id} {_job.cid})")
         if analysis.analysis_active():
-            raise CollisionError(409, "An analysis is running; wait for it to finish")
-        cid = allocate(run_id)
-        collision_dir(run_id, cid).mkdir(parents=True, exist_ok=True)
+            raise errors.CollisionError(409, "An analysis is running; wait for it to finish")
+        cid = cdocs.allocate(run_id)
+        cdocs.collision_dir(run_id, cid).mkdir(parents=True, exist_ok=True)
         doc = {"id": cid, "runId": run_id, "createdAt": analysis._now(), "collisionVersion": None, "worldmapVersion": None,
-               "settings": {}, "resolved": {}, "overrides": overrides, "label": (label or "")[:MAX_LABEL],
+               "settings": {}, "resolved": {}, "overrides": overrides, "label": (label or "")[:cdocs.MAX_LABEL],
                "elapsedSeconds": None, "counts": {}, "status": "running", "progress": 0.0, "error": None}
-        write_doc(run_id, cid, doc)
-        register(run_id, cid)
+        cdocs.write_doc(run_id, cid, doc)
+        cdocs.register(run_id, cid)
         job = Job(run_id, cid)
         job.thread = threading.Thread(target=_run_job, args=(job, overrides, label), name=f"collision-{run_id}-{cid}", daemon=True)
         _job = job
@@ -187,41 +103,18 @@ def _run_job(job: Job, overrides: dict, label: str) -> None:
             raise
         except Exception as exc:  # noqa: BLE001 - the collision result stands
             analysis._log(f"run {run_id}: worldmap refresh failed: {exc!r}")
-        update_doc(run_id, cid, status="done", progress=1.0, error=None)
+        cdocs.update_doc(run_id, cid, status="done", progress=1.0, error=None)
     except analysis._Cancelled:
-        with _lock:
-            shutil.rmtree(collision_dir(run_id, cid), ignore_errors=True)
+        with cdocs._lock:
+            shutil.rmtree(cdocs.collision_dir(run_id, cid), ignore_errors=True)
             run = analysis.get_run(run_id) or {}
-            analysis._update_run(run_id, collisions=[c for c in ids(run) if c != cid])
+            analysis._update_run(run_id, collisions=[c for c in cdocs.ids(run) if c != cid])
         analysis._log(f"run {run_id}: collision {cid} cancelled")
     except BaseException as exc:  # noqa: BLE001
         analysis._log(f"run {run_id}: collision {cid} FAILED: {exc!r}")
-        update_doc(run_id, cid, status="error", error=getattr(exc, "message", None) or str(exc) or repr(exc))
+        cdocs.update_doc(run_id, cid, status="error", error=getattr(exc, "message", None) or str(exc) or repr(exc))
 
 
-# --------------------------------------------------------------------------
-# Ids
-# --------------------------------------------------------------------------
-
-def allocate(run_id: str) -> str:
-    """The next id; burnt at once (`collisionSeq`), so a failed or deleted one is never handed out again."""
-    with _lock:
-        run = analysis.get_run(run_id) or {}
-        seq = max(int(run.get("collisionSeq") or 0), len(ids(run)))
-        for c in ids(run):          # defensive: never below an existing id
-            seq = max(seq, int(c[1:]))
-        seq += 1
-        analysis._update_run(run_id, collisionSeq=seq)
-        return f"c{seq}"
-
-
-def register(run_id: str, cid: str) -> None:
-    with _lock:
-        run = analysis.get_run(run_id) or {}
-        got = ids(run)
-        if cid not in got:
-            got.append(cid)
-        analysis._update_run(run_id, collisions=got)
 
 
 # --------------------------------------------------------------------------
@@ -238,7 +131,7 @@ def validate_overrides(overrides) -> dict:
     try:
         return _config.validate_overrides(overrides)
     except _config.OverrideError as e:
-        raise CollisionError(422, str(e)) from e
+        raise errors.CollisionError(422, str(e)) from e
 
 
 def apply_overrides(config: dict, overrides: dict, group: str) -> dict:
@@ -247,7 +140,7 @@ def apply_overrides(config: dict, overrides: dict, group: str) -> dict:
     try:
         return _config.apply_overrides(config, overrides, group)
     except _config.OverrideError as e:
-        raise CollisionError(422, str(e)) from e
+        raise errors.CollisionError(422, str(e)) from e
 
 
 def check_overrides(overrides: dict, collision_cfg: dict, worldmap_cfg: dict) -> None:
@@ -255,44 +148,9 @@ def check_overrides(overrides: dict, collision_cfg: dict, worldmap_cfg: dict) ->
     try:
         _config.check_overrides(overrides, collision_cfg, worldmap_cfg)
     except _config.OverrideError as e:
-        raise CollisionError(422, str(e)) from e
+        raise errors.CollisionError(422, str(e)) from e
 
 
-# --------------------------------------------------------------------------
-# Label, delete
-# --------------------------------------------------------------------------
-
-def set_label(run_id: str, cid: str, label) -> dict:
-    if not isinstance(label, str):
-        raise CollisionError(422, "label must be a string")
-    label = label.strip()
-    if len(label) > MAX_LABEL:
-        raise CollisionError(422, f"label must be at most {MAX_LABEL} characters")
-    with _lock:
-        doc = read_doc(run_id, cid)
-        if doc is None:
-            raise CollisionError(404, f"Unknown collision run: {cid}")
-        doc["label"] = label
-        write_doc(run_id, cid, doc)
-    return doc
-
-
-def delete(run_id: str, cid: str, review_count: int) -> None:
-    with _lock:
-        run = analysis.get_run(run_id) or {}
-        got = ids(run)
-        if cid not in got:
-            raise CollisionError(404, f"Unknown collision run: {cid}")
-        doc = read_doc(run_id, cid) or {}
-        if doc.get("status") == "running":
-            raise CollisionError(409, f"{cid} is still running; cancel it first")
-        if len(got) <= 1 and doc.get("status") != "error":
-            raise CollisionError(409, f"{cid} is the only collision run of this run; it cannot be deleted")
-        if review_count:
-            raise CollisionError(409, f"{cid} has {review_count} review{'s' if review_count != 1 else ''} (verdicts / notes); "
-                                      "delete them first")
-        shutil.rmtree(collision_dir(run_id, cid), ignore_errors=True)
-        analysis._update_run(run_id, collisions=[c for c in got if c != cid])
 
 
 # --------------------------------------------------------------------------
@@ -323,7 +181,7 @@ def _settings_diff(a: dict, b: dict) -> list[dict]:
 
 def _events(run_id: str, cid: str) -> list[dict]:
     try:
-        raw = json.loads((collision_dir(run_id, cid) / "events.json").read_text()).get("events", [])
+        raw = json.loads((cdocs.collision_dir(run_id, cid) / "events.json").read_text()).get("events", [])
     except (OSError, ValueError):
         return []
     out = []
@@ -350,7 +208,7 @@ def match_events(ea: list[dict], eb: list[dict]) -> dict:
     for i, x in enumerate(ea):
         for j, y in enumerate(eb):
             dt = abs(x["t"] - y["t"])
-            if x["type"] == y["type"] and dt <= MATCH_WINDOW_S:
+            if x["type"] == y["type"] and dt <= cdocs.MATCH_WINDOW_S:
                 pairs.append((0 if _same(x, y) else 1, dt, i, j))
     pairs.sort()
     used_a: set[int] = set()
@@ -374,8 +232,8 @@ def match_events(ea: list[dict], eb: list[dict]) -> dict:
 
 def compare(run_id: str, a: str, b: str) -> dict:
     run = analysis.get_run(run_id) or {}
-    a, b = resolve(run, a), resolve(run, b)
-    da, db = read_doc(run_id, a) or {}, read_doc(run_id, b) or {}
+    a, b = cdocs.resolve(run, a), cdocs.resolve(run, b)
+    da, db = cdocs.read_doc(run_id, a) or {}, cdocs.read_doc(run_id, b) or {}
     return {"a": a, "b": b, "settings": _settings_diff(da, db),
             "counts": {"a": da.get("counts") or {}, "b": db.get("counts") or {}},
             "events": match_events(_events(run_id, a), _events(run_id, b))}
