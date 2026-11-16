@@ -24,3 +24,8 @@ The flat modules become pure facades (docstring + re-exports, plus segmentation'
 - `letterbox_with_meta` / `letterbox_params` / `parse_grid` / `grid_from_semantic_mask` / `extract_objects` on small synthetic arrays:
   pin results from the legacy functions.
 - `residual_flow` / `ResidualFlowTrack` on synthetic frames; `DepthModel.__new__` attribute access as `tests/test_depth.py` does.
+
+## Note (Opus, 2026-11-16)
+Sanctioned edit: inside `grid.py`, every read of the rebound mapping globals (`NUM_CLASSES`, `SKY_CLASS_ID`, `CLASSES`,
+`SAFETY_LEVELS`) becomes `mapping.<NAME>` (attribute lookup at call time, `from engine.infer.segmentation import mapping`), since they
+no longer live in the same module. The facade keeps `_CONFIG_DIR`, `_CONFIG_PATH`, `_load_mapping`, `_4_CONNECTIVITY` reachable.
