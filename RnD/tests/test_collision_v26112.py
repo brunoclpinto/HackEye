@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import collision as col
-from tests.test_collision import CONFIG, _item, _policy, _rated, _tracks
+from tests.test_collision import CONFIG, _policy, _rated, _tracks
 from tests.test_collision_regression import FIXTURES, _all, _load, _near, _produced, _run_windows
 from tests.test_collision_v26111 import _mover
 
@@ -192,11 +192,12 @@ def test_a_person_gets_a_closing_speed_after_half_a_second_and_a_pole_still_afte
 
 
 # --------------------------------------------------------------------------
-# 6. Pronunciation lives in audio.js (Lab only); the text of the events is untouched
+# 6. Pronunciation lives in the Lab's audio feature (features/audio/speech.js; Lab only); the text of the events is untouched
 # --------------------------------------------------------------------------
 
 def test_audio_js_has_the_pronunciation_map_and_the_phrase_text_is_not_changed():
-    js = (FIXTURES.parent.parent / "lab" / "static" / "js" / "audio.js").read_text(encoding="utf-8")
+    audio = FIXTURES.parent.parent / "lab" / "static" / "js" / "features" / "audio"   # v26.3.0 p6-03: audio.js + speech.js
+    js = "\n".join((audio / f).read_text(encoding="utf-8") for f in ("speech.js", "audio.js"))
     assert re.search(r"PRONUNCIATIONS\s*=\s*\[\[/\\bcurb\\b/gi,\s*\"kerb\"\]\]", js)
     assert "new SpeechSynthesisUtterance(spoken)" in js and "spoken, voice" in js
     assert CONFIG["spokenLabels"]["curb"] == "curb"                           # display text unchanged
