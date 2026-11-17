@@ -16,6 +16,7 @@ export class HazardWindow {
 
   reset() {
     this.runId = null;
+    this.cid = null;           // v26.2.8: the collision run shown (null = the server's latest)
     this.run = null;
     this.frames = [];
     this.head = null;          // {version, settings, gridW, gridH, egoAvailable} of the latest response
@@ -31,7 +32,10 @@ export class HazardWindow {
     this.reset();
     this.run = run;
     this.runId = run?.id ?? null;
+    this.cid = run?.collisionId ?? null;
   }
+
+  _cq(sep) { return this.cid ? `${sep}collision=${encodeURIComponent(this.cid)}` : ""; }
 
   /** Drop the loaded frames (e.g. after a collision re-run rewrote hazards.json). */
   invalidate() {
@@ -60,11 +64,11 @@ export class HazardWindow {
   _fetch(from, to, merge, playhead) {
     if (this.inflight && this.inflight.from === from && this.inflight.to === to) return this.inflight.promise;
     const token = this.token, runId = this.runId;
-    const url = `/api/runs/${runId}/hazards?from=${from.toFixed(3)}&to=${to.toFixed(3)}`;
+    const url = `/api/runs/${runId}/hazards?from=${from.toFixed(3)}&to=${to.toFixed(3)}${this._cq('&')}`;
     const entry = { from, to, merge, promise: null };
     entry.promise = api(url, { quiet: true }).then((doc) => {
       if (token !== this.token || runId !== this.runId || this.inflight !== entry) return; // run changed / superseded by a newer fetch
-      this.head = { version: doc.version, settings: doc.settings, gridW: doc.gridW, gridH: doc.gridH, egoAvailable: doc.egoAvailable };
+      this.head = { version: doc.version, settings: doc.settings, projection: doc.projection, gridW: doc.gridW, gridH: doc.gridH, egoAvailable: doc.egoAvailable };
       if (merge && this._covers(from - 1e-6)) {
         // Prefetch: append the next stretch, drop frames far behind the playhead.
         const keepFrom = Math.max(this.from, (playhead ?? from) - HALF_S);
@@ -85,7 +89,7 @@ export class HazardWindow {
   /** The analysed frame with the largest t <= s from the server (auto-fill). Resolves to the frame or null. */
   async frameAt(t) {
     if (!this.runId) return null;
-    try { return (await api(`/api/runs/${this.runId}/frame?t=${t.toFixed(3)}`, { quiet: true })).frame ?? null; }
+    try { return (await api(`/api/runs/${this.runId}/frame?t=${t.toFixed(3)}${this._cq('&')}`, { quiet: true })).frame ?? null; }
     catch { return null; }
   }
 }

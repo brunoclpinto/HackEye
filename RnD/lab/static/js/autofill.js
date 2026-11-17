@@ -16,12 +16,14 @@ export function frameAt(frames, t) {
   return lo === frames.length - 1 && t > f.t + 1 ? null : f;
 }
 
-/** Items of the frame ordered final > danger > feature > context > none, then stepsTo ascending (nulls last). */
-export function orderCandidates(frame) {
+/** Items of the frame ordered final > danger > feature > context > none, then the higher safety level (`levelOf(className)`, from
+ *  safety_mapping.json / the Classes panel; unknown = 0), then stepsTo ascending (nulls last). The first one is the highest-priority object. */
+export function orderCandidates(frame, levelOf) {
   const rank = (it) => ROLE_ORDER[it.role] ?? ROLE_ORDER.none;
+  const level = (it) => Number(levelOf?.(it.className ?? it.label)) || 0;
   const steps = (it) => (typeof it.stepsTo === "number" ? it.stepsTo : Infinity);
   return (frame?.hazards ?? []).map((it, i) => [it, i])
-    .sort(([a, i], [b, j]) => rank(a) - rank(b) || (steps(a) === steps(b) ? 0 : steps(a) < steps(b) ? -1 : 1) || i - j)
+    .sort(([a, i], [b, j]) => rank(a) - rank(b) || level(b) - level(a) || (steps(a) === steps(b) ? 0 : steps(a) < steps(b) ? -1 : 1) || i - j)
     .map(([it]) => it);
 }
 

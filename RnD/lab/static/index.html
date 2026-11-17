@@ -15,6 +15,36 @@
 </header>
 
 <div class="layout">
+  <section id="viewer" aria-label="Video and world map">
+    <div id="viewerVideo">
+    <div id="stage">
+      <video id="video" playsinline webkit-playsinline preload="auto" muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="hud" class="mono" hidden></div>
+      <div id="stageMsg">Select a recording</div>
+    </div>
+
+    <div class="controls">
+      <button type="button" id="stepBack" title="Previous analysed frame (&larr;)">&#9664;&#9664;</button>
+      <button type="button" id="playBtn" class="primary" title="Play / pause (space)">&#9654;</button>
+      <button type="button" id="stepFwd" title="Next analysed frame (&rarr;)">&#9654;&#9654;</button>
+      <span id="timeLabel" class="mono">0:00.0 / 0:00</span>
+      <label class="inline">Speed
+        <select id="speedSel"></select>
+      </label>
+    </div>
+    <input id="seekBar" type="range" min="0" max="1" step="0.01" value="0" aria-label="Seek">
+    </div>
+    <section id="secWorldmap" class="worldmap" aria-label="World map">
+      <canvas id="wmCanvas" class="wm-canvas" width="400" height="400" aria-label="World map around the user" title="Bird's-eye, heading-up, forward only: you are the white marker at the bottom edge, ahead is up (20 m). Rings every 5 steps, red box = the 0.6 m corridor to 10 steps; dots are the frame's items (diamond = mover, big ring = danger); yellow lines, magenta and cyan cells show the walls the map judges; blue rings with an arrow are the world tracks (shadow mode: position, 1 s of velocity, dashed = out of view, grey = missing, red = on course). Click a cell or a dot to read it in the box below."></canvas>
+      <pre id="wmCell" class="wm-cell mono" aria-live="polite">Click the map to read a cell.</pre>
+      <div class="wm-bar">
+        <span id="wmInfo" class="hint" aria-live="polite"></span>
+        <span id="wmStatus" class="hint mono"></span>
+      </div>
+    </section>
+  </section>
+
   <aside id="sidebar">
     <details open id="secLib">
       <summary>Recordings</summary>
@@ -71,7 +101,32 @@
           <label>Distance <select id="distSel">
             <option value="ground">Ground</option><option value="depth">Depth</option></select></label>
         </div>
+        <div class="two">
+          <label>Object distance <select id="objDistSel" title="How far a base on the ground is: DA2 depth, the ground ray, or the range-corrected depth fused with the ground ray">
+            <option value="depth">Depth</option><option value="ground-contact">Ground contact</option><option value="ground+depth">Ground + depth</option></select></label>
+          <label>Horizon <select id="horizonSel" title="Off: no ground ray in any distance and the map is projected through the depth map">
+            <option value="true">On</option><option value="false">Off</option></select></label>
+        </div>
+        <p id="objDistHint" class="hint" hidden>needs Use horizon: falls back to depth</p>
         <p class="hint">Empty = preset / estimated from the footage.</p>
+        <div class="two">
+          <label>Collision source <select id="ovSource" data-key="source.mode" title="Where the items come from: the image (today) or the online world map (map statics, trusted world tracks, with the image safety net)">
+            <option value="image">Image</option><option value="map">Map</option></select></label>
+          <label>Predictive speech <select id="ovPredictive" data-key="speech.predictive.enabled" title="Say each item at the place it will be when the phrase ends">
+            <option value="on">On</option><option value="off">Off</option></select></label>
+        </div>
+        <div class="two">
+          <label>Heading <select id="ovHeading" data-key="ego.headingSource" title="Where the heading comes from: auto, the gyro (IMU) or the image flow">
+            <option value="auto">Auto</option><option value="imu">IMU</option><option value="flow">Flow</option></select></label>
+          <label>Horizon <select id="ovHorizon" data-key="horizon.source" title="Where the horizon row comes from: the image, gravity (IMU) or both fused">
+            <option value="image">Image</option><option value="gravity">Gravity</option><option value="fused">Fused</option></select></label>
+        </div>
+        <label>Cadence <select id="ovCadence" data-key="ego.cadenceSource" title="Where the step cadence comes from: auto, the IMU or the image">
+          <option value="auto">Auto</option><option value="imu">IMU</option><option value="image">Image</option></select></label>
+        <label>Config overrides (this re-run only)
+          <input id="collOverrides" class="mono" spellcheck="false" autocomplete="off" placeholder='{"collision": {"distance.itemLens": "off"}}'
+            title="Dotted keys of collision.json / worldmap.json, e.g. {&quot;collision&quot;: {&quot;distance.itemLens&quot;: &quot;off&quot;}, &quot;worldmap&quot;: {&quot;gapCloseM&quot;: 0}}. Empty = none."></label>
+        <p id="collOvErr" class="hint err" role="alert" hidden></p>
         <button type="button" id="rerunBtn" disabled>Re-run collision</button>
         <p id="rerunInfo" class="hint"></p>
       </div>
@@ -84,24 +139,6 @@
   </aside>
 
   <main id="main">
-    <div id="stage">
-      <video id="video" playsinline webkit-playsinline preload="auto" muted></video>
-      <canvas id="overlay"></canvas>
-      <div id="hud" class="mono" hidden></div>
-      <div id="stageMsg">Select a recording</div>
-    </div>
-
-    <div class="controls">
-      <button type="button" id="stepBack" title="Previous analysed frame (&larr;)">&#9664;&#9664;</button>
-      <button type="button" id="playBtn" class="primary" title="Play / pause (space)">&#9654;</button>
-      <button type="button" id="stepFwd" title="Next analysed frame (&rarr;)">&#9654;&#9654;</button>
-      <span id="timeLabel" class="mono">0:00.0 / 0:00</span>
-      <label class="inline">Speed
-        <select id="speedSel"></select>
-      </label>
-    </div>
-    <input id="seekBar" type="range" min="0" max="1" step="0.01" value="0" aria-label="Seek">
-
     <div class="panels">
       <fieldset>
         <legend>Audio</legend>
@@ -123,7 +160,7 @@
         <label class="inline" title="Depth map of the run (only for runs analysed with a depth model)"><input type="checkbox" id="depthChk" disabled> Depth</label>
         <label class="inline"><input type="checkbox" id="regionChk" checked> Region</label>
         <label class="inline"><input type="checkbox" id="laneChk" checked> Lane</label>
-        <label class="inline"><input type="checkbox" id="horizonChk" checked> Horizon</label>
+        <label class="inline"><input type="checkbox" id="horizonChk"> Horizon</label>
         <label class="inline"><input type="checkbox" id="hazardChk" checked> Items</label>
         <label class="inline">Shapes
           <select id="shapeSel" title="Item shapes: outlines follow the mask edges, boxes are the bounding rectangles">
@@ -136,14 +173,16 @@
 
     <details open id="secSounds" class="sounds">
       <summary>Sounds</summary>
+      <div class="snd-scroll">
       <table class="snd-table" aria-label="Sound tuner">
         <thead><tr><th>Sound</th><th>Pitch (low &harr; high)</th><th>Duration</th><th>Repeat</th><th></th></tr></thead>
         <tbody id="sndRows"></tbody>
       </table>
+      </div>
       <div class="snd-speech">
         <label class="inline" for="sndSpeech">Speech speed</label>
-        <input id="sndSpeech" type="range" min="0.5" max="2" step="0.05" value="1" aria-label="Speech speed">
-        <output id="sndSpeechOut" class="mono">1.00&times;</output>
+        <input id="sndSpeech" type="range" min="0.5" max="2" step="0.05" value="1.25" aria-label="Speech speed">
+        <output id="sndSpeechOut" class="mono">1.25&times;</output> <span id="sndSpeechDef" class="hint"></span>
         <button type="button" id="sndSpeechTest" class="snd-test" aria-label="Test speech speed" title="Speaks &quot;speech test&quot; at this speed">&#9654;</button>
       </div>
       <div class="snd-foot">
@@ -188,6 +227,16 @@
       </div>
     </details>
 
+    <details id="secCompare" class="compare">
+      <summary>Compare collision runs</summary>
+      <div class="cmp-pick">
+        <label class="inline">A <select id="cmpA" aria-label="Collision run A"></select></label>
+        <label class="inline">B <select id="cmpB" aria-label="Collision run B"></select></label>
+      </div>
+      <p id="cmpMsg" class="hint"></p>
+      <div id="cmpOut"></div>
+    </details>
+
     <canvas id="timeline" aria-label="Run timeline"></canvas>
     <div id="roleChips" class="chips" role="group" aria-label="Show roles"></div>
     <div class="legend">
@@ -196,6 +245,25 @@
   </main>
 
   <aside id="reviewPanel" aria-label="Notification review">
+    <details id="secIssues" class="issues" open>
+      <summary id="issuesTitle">Open issues</summary>
+      <div id="issuesBody"></div>
+    </details>
+    <details id="secNotes" class="notes" open>
+      <summary>Notes</summary>
+      <textarea id="notesText" rows="8" spellcheck="true" aria-label="Notes: reviews, remarks, fix requests" placeholder="Reviews, remarks, fix requests&hellip; (saved on the server, kept across versions)"></textarea>
+      <div class="notes-bar">
+        <button type="button" id="notesStamp" disabled title="Insert the recording, playhead time and run at the cursor">&#9201; Insert time</button>
+        <span id="notesStatus" class="hint" aria-live="polite"></span>
+      </div>
+      <div id="notesConflict" class="notes-conflict" role="alert" hidden>
+        <span>These notes were changed elsewhere (another tab or device).</span>
+        <span class="notes-conflict-btns">
+          <button type="button" id="notesTheirs">Load theirs</button>
+          <button type="button" id="notesMine" class="primary">Keep mine</button>
+        </span>
+      </div>
+    </details>
     <div class="rv-head">
       <h2>Notification review</h2>
       <div id="rvTotal" class="hint rv-total"></div>
@@ -248,5 +316,6 @@
 
 <div id="toasts" aria-live="polite"></div>
 <script type="module" src="/static/app.js"></script>
+<div id="itemTip" class="tip mono" hidden role="tooltip"></div>
 </body>
 </html>

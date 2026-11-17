@@ -1,5 +1,5 @@
 {
-  "_source": "Class list and ids from HackEye-Models/models/Yolo26m-sem-HackEye20261011-1280.pt (48 classes: Mapillary Vistas v2.0 merged per HackEye-Models/datasets/vistas/conversion/merges/v1.yaml). Safety levels derived from safety_mapping.json: each merged class takes the highest non-zero safetyLevel among its Vistas members (zeros from un-voided ambiguous/group members ignored); unmerged classes keep their Vistas level. RnD/src/segmentation.py selects this file automatically when a checkpoint's class names match it.",
+  "_source": "Class list and ids from HackEye-Models/models/Yolo26m-sem-HackEye26.1-48-1280.pt (formerly Yolo26m-sem-HackEye20261011-1280.pt) (48 classes: Mapillary Vistas v2.0 merged per HackEye-Models/datasets/vistas/conversion/merges/HackEye26.1-48.yaml). Safety levels derived from safety_mapping.json: each merged class takes the highest non-zero safetyLevel among its Vistas members (zeros from un-voided ambiguous/group members ignored); unmerged classes keep their Vistas level. RnD/src/segmentation.py selects this file automatically when a checkpoint's class names match it.",
   "safetyLevels": {
     "0": { "label": "ignored", "color": [0, 0, 0] },
     "1": { "label": "safe", "color": [0, 128, 0] },

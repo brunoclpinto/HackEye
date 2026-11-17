@@ -77,7 +77,7 @@ production grid. Prefer `--seg-min-pixel-fraction` for anything other than
   matching the checkpoint's class names against
   `common/config/safety_mapping*.json` (124-class Mapillary Vistas v2.0 ->
   `safety_mapping.json`; 48-class HackEye merge, e.g.
-  `Yolo26m-sem-HackEye20261011-1280.pt` -> `safety_mapping_hackeye48.json`), and
+  `Yolo26m-sem-HackEye26.1-48-1280.pt` -> `safety_mapping_hackeye48.json`), and
   loading fails if none matches. `src/segmentation.py` also raises a clear
   error if the channel count doesn't match, but a checkpoint whose forward pass does its own postprocessing, or
   outputs something structurally different, isn't guaranteed to be caught.

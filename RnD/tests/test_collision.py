@@ -31,6 +31,10 @@ NAMES = [c["name"] for c in sorted(_MAPPING["classes"], key=lambda c: c["id"])]
 ID = {n: i for i, n in enumerate(NAMES)}
 
 CONFIG = col.load_config()
+# v26.2.3: the default object distance is "ground+depth"; the tests that pin v26.1.x / v26.2.0-2 numbers run on the plain depth distance
+# (= v26.2.2), tests/test_collision_v2623.py pins the new default.
+CONFIG["distance"]["objectDistance"] = "depth"
+CONFIG["personSplit"]["enabled"] = False         # v26.2.10: the tests that pin earlier versions see one item per person component (tests/test_collision_v26210.py: the split)
 SETTINGS = col.resolve_settings(CONFIG, "chest", HFOV, None, None)
 
 
@@ -406,7 +410,7 @@ def test_beep_episodes_one_track_each_and_every_tone_inside_exactly_one_episode(
     tn = tones(ev)
     assert eps and tn
     for e in eps:
-        assert e["role"] == "danger" and e["tEnd"] > e["t"] and e["minSteps"] >= 1
+        assert e["role"] == "danger" and e["tEnd"] > e["t"] and e["minSteps"] >= 0     # v26.2.1: a pole under the frame keeps beeping until passed (ghost)
         assert re.fullmatch(r"beeps \u00b7 (left|center|right) \u00b7 \w+ at \d+(:\d+)? \u00b7 \d+(\u2192\d+)? steps", e["text"]), e["text"]
         mine = [x for x in tn if x["trackId"] == e["trackId"] and e["t"] - 0.05 <= x["t"] <= e["tEnd"] + 0.05]
         assert mine and abs(min(x["t"] for x in mine) - e["t"]) < 1e-6
@@ -1010,13 +1014,13 @@ def test_output_documents_are_serializable_and_complete():
     doc, ev = run(approach_frames(seconds=15), mot=motion(15))
     json.dumps(doc)
     json.dumps(ev)
-    assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames"}
-    assert doc["version"] == "v26.1.16" == ev["version"]
+    assert set(doc) == {"version", "projection", "distanceSource", "settings", "gridW", "gridH", "egoAvailable", "frames", "coast", "worldTracksSettings"}
+    assert doc["version"] == "v26.2.14" == ev["version"]
     assert set(doc["settings"]) == {"mount", "hfovDeg", "cameraHeightM", "stepLengthM", "laneHalfWidthM", "priorStepLengthM",
-                                  "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM"}
+                                  "userHeightM", "cameraLocation", "cameraSide", "lateralOffsetM", "objectDistance", "useHorizon", "stepLengthSource", "gpsStepWindowsS"}      # v26.2.3: the object distance / horizon switch
     assert (doc["gridW"], doc["gridH"]) == (W, H)
     assert len(doc["frames"]) == 150
-    frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards"}
+    frame_keys = {"index", "t", "horizonY", "horizonEstimated", "region", "lane", "ego", "pathChange", "hazards", "corridor"}    # v26.2.1: corridor = the nearest object on the world map in the walking corridor
     ego_keys = {"speedMps", "cadenceHz", "stepLengthM", "headingDeg", "estimated", "scale", "scaleSource",
                 "depthAnchor", "depthAnchorMode", "depthScale", "depthScaleSource", "depthLevel", "depthLevelSource",
                 "depthPitchDeg", "depthCameraHeightUnits", "depthGaitCheck", "stationary"}
@@ -1024,14 +1028,17 @@ def test_output_documents_are_serializable_and_complete():
                    "clock", "clockText", "pan", "distanceM", "lateralM", "stepsTo", "closingMps", "urgency", "areaFrac", "collision", "latVelMps", "crossMps"}
     seen_hazard = False
     for f in doc["frames"]:
-        assert set(f) == frame_keys
+        assert set(f) - {"faceEdgeLines", "worldTracks"} == frame_keys                  # v26.2.2: faceEdgeLines (the fitted wall lines) only on a frame with a judged wall candidate
         assert set(f["ego"]) == ego_keys and set(f["ego"]["estimated"]) == {"speed", "cadence", "stepLength"}
         assert len(f["lane"]) == 4 and all(len(p) == 2 for p in f["lane"])
         if f["region"]:
             assert set(f["region"]) == {"surface", "label", "rows"}
             assert all(len(r) == 3 for r in f["region"]["rows"])
         for h in f["hazards"]:
-            assert set(h) == hazard_keys | ({"outline"} if h["role"] != "none" else set())
+            # v26.2.1: a static item reports where it was judged ("source", "mapCells"); a map measurement keeps the image's (imageDistanceM...)
+            map_keys = {"source", "mapCells"} if h["group"] == "static" else set()
+            # v26.2.2: faceEdge (the face / edge test of a static item with corridor cells), insideSolid / solidCorrected / rawDistanceM (snapped), coasting
+            assert set(h) - {"imageDistanceM", "imageLateralM", "faceEdge", "insideSolid", "solidCorrected", "rawDistanceM", "coasting"} == hazard_keys | map_keys | ({"outline", "bboxFull", "outlineFull"} if h["role"] != "none" else set())
             assert h["role"] in ("danger", "feature", "context", "none")
             assert h["urgency"] in ("none", "danger", "final")
             seen_hazard = True

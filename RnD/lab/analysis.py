@@ -59,7 +59,7 @@ SUPERSEDED_ANCHORS = {"da2-metric-outdoor-small": {"initial"}}
 DEPTH_W, DEPTH_H = 120, 68          # stored depth map size (CONTRACTS depth.npz)
 DEPTH_MIN_REL = 1e-3             # floor for relative depth (non-finite / <= 0 become nan)
 DEPTH_MIN_M, DEPTH_MAX_M = 0.1, 200.0   # clip range for metric depth (metres)
-DEFAULT_MODEL = os.environ.get("HACKEYE_LAB_DEFAULT_MODEL", "Yolo26m-sem-HackEye20261011-1280.pt")
+DEFAULT_MODEL = os.environ.get("HACKEYE_LAB_DEFAULT_MODEL", "Yolo26m-sem-HackEye26.1-48-1280.pt")
 MODEL_DIRS = [(Path(os.environ.get("HACKEYE_MODELS_DIR", "/models")), "*.pt"),
               (Path(os.environ.get("HACKEYE_RELEASES_DIR", "/hackeye-models")), "*HackEye*.pt")]
 
@@ -94,11 +94,18 @@ def list_models() -> list[dict]:
         if directory.is_dir():
             paths += sorted(directory.glob(pattern))
     releases = [p for p in paths if "HackEye" in p.name]
-    # Newest by the YYYYMMDD in the release name (plain name order would rank
-    # "...HackEyeV1" above "...HackEye20261012"); undated names rank last.
-    def release_key(p: Path) -> tuple[str, str]:
-        m = re.search(r"HackEye(\d{8})", p.name)
-        return (m.group(1) if m else "", p.name)
+    # Newest app release first: versioned names ("...HackEye26.1-48-1280") by version, then
+    # legacy dated names ("...HackEye20261011") by date. Dataset-creation models
+    # ("...-Vistas124-HackEye-1280") and other unversioned names rank last, so the
+    # fallback never picks one while an app release exists.
+    def release_key(p: Path) -> tuple[int, tuple[int, ...], str]:
+        v = re.search(r"HackEye(\d+)\.(\d+)(?:\.(\d+))?-", p.name)
+        if v:
+            return (2, tuple(int(x or 0) for x in v.groups()), p.name)
+        d = re.search(r"HackEye(\d{8})", p.name)
+        if d:
+            return (1, (int(d.group(1)),), p.name)
+        return (0, (), p.name)
 
     # Pinned default (by file name); without that file, the newest release.
     default = next((p for p in releases if p.name == DEFAULT_MODEL), None)
@@ -289,6 +296,9 @@ def submit_run(req: dict) -> dict:
             return existing
         if existing["status"] == "done" and not force:
             return {**existing, "reused": True}
+    from lab import collisions
+    if collisions.job_active():
+        raise RunConflict("A collision re-run is running; wait for it or cancel it")
     with _state_lock:
         if _maintenance:
             raise RunConflict("Lab is cleaning up for a new version; try again in a minute")
@@ -324,7 +334,7 @@ def submit_run(req: dict) -> dict:
     return dict(doc)
 
 
-_PARTIAL_OUTPUTS = ("grids.npz", "motion.npz", "depth.npz", "hazards.json", "events.json")
+_PARTIAL_OUTPUTS = ("grids.npz", "motion.npz", "depth.npz")
 
 
 def _remove_partial_outputs(run_id: str) -> None:
@@ -332,6 +342,7 @@ def _remove_partial_outputs(run_id: str) -> None:
 
     out = run_dir(run_id)
     shutil.rmtree(out / "masks", ignore_errors=True)
+    shutil.rmtree(out / "collisions", ignore_errors=True)
     for name in _PARTIAL_OUTPUTS:
         try:
             (out / name).unlink()
@@ -376,7 +387,9 @@ def cancel_run(run_id: str) -> dict | None:
 
 
 def cancel_all() -> list[str]:
-    """Cancel every queued and running run; returns their ids."""
+    """Cancel every queued and running run; returns their ids. (v26.2.10: and the collision re-run job.)"""
+    from lab import collisions
+    collisions.cancel_job()
     with _state_lock:
         ids = [i for i, d in _active.items() if d["status"] in ACTIVE_STATUSES]
     for i in ids:
@@ -388,8 +401,15 @@ def cancel_all() -> list[str]:
 
 
 def is_idle() -> bool:
+    from lab import collisions
     with _state_lock:
-        return _busy is None and not _active and _jobs.empty()
+        return _busy is None and not _active and _jobs.empty() and not collisions.job_active()
+
+
+def analysis_active() -> bool:
+    """A run is queued or running (v26.2.10: a collision re-run job never runs together with one)."""
+    with _state_lock:
+        return any(d["status"] in ACTIVE_STATUSES for d in _active.values())
 
 
 def wait_idle(timeout: float) -> bool:
@@ -820,29 +840,51 @@ def _run_job(run_id: str, cache: _ModelCache) -> None:
     _log(f"run {run_id}: {len(grids)} frames in {elapsed:.1f}s")
 
     _check_cancel(run_id)
+    cdoc = None
     try:
-        collision_pass(run_id)
+        cdoc = collision_pass(run_id)
     except Exception as exc:  # noqa: BLE001 - inference results are still usable
         _log(f"run {run_id}: collision pass failed: {exc!r}")
+    if cdoc is not None:
+        _build_worldmap(run_id, cdoc["id"])
     _finish(run_id, status="done", progress=1.0)
+
+
+def _build_worldmap(run_id: str, cid: str) -> None:
+    """v26.2.6: the world map is built with the run, after the collision pass. A failure is logged; the run is still done."""
+    try:
+        worldmap_pass(run_id, cid)
+    except Exception as exc:  # noqa: BLE001 - the run is usable without a map
+        _log(f"run {run_id}: worldmap pass failed: {exc!r}")
 
 
 # --------------------------------------------------------------------------
 # Collision pass
 # --------------------------------------------------------------------------
 
-def collision_pass(run_id: str) -> dict | None:
-    """(Re)compute hazards.json / events.json from grids.npz using the
-    recording's current settings. Returns {"version": ...}, or None when
-    src/collision.py is missing (the run stays valid without hazards)."""
+def collision_pass(run_id: str, overrides: dict | None = None, label: str = "", job=None) -> dict | None:
+    """Compute a NEW collision run (v26.2.8: next id c<n>, never reused) from grids.npz using the recording's current settings, plus
+    optional config `overrides` ({"collision": {dotted key: value}, "worldmap": {...}}, validated, applied to in-memory copies).
+    Writes runs/<id>/collisions/<cid>/{hazards.json, events.json, collision.json}; the world map is built by `worldmap_pass`.
+    Returns the collision.json document, or None when src/collision.py is missing (the run stays valid without hazards).
+    Raises lab.collisions.CollisionError (422) for bad overrides.
+    v26.2.10: `job` (a lab.collisions.Job) = the id is already allocated and registered, its collision.json is in status `running`; the
+    frame loop reports to `job.progress` (0-0.4) and stops when the job is cancelled; the job finishes the document after the map."""
     try:
         import collision
+        import worldmap
     except ImportError as exc:
         _log(f"collision module unavailable ({exc}); skipping collision pass")
         return None
+    from lab import collisions
 
     doc = get_run(run_id)
-    config = collision.load_config()
+    overrides = collisions.validate_overrides(overrides)
+    base_config = collision.load_config()
+    base_wcfg = worldmap.load_config()
+    collisions.check_overrides(overrides, base_config, base_wcfg)
+    config = collisions.apply_overrides(base_config, overrides, "collision")
+    wcfg = collisions.apply_overrides(base_wcfg, overrides, "worldmap")
     stored = recordings.get_settings(doc["request"]["recording"], config["defaultMount"])
     # A windowed (portrait) run was cut for the side it was requested with: its collision pass uses that side.
     side = doc["request"].get("side") or stored["cameraSide"]
@@ -852,7 +894,8 @@ def collision_pass(run_id: str) -> dict | None:
                                           distance_source=stored["distanceSource"],
                                           user_height_m=stored["userHeightM"],
                                           camera_location=stored["cameraLocation"],
-                                          camera_side=side)
+                                          camera_side=side, object_distance=stored["objectDistance"],
+                                          use_horizon=stored["useHorizon"])
     window = None
     gwin = doc.get("gridWindow")
     if gwin:
@@ -879,18 +922,92 @@ def collision_pass(run_id: str) -> dict | None:
             if anchor is None:
                 anchor = "per-frame" if units == "relative" else "none"
             depth = {"t": z["t"], "depth": z["depth"], "units": units, "anchor": anchor}
-    t0 = time.perf_counter()
-    extra = {"window": window} if window is not None else {}     # full-frame runs call exactly as before
-    from lab import sounds as lab_sounds                       # the Lab-wide sound profile (v26.1.16): the tone intervals
-    hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings, motion,
-                                              depth=depth, sounds=lab_sounds.profile(), **extra)
-    elapsed = round(time.perf_counter() - t0, 3)
-    hazards.setdefault("settings", {})["mount"] = stored["mount"]
-    _write_json(out / "hazards.json", hazards)
-    _write_json(out / "events.json", events)
+    cid = job.cid if job is not None else collisions.allocate(run_id)
+    cdir = collisions.collision_dir(run_id, cid)
+    try:
+        t0 = time.perf_counter()
+        extra = {"window": window} if window is not None else {}     # full-frame runs call exactly as before
+        sens = recordings.sensors_for(doc["request"]["recording"])      # v26.2.11: GoPro telemetry (None: no gpmd stream = v26.2.10 behaviour)
+        if sens is not None:
+            extra["sensors"] = sens
+        if job is not None:               # only a job reports (a synchronous pass calls exactly as before)
+            extra["progress"] = lambda i, n: job.report(0.4 * i / max(n, 1))
+        from lab import sounds as lab_sounds                       # the Lab-wide sound profile (v26.1.16): the tone intervals
+        hazards, events = collision.run_collision(grids, times, doc["classNames"], config, settings, motion,
+                                                  depth=depth, sounds=lab_sounds.profile(), worldmap_config=wcfg, **extra)
+        elapsed = round(time.perf_counter() - t0, 3)
+        hazards.setdefault("settings", {})["mount"] = stored["mount"]
+        cdir.mkdir(parents=True, exist_ok=True)
+        _write_json(cdir / "hazards.json", hazards)
+        _write_json(cdir / "events.json", events)
+        evs = events.get("events", [])
+        cdoc = {"id": cid, "runId": run_id, "createdAt": _now(), "collisionVersion": config["version"],
+                "worldmapVersion": None, "settings": stored,
+                "resolved": {**hazards.get("settings", {}), "distanceSource": hazards.get("distanceSource"),
+                             "projection": hazards.get("projection")},
+                "overrides": overrides, "label": "", "elapsedSeconds": elapsed, "status": "done", "progress": 1.0, "error": None,
+                "counts": {"speech": sum(1 for e in evs if e.get("type") == "speech"),
+                           "beeps": sum(1 for e in evs if e.get("type") == "beeps")}}
+        if label:
+            cdoc["label"] = str(label)[:60]
+        if job is not None:               # still running: the map follows; keep the label the row may have got meanwhile
+            cdoc.update(status="running", progress=0.4, label=(collisions.read_doc(run_id, cid) or {}).get("label", ""))
+        collisions.write_doc(run_id, cid, cdoc)
+    except BaseException:
+        if job is None:
+            import shutil
+            shutil.rmtree(cdir, ignore_errors=True)
+        raise
+    if job is None:
+        collisions.register(run_id, cid)
     fields = {"collisionVersion": config["version"]}
     if window is None and doc.get("side") is not None:
         fields["side"] = side          # a full-frame run shows the side its lane offset was last computed for
     _update_run(run_id, **fields)
-    _log(f"run {run_id}: collision pass {elapsed:.2f}s")
-    return {"version": config["version"], "elapsedSeconds": elapsed}
+    _log(f"run {run_id}: collision pass {cid} {elapsed:.2f}s")
+    return cdoc
+
+
+def worldmap_pass(run_id: str, cid: str | None = None, job=None) -> dict:
+    """(Re)build worldmap.npz of collision run `cid` (default: the latest) from grids.npz, that collision run's hazards.json (the horizon,
+    ego block and calibration the pass stored) and depth.npz, with the config overrides stored in its collision.json. Pure numpy; never
+    touches the GPU queue or hazards.json / events.json. Raises FileNotFoundError when grids.npz or hazards.json is missing."""
+    import collision
+    import worldmap
+    from lab import collisions
+
+    out = run_dir(run_id)
+    doc = get_run(run_id)
+    cid = collisions.resolve(doc, cid)
+    cdir = collisions.collision_dir(run_id, cid)
+    for name, base in (("grids.npz", out), ("hazards.json", cdir)):
+        if not (base / name).exists():
+            raise FileNotFoundError(name)
+    cdoc = collisions.read_doc(run_id, cid) or {}
+    overrides = collisions.validate_overrides(cdoc.get("overrides"))
+    with np.load(out / "grids.npz") as z:
+        grids, times = z["grids"], z["t"]
+    hazards = json.loads((cdir / "hazards.json").read_text())
+    depth = None
+    if (out / "depth.npz").exists():
+        with np.load(out / "depth.npz") as z:
+            depth = {"t": z["t"], "depth": z["depth"]}
+    cfg = collisions.apply_overrides(worldmap.load_config(), overrides, "worldmap")
+    ccfg = collisions.apply_overrides(collision.load_config(), overrides, "collision")
+    t0 = time.perf_counter()
+    hook = None
+    if job is not None:                   # v26.2.10: 0.4-1.0 of the job's progress; raises when cancelled
+        total = len(grids)
+        hook = lambda i, wm, obs, cls: job.report(0.4 + 0.6 * (i + 1) / max(total, 1))  # noqa: E731
+    arrays = worldmap.build(grids, times, doc["classNames"], hazards, ccfg, cfg, depth, hook=hook)
+    elapsed = round(time.perf_counter() - t0, 3)
+    tmp = cdir / "worldmap.tmp.npz"
+    np.savez_compressed(tmp, **arrays)
+    os.replace(tmp, cdir / "worldmap.npz")
+    if cdoc:
+        cdoc["worldmapVersion"] = cfg["version"]
+        collisions.write_doc(run_id, cid, cdoc)
+    _log(f"run {run_id}: worldmap pass {cid} {elapsed:.2f}s")
+    ms = arrays["ms"]
+    return {"version": cfg["version"], "elapsedSeconds": elapsed, "frames": int(len(ms)),
+            "msMean": round(float(ms.mean()), 2), "msP95": round(float(np.percentile(ms, 95)), 2)}

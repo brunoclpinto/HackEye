@@ -6,7 +6,7 @@ import urllib.request
 
 import pytest
 
-from conftest import BASE, DEFAULT_LONG_REC, HOOKS, LONG_REC, SHORT_REC, annotations, api, audio_log, clock, open_lab, seek
+from conftest import BASE, DEFAULT_LONG_REC, HOOKS, LONG_REC, SHORT_REC, annotations, api, audio_log, clock, collision_job, open_lab, seek
 
 
 import os
@@ -100,7 +100,7 @@ def test_add_twice_at_two_paused_times(page, created_reviews):
     t1 = add_via_ui(page, "e2e first")
     seek(page, 2.2)
     t2 = add_via_ui(page, "e2e second")
-    new = [a for a in annotations(SHORT_REC) if a["id"] not in before]
+    new = [a for a in annotations(SHORT_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((SHORT_REC, a["id"]) for a in new)
     assert (t1, t2) == ("0:01.0", "0:02.2")
     got = {a["text"]: a["t"] for a in new}
@@ -134,7 +134,7 @@ def test_add_twice_with_long_run_loaded(page, created_reviews):
     add_via_ui(page, "e2e long first", "context")
     seek(page, 6.6)
     t2 = add_via_ui(page, "e2e long second", "context")
-    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((LONG_REC, a["id"]) for a in new)
     got = {a["text"]: a["t"] for a in new}
     assert t2 == "0:06.6"
@@ -164,7 +164,7 @@ def test_slow_run_load_does_not_move_the_add_form_time(page, created_reviews):
     page.fill("#rvAddText", "e2e slow load")
     page.click("#rvAddSubmit")
     page.wait_for_function("() => document.querySelector('#rvAddForm').hidden")
-    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((LONG_REC, a["id"]) for a in new)
     assert new[0]["t"] == pytest.approx(6.6, abs=0.06)
 
@@ -246,13 +246,14 @@ def test_removed_system_phrase_is_not_spoken(page, created_reviews):
         page.click("#playBtn")       # pause
         return page.evaluate("window.__spoken.map(s => s.text)")
 
+    spoken_text = re.sub(r"\bcurb\b", "kerb", ev["text"], flags=re.I)   # audio.js PRONUNCIATIONS: the spoken form of the display text
     open_lab(page, LONG_REC, run=FULL_RUN, t=ev["t"] - 3)
     # Positive control first: with the preview off the system's own phrase is spoken...
     page.uncheck("#reviewPreviewChk")
-    assert ev["text"] in play_through(), "control: the system phrase should be spoken with the preview off"
+    assert spoken_text in play_through(), "control: the system phrase should be spoken with the preview off"
     # ...and with it on (the default) the phrase marked ⊘ is skipped.
     page.check("#reviewPreviewChk")
-    assert ev["text"] not in play_through(), "removed phrase was spoken"
+    assert spoken_text not in play_through(), "removed phrase was spoken"
     assert any(e.get("source") == "system" for e in audio_log(page))
 
 
@@ -271,7 +272,7 @@ def test_long_run_uses_windowed_hazards_and_gzip(page):
     assert any(f >= far - 100 for f in froms), (far, wins)      # a window centred near the far playhead was fetched
     for u in wins:
         assert page.responses[u].get("content-encoding") == "gzip", (u, page.responses[u])
-    ev_url = next(u for u in page.responses if u.endswith("/events.json"))
+    ev_url = next(u for u in page.responses if "/events.json" in u)
     assert page.responses[ev_url].get("content-encoding") == "gzip"
 
 
@@ -322,7 +323,7 @@ def inject_beeps(page):
         doc["events"] = [e for e in doc["events"] if e.get("trackId") != BEEP_TRACK] + [beeps] + tones
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def beep_snapshot():
@@ -385,7 +386,7 @@ def test_beeps_row_renders_and_saves_verdict(page, created_reviews):
     row.locator(".rv-v.correct").click()
     row.locator("textarea").fill("e2e beep note")
     page.wait_for_timeout(1200)       # note autosave (600 ms)
-    new = [a for a in annotations(LONG_REC) if a["id"] not in before]
+    new = [a for a in annotations(LONG_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((LONG_REC, a["id"]) for a in new)
     assert len(new) == 1
     a = new[0]
@@ -399,7 +400,7 @@ def test_beeps_row_renders_and_saves_verdict(page, created_reviews):
     assert "v-correct" in row.get_attribute("class")
     # toggling the active one deletes it again
     row.locator(".rv-v.correct").click()
-    page.wait_for_function("() => !document.querySelector('.rv-row.beeps.v-correct')")
+    page.wait_for_function("() => ![...document.querySelectorAll('.rv-row.beeps.v-correct')].some((r) => r.textContent.includes('e2e pole'))")
 
 
 def test_remove_on_beeps_row_silences_its_tones(page, created_reviews):
@@ -447,7 +448,7 @@ def inject_both_sounds(page):
                          + [beeps, soft] + tones + soft_tones)
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def test_two_distinct_sounds_are_scheduled_and_the_review_panel_shows_the_kind(page):
@@ -499,7 +500,7 @@ def inject_crosswalk_tones(page, in_t=CW_IN_T, out_t=CW_OUT_T):
         doc["events"] = [e for e in doc["events"] if not str(e.get("kind", "")).startswith("crosswalk")] + [enter, exit_] + eps
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def test_crosswalk_tones_are_scheduled_deeper_and_shown_in_the_review_panel(page):
@@ -594,7 +595,7 @@ def test_add_beeps_entry_and_hear_it_in_preview(page, created_reviews, durations
     page.fill("#rvAddText", "beeps · e2e bollard at 1")
     page.click("#rvAddSubmit")
     page.wait_for_function("() => document.querySelector('#rvAddForm').hidden")
-    new = [a for a in annotations(SHORT_REC) if a["id"] not in before]
+    new = [a for a in annotations(SHORT_REC) if a["id"] not in before and not a.get("auto")]   # v26.2.14: auto ✓ of earlier items are cleaned by created_reviews
     created_reviews.extend((SHORT_REC, a["id"]) for a in new)
     assert len(new) == 1
     a = new[0]
@@ -912,7 +913,7 @@ def test_resolution_select_and_run_badge(page):
     open_lab(page, SHORT_REC)
     texts = page.eval_on_selector_all("#profileSel option", "os => os.map(o => o.textContent)")
     assert texts == ["544p · 960×544", "576p · 1024×576", "608p · 1056×608", "640p · 1120×640",
-                     "672p · 1184×672", "704p · 1248×704", "736p · 1280×736"]
+                     "672p · 1184×672", "704p · 1248×704", "736p · 1280×736 (default)"]
     assert page.input_value("#profileSel") == "736p"
     assert page.inner_text("label:has(#profileSel)").startswith("Resolution")
     model = next(m["path"] for m in api("/api/models")["models"] if m["default"])
@@ -1005,7 +1006,7 @@ def test_depth_run_toggle_and_image(page):
     open_lab(page, SHORT_REC)
     labels = page.eval_on_selector_all("#depthSel option", "os => os.map(o => [o.value, o.textContent])")
     assert labels[0] == ["none", "Off"] and ["da3-small", "DA3 Small"] in labels and ["da3-base", "DA3 Base"] in labels
-    assert ["da2-metric-outdoor-small", "DA2 Metric Outdoor S"] in labels and ["unidepth-v2-s", "UniDepth v2 S"] in labels
+    assert ["da2-metric-outdoor-small", "DA2 Metric Outdoor S (default)"] in labels and ["unidepth-v2-s", "UniDepth v2 S"] in labels
     assert not any(v == "da3-metric-large" for v, _ in labels)
     assert page.input_value("#depthSel") == "da2-metric-outdoor-small"   # DA2 + initial anchor is the default
     known = {r["id"] for r in api("/api/runs")}
@@ -1535,7 +1536,7 @@ def test_portrait_left_run_window_overlay_and_label(page):
         page.select_option("#orientSel", "portrait")
         page.select_option("#sideSel", "left")
         texts = page.eval_on_selector_all("#profileSel option", "os => os.map(o => o.textContent)")
-        assert texts[-1] == "736p · 736×1280" and texts[0] == "544p · 544×960"
+        assert texts[-1] == "736p · 736×1280 (default)" and texts[0] == "544p · 544×960"
         page.fill("#rangeEnd", "6")
         page.click("#analyseBtn")
         page.wait_for_function("() => document.querySelector('#runBadge').textContent.includes('736×1280')", timeout=180_000)
@@ -1612,7 +1613,7 @@ def test_sound_tuner_is_in_the_middle_section_with_a_row_per_kind(page, sounds_g
     assert page.input_value(_row("crosswalk-in", "durationMs")) == "600"
     assert page.is_disabled(_row("crosswalk-in", "intervalS")) and not page.is_disabled(_row("crosswalk-out", "intervalS"))
     assert page.inner_text('#sndRows tr[data-kind="collision-left"] [data-o="pitchHz"]') == "660 Hz"
-    assert page.input_value("#sndSpeech") == "1" and "1.00" in page.inner_text("#sndSpeechOut")
+    assert page.input_value("#sndSpeech") == "1.25" and "1.25" in page.inner_text("#sndSpeechOut") and page.inner_text("#sndSpeechDef") == "(default)"   # v26.2.12 default
     assert page.locator("#sndSpeechTest").count() == 1 and page.is_hidden("#sndApply")
 
 
@@ -1634,7 +1635,7 @@ def test_sound_changes_persist_through_the_api_and_across_a_reload(page, sounds_
     assert page.input_value("#sndSpeech") == "1.5" and page.inner_text('#sndRows tr[data-kind="collision-left"] [data-o="pitchHz"]') == f"{_hz(500)} Hz"
     page.click("#sndReset")
     page.wait_for_function("() => document.querySelector('#sndStatus').textContent.includes('Defaults')")
-    assert page.input_value(_row("collision-left", "durationMs")) == "80" and api("/api/sounds")["speechRate"] == 1.0
+    assert page.input_value(_row("collision-left", "durationMs")) == "80" and api("/api/sounds")["speechRate"] == 1.25
 
 
 def test_the_test_button_plays_the_chosen_frequency_inside_the_click(page, sounds_guard):
@@ -1713,7 +1714,7 @@ def inject_kind_episodes(page):
         doc["events"] = [e for e in doc["events"] if not (e["type"] in ("tone", "beeps") and 29 <= e["t"] <= 40)] + eps + tones
         route.fulfill(response=resp, json=doc)
 
-    page.route(f"**/api/runs/{FULL_RUN}/events.json", handle)
+    page.route(f"**/api/runs/{FULL_RUN}/events.json*", handle)
 
 
 def test_the_review_panel_shows_the_collision_sectors_and_each_plays_its_pitch(page, sounds_guard):
@@ -1748,4 +1749,4 @@ def test_apply_timing_rescores_the_open_run_with_the_new_intervals(page, sounds_
     kinds = {e["kind"] for e in ev if e["type"] in ("tone", "beeps")}
     assert kinds <= set(KINDS), kinds
     api("/api/sounds", "DELETE")
-    api(f"/api/runs/{FULL_RUN}/collision", "POST")                                                                    # back to the default intervals
+    collision_job(FULL_RUN)                                                                                           # back to the default intervals

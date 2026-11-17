@@ -9,13 +9,17 @@ import { HazardWindow } from "./js/hazards.js";
 import { ClassesPanel } from "./js/classes.js";
 import { EtaTracker, runStartMs } from "./js/eta.js";
 import { SoundsPanel } from "./js/sounds.js";
+import { NotesPanel } from "./js/notes.js";
+import { IssuesPanel } from "./js/issues.js";
+import { WorldMapPanel } from "./js/worldmap.js";
+import { Selection } from "./js/selection.js";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 const video = $("#video");
 
 const S = {
   recs: [], rec: null, settings: null, config: null, models: null,
-  runs: [], run: null, events: [], speech: [], tones: [], notes: [], roles: new Set(ROLES),
+  runs: [], run: null, colls: [], cid: null, events: [], speech: [], tones: [], notes: [], roles: new Set(ROLES),
   pendingSeek: null, seekGen: 0, rangeTouched: false, runPoll: null, recPoll: null, loadedVideoRec: null,
 };
 
@@ -26,7 +30,18 @@ overlay.hudEl = $("#hud");
 const classesPanel = new ClassesPanel(overlay);
 const audio = new AudioEngine(video);
 window.__labAudio = audio;                                  // E2E hook (CONTRACTS 13): the tests set / clear the sound profile on it
+
 const sounds = new SoundsPanel({ audio, rerun: () => rerunCollision(), hasRun: () => !!S.run });
+const notesPanel = new NotesPanel({ getRecId: () => S.rec?.id ?? null, getTime: () => S.pendingSeek ?? (video.currentTime || 0), getRunId: () => S.run?.id ?? null });
+const issuesPanel = new IssuesPanel();
+const worldmap = new WorldMapPanel({ getStyle: () => overlay.style, getFrames: () => overlay.frames, isPlaying: () => !video.paused,
+  getLens: () => ({ hfovDeg: overlay.head?.settings?.hfovDeg, projection: overlay.head?.projection }) });
+window.__labWorldmap = worldmap;                           // E2E hook (CONTRACTS 13): the tests read the snapshot grid to find a wall cell
+// v26.2.10: items (and map regions) are selected as a whole; the video overlay and the world map share the selection
+const selection = new Selection();
+overlay.selection = selection;
+worldmap.selection = selection;
+selection.onChange(() => { overlay.redraw(); worldmap.onSelection(); });
 const timeline = new Timeline($("#timeline"), (t) => seekTo(t));
 const reviews = new Reviews({
   seek: (t) => seekTo(t),
@@ -34,6 +49,16 @@ const reviews = new Reviews({
   getTime: () => video.currentTime || 0,
   isPaused: () => video.paused,
   getFrame: (t) => hazards.frameAt(t),
+  levelOf: (name) => { const st = overlay.style, c = st?.info?.classes?.find((x) => x.name === name); return c ? st.levelOf.get(c.id) : 0; },
+  /** Auto-fill without a loaded run: load the newest done run of this recording that covers t. */
+  ensureRun: async (t) => {
+    if (S.run) return true;
+    const r = (S.runs ?? []).filter((x) => x.status === "done" && x.request.start <= t && t <= x.request.end + 1)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+    if (!r) return false;
+    await loadRun(r.id, { seek: false });
+    return !!S.run;
+  },
   changed: () => refreshAudioEvents(),
   getTemplates: () => S.config?.speech?.templates ?? null,
   transport: (id) => $(`#${id}`).click(),
@@ -144,6 +169,7 @@ async function selectRecording(id, { keepRun = false } = {}) {
   if (!rec) { toast(`Unknown recording ${id}`); return; }
   const changed = S.rec?.id !== id;
   S.rec = rec;
+  notesPanel.recordingChanged();
   if (changed) {
     clearTimeout(S.runPoll);
     $("#runProgress").hidden = true;
@@ -176,7 +202,7 @@ function fillMountSelect() {
   sel.replaceChildren();
   const presets = S.config?.mountPresets ?? {};
   for (const [k, v] of Object.entries(presets)) sel.add(new Option(v.label ?? k, k));
-  if (S.config?.defaultMount) sel.value = S.config.defaultMount;
+  if (S.config?.defaultMount) { sel.value = S.config.defaultMount; markDefault(sel, S.config.defaultMount); }
   const loc = $("#locSel");
   loc.replaceChildren(new Option("Legacy mount", ""));
   for (const [k, v] of Object.entries(S.config?.body?.cameraLocations ?? {})) loc.add(new Option(v.label ?? k, k));
@@ -208,7 +234,7 @@ function updateSettingPlaceholders() {
   const hf = r?.hfovDeg ?? S.config?.defaultHfovDeg;
   if (hf != null) $("#hfovInput").placeholder = `${hf} (default)`;
   const auto = $("#projSel").querySelector('option[value="auto"]');
-  auto.textContent = r?.projection ? `Auto (${r.projection})` : "Auto";
+  auto.textContent = (r?.projection ? `Auto (${r.projection})` : "Auto") + " (default)";
 }
 
 async function loadSettings() {
@@ -229,7 +255,39 @@ function applySettingsToForm() {
   $("#stepLenInput").value = s.stepLengthM ?? "";
   $("#projSel").value = s.projection ?? "auto";
   $("#distSel").value = s.distanceSource ?? "depth";
+  $("#objDistSel").value = s.objectDistance ?? "depth";
+  $("#horizonSel").value = String(s.useHorizon ?? true);
+  syncObjDist();
   updateSettingPlaceholders();
+}
+/** v26.2.11: ground-contact / ground+depth need the horizon: with it off they are greyed out (hint shown) and a selected one falls back to depth. */
+function syncObjDist() {
+  const off = $("#horizonSel").value === "false", sel = $("#objDistSel");
+  for (const o of sel.options) o.disabled = off && o.value !== "depth";
+  if (off && sel.value !== "depth") sel.value = "depth";
+  $("#objDistHint").hidden = !off;
+}
+/** v26.2.11: the option whose value is the default shows " (default)" after its label (no separate "config default" entry). */
+function markDefault(sel, value) {
+  for (const o of sel.options) {
+    o.dataset.base ??= o.textContent;
+    o.textContent = o.dataset.base + (value != null && o.value === String(value) ? " (default)" : "");
+  }
+}
+/** The dotted-key controls of the re-run form: {key: value} for every control whose value differs from the shipped config default. */
+const OV_VALUES = { on: true, off: false };
+function ovDefaults() {
+  for (const el of document.querySelectorAll("select[data-key]")) {
+    let v = el.dataset.key.split(".").reduce((o, k) => o?.[k], S.config ?? {});
+    if (typeof v === "boolean") v = v ? "on" : "off";
+    if (v != null && [...el.options].some((o) => o.value === v)) { el.dataset.default = v; el.value = v; markDefault(el, v); }
+    else delete el.dataset.default;
+  }
+}
+function overrideControls() {
+  const out = {};
+  for (const el of document.querySelectorAll("select[data-key]")) if (el.value !== el.dataset.default) out[el.dataset.key] = el.value in OV_VALUES ? OV_VALUES[el.value] : el.value;
+  return out;
 }
 function settingsFromForm() {
   const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
@@ -244,6 +302,8 @@ function settingsFromForm() {
     stepLengthM: num("#stepLenInput"),
     projection: $("#projSel").value,
     distanceSource: $("#distSel").value,
+    objectDistance: $("#objDistSel").value,
+    useHorizon: $("#horizonSel").value === "true",
   };
 }
 async function putSettings() {
@@ -251,24 +311,370 @@ async function putSettings() {
   applySettingsToForm();
 }
 
+/** The Config overrides input: undefined (empty), the parsed object, or null (invalid: the message is shown under it). */
+function readOverrides() {
+  const err = $("#collOvErr"), raw = $("#collOverrides").value.trim();
+  err.hidden = true;
+  if (!raw) return undefined;
+  const bad = (m) => { err.textContent = m; err.hidden = false; return null; };
+  let v;
+  try { v = JSON.parse(raw); } catch (e) { return bad(`Overrides are not valid JSON: ${e.message}`); }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return bad('Overrides must be an object like {"collision": {"distance.itemLens": "off"}}');
+  return v;
+}
+
+/** The text field merged with the dotted-key controls (the controls win); undefined when both are empty, null when the text is invalid. */
+function allOverrides() {
+  const typed = readOverrides();
+  if (typed === null) return null;
+  const ctl = overrideControls();
+  if (!Object.keys(ctl).length) return typed;
+  return { ...(typed ?? {}), collision: { ...((typed ?? {}).collision ?? {}), ...ctl } };
+}
+
 async function rerunCollision() {
   if (!S.run || !S.rec) return false;
   const btn = $("#rerunBtn"), info = $("#rerunInfo");
+  const overrides = allOverrides();
+  if (overrides === null) return false;
   btn.disabled = true; info.textContent = "Running…";
   const t0 = performance.now();
   try {
     await putSettings();
-    const r = await api(`/api/runs/${S.run.id}/collision`, { method: "POST" });
-    await loadRunData(S.run, r);
+    let r;
+    try { r = await api(`/api/runs/${S.run.id}/collision`, { method: "POST", body: overrides ? { overrides } : {}, quiet: true }); }
+    catch (e) {
+      if (overrides) { $("#collOvErr").textContent = e.message; $("#collOvErr").hidden = false; }
+      else toast(`Re-run collision: ${e.message}`);
+      throw e;
+    }
+    const runId = S.run.id;
+    await refreshCollisions();
+    renderRuns();
+    const d = await followCollisionJob(runId, r.id);       // v26.2.10: a background job; the row shows progress + Cancel
+    if (!d) { info.textContent = `${r.id} · cancelled`; return false; }
+    if (d.status === "error") { toast(`Re-run collision: ${d.error ?? "failed"}`); throw new Error(d.error); }
+    if (S.run?.id !== runId) return false;                // the user moved to another run meanwhile
+    await selectCollision(r.id, { force: true });
     const ms = performance.now() - t0;
     const fmt = (v) => (v < 1000 ? Math.round(v) + " ms" : (v / 1000).toFixed(2) + " s");
-    const compute = r.elapsedSeconds != null ? `${fmt(r.elapsedSeconds * 1000)} compute, ` : "";
+    const compute = d.elapsedSeconds != null ? `${fmt(d.elapsedSeconds * 1000)} compute, ` : "";
     $("#rerunBtn").classList.remove("primary");
-    info.textContent = `Collision ${r.version ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events · ${S.events.filter((e) => e.type === "beeps").length} beeps`;
-    api(`/api/runs/${S.run.id}`, { quiet: true }).then((run) => { S.run = run; applyRunMeta(); reviews.setRun(run, S.notes); }).catch(() => {});
+    info.textContent = `${r.id} · Collision ${d.collisionVersion ?? ""} re-run: ${compute}${fmt(ms)} total · ${S.events.filter((e) => e.type === "speech").length} speech events · ${S.events.filter((e) => e.type === "beeps").length} beeps`;
     return true;
-  } catch { info.textContent = "Failed (see error)"; return false; }
+  } catch { if (!/cancelled/.test(info.textContent)) info.textContent = "Failed (see error)"; return false; }
   finally { btn.disabled = !S.run; }
+}
+
+/** Poll the run's collisions once a second while `cid` runs (progress in its row). Resolves with its final doc, or null when it was
+ *  cancelled (its row is gone). One poller per run: a second caller shares it. */
+function followCollisionJob(runId, cid) {
+  S.collFollow ??= {};
+  const key = `${runId}/${cid}`;
+  if (S.collFollow[key]) return S.collFollow[key];
+  S.collFollow[key] = new Promise((resolve) => {
+    const poll = async () => {
+      if (S.run?.id !== runId) { delete S.collFollow[key]; resolve(null); return; }
+      await refreshCollisions();
+      const d = S.colls.find((c) => c.id === cid);
+      if (!d || d.status !== "running") {
+        delete S.collFollow[key];
+        renderColl();
+        resolve(d ?? null);
+        return;
+      }
+      if (!document.activeElement?.closest?.("#runList")) renderRuns();     // not while a label is being typed
+      else updateCollProgress();
+      setTimeout(poll, 1000);
+    };
+    poll();
+  });
+  return S.collFollow[key];
+}
+
+/** If the open run has a collision job in flight (e.g. started before a reload), follow it. */
+function resumeCollisionJob() {
+  const d = S.colls.find((c) => c.status === "running");
+  $("#rerunBtn").disabled = !S.run || !!d;
+  if (d) followCollisionJob(S.run.id, d.id).then(() => { $("#rerunBtn").disabled = !S.run; });
+}
+
+async function cancelCollisionJob(cid) {
+  if (!S.run) return;
+  try { await api(`/api/runs/${S.run.id}/collisions/${cid}/cancel`, { method: "POST", quiet: true }); }
+  catch (e) { toast(`Cancel ${cid}: ${e.message}`); }
+  await refreshCollisions();
+  renderColl();
+}
+
+function updateCollProgress() {
+  for (const d of S.colls) {
+    const el = document.querySelector(`#runList .coll-row[data-run="${S.run.id}"][data-cid="${d.id}"] .progress`);
+    if (el && d.status === "running") setProgress(el, d.progress || 0, `${Math.round((d.progress || 0) * 100)}%`);
+  }
+}
+
+// ---------------------------------------------------------------- collision runs (v26.2.8)
+const lsKey = (runId) => `lab.collision.${runId}`;
+const SHORT_KEYS = { objectDistance: "objDist", useHorizon: "horizon", distanceSource: "dist", projection: "lens", cameraSide: "side",
+  cameraLocation: "loc", userHeightM: "height", hfovDeg: "hfov", cameraHeightM: "camH", stepLengthM: "step", mount: "mount", orientation: "orient" };
+const shortVal = (v) => (v === true ? "on" : v === false ? "off" : v === null || v === undefined ? "auto" : typeof v === "object" ? JSON.stringify(v) : String(v));
+
+function flatKeys(node, prefix = "", out = {}) {
+  if (node && typeof node === "object" && !Array.isArray(node)) for (const [k, v] of Object.entries(node)) flatKeys(v, prefix ? `${prefix}.${k}` : k, out);
+  else out[prefix] = node;
+  return out;
+}
+
+/** v26.2.11: the overrides the row shows as tags (dotted key -> tag name). */
+const TAGGED = { "source.mode": "source", "speech.predictive.enabled": "predictive", "ego.headingSource": "heading",
+  "horizon.source": "horizon", "ego.cadenceSource": "cadence" };
+
+/** The row's tags: the tagged overrides ("source map"), and the effective object distance when it differs ("ground-contact -> depth (horizon off)"). */
+function collTags(d) {
+  const tags = [];
+  const flat = flatKeys(d.overrides ?? {});
+  for (const [k, v] of Object.entries(flat)) { const name = TAGGED[k.replace(/^collision\./, "")]; if (name) tags.push({ k: name, text: `${name} ${shortVal(v)}` }); }
+  const req = d.settings?.objectDistance, eff = d.objectDistanceEffective;
+  if (req && eff && req !== eff) tags.push({ k: "objDist", text: `${req} -> ${eff} (horizon ${d.settings?.useHorizon === false ? "off" : "on"})` });
+  return tags;
+}
+
+/** What differs from the run's first collision run, short: "objDist ground+depth · horizon off · itemLens off"; "first" for c1. */
+function collSummary(d) {
+  const first = S.colls[0];
+  if (!first || first.id === d.id) return "first";
+  const parts = [];
+  for (const k of Object.keys(d.settings ?? {})) {
+    if (k === "cameraSide" || JSON.stringify(d.settings[k]) === JSON.stringify(first.settings?.[k])) continue;
+    parts.push(`${SHORT_KEYS[k] ?? k} ${shortVal(d.settings[k])}`);
+  }
+  const fo = flatKeys(first.overrides ?? {}), o = flatKeys(d.overrides ?? {});
+  for (const k of Object.keys(o)) if (!TAGGED[k.replace(/^collision\./, "")] && JSON.stringify(o[k]) !== JSON.stringify(fo[k])) parts.push(`${k.split(".").pop()} ${shortVal(o[k])}`);
+  return parts.join(" · ") || "same settings";
+}
+
+function collText(d) {
+  let hhmm = "";
+  try { hhmm = new Date(d.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }); } catch { /* ignore */ }
+  return `${d.id} · ${d.label || collSummary(d)}${hhmm ? ` · ${hhmm}` : ""}`;
+}
+
+async function refreshCollisions() {
+  try { S.colls = await api(`/api/runs/${S.run.id}/collisions`, { quiet: true }); } catch { S.colls = []; }
+}
+
+/** The collision run to show for a run: the remembered one (localStorage), else the latest finished one. */
+function pickCollision(runId) {
+  let want = null;
+  try { want = localStorage.getItem(lsKey(runId)); } catch { /* storage blocked */ }
+  const done = S.colls.filter((c) => (c.status ?? "done") === "done");
+  return done.some((c) => c.id === want) ? want : (done.at(-1)?.id ?? null);
+}
+
+/** The runs list shows the collisions (rows inside each run's group); the Compare pickers take the same finished rows. */
+function renderColl() {
+  renderRuns();
+  const done = S.colls.filter((c) => (c.status ?? "done") === "done");
+  for (const id of ["#cmpA", "#cmpB"]) {
+    const el = $(id), keep = el.value;
+    el.replaceChildren(...done.map((d) => new Option(collText(d), d.id)));
+    if (done.some((c) => c.id === keep)) el.value = keep;
+  }
+}
+
+/** Compare defaults: B = the selected collision run, A = the one before it. */
+function resetCompareDefaults() {
+  const done = S.colls.filter((c) => (c.status ?? "done") === "done");
+  const i = done.findIndex((c) => c.id === S.cid);
+  if (i < 0) return;
+  $("#cmpB").value = S.cid;
+  $("#cmpA").value = done[i > 0 ? i - 1 : Math.min(1, done.length - 1)]?.id ?? S.cid;
+}
+
+async function selectCollision(cid, { force = false } = {}) {
+  if (!S.run) return;
+  if (cid === S.cid && !force) { renderColl(); return; }
+  S.cid = cid || null;
+  try { if (cid) localStorage.setItem(lsKey(S.run.id), cid); } catch { /* storage blocked */ }
+  try { S.run = await loadRunData(S.run, S.cid); } catch { /* toasted */ }
+  applyRunMeta();
+  renderColl();
+  resetCompareDefaults();
+  renderCompare();
+  hazards.update(video.currentTime || 0);
+}
+
+async function saveCollLabel(runId, d, input) {
+  const label = input.value.trim();
+  if (label === (d.label ?? "")) return;
+  try {
+    Object.assign(d, await api(`/api/runs/${runId}/collisions/${d.id}`, { method: "PATCH", body: { label } }));
+    renderColl();
+    renderCompare();
+  } catch { /* toasted */ }
+}
+
+async function deleteColl(runId, d) {
+  if (!window.confirm(`Delete collision run ${d.id}${d.label ? ` (${d.label})` : ""}? Its events, hazards and world map are removed.`)) return;
+  try { await api(`/api/runs/${runId}/collisions/${d.id}`, { method: "DELETE", quiet: true }); }
+  catch (e) { toast(`Delete ${d.id}: ${e.message}`); return; }
+  if (S.run?.id === runId) {
+    const wasSel = S.cid === d.id;
+    await refreshCollisions();
+    if (wasSel) {
+      try { localStorage.removeItem(lsKey(runId)); } catch { /* storage blocked */ }
+      S.cid = null;
+      await selectCollision(pickCollision(runId), { force: true });
+    } else renderColl();
+  } else {
+    delete S.runColls?.[runId];
+    await loadRunColls(runId);
+  }
+}
+
+/** Collisions of a run that is not the open one (loaded when its group is opened). */
+async function loadRunColls(runId) {
+  S.runColls ??= {};
+  try { S.runColls[runId] = await api(`/api/runs/${runId}/collisions`, { quiet: true }); } catch { S.runColls[runId] = []; }
+  renderRuns();
+}
+
+const collsOf = (runId) => (S.run?.id === runId ? S.colls : S.runColls?.[runId] ?? []);
+
+/** Open a collision row: the same run switches collision run, another run is loaded showing it. */
+async function openCollRow(runId, d) {
+  if ((d.status ?? "done") !== "done") return;
+  if (S.run?.id === runId) { await selectCollision(d.id); return; }
+  try { localStorage.setItem(lsKey(runId), d.id); } catch { /* storage blocked */ }
+  await loadRun(runId);
+}
+
+function pickCompare(which, cid) {
+  const box = $("#secCompare");
+  box.open = true;
+  $(which).value = cid;
+  renderCompare();
+}
+
+function collRow(runId, d) {
+  const li = document.createElement("li");
+  li.className = "coll-row" + (S.run?.id === runId && S.cid === d.id ? " sel" : "");
+  li.dataset.run = runId; li.dataset.cid = d.id;
+  const status = d.status ?? "done";
+  const top = document.createElement("div");
+  top.className = "coll-top";
+  const id = document.createElement("b"); id.textContent = d.id;
+  const label = document.createElement("input");
+  label.className = "coll-label"; label.maxLength = 60; label.placeholder = collSummary(d); label.value = d.label ?? "";
+  label.autocomplete = "off"; label.setAttribute("aria-label", `Label of ${d.id}`);
+  label.addEventListener("click", (e) => e.stopPropagation());
+  label.addEventListener("change", () => saveCollLabel(runId, d, label));
+  label.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") label.blur(); });
+  const tag = document.createElement("span"); tag.className = `tag ${status}`; tag.textContent = status === "error" ? "error" : status;
+  if (status === "error" && d.error) tag.title = d.error;
+  top.append(id, label, tag);
+  const sub = document.createElement("div");
+  sub.className = "sub";
+  const c = d.counts ?? {};
+  sub.textContent = [`collision ${d.collisionVersion ?? "?"}`, d.worldmapVersion ? `map ${d.worldmapVersion}` : null,
+    status === "done" ? `${c.speech ?? 0} speech · ${c.beeps ?? 0} beeps` : null, collSummary(d)].filter(Boolean).join(" · ");
+  li.append(top, sub);
+  const tags = collTags(d);
+  if (tags.length) {
+    const box = document.createElement("div");
+    box.className = "coll-tags";
+    for (const t of tags) { const sp = document.createElement("span"); sp.className = "coll-ovtag"; sp.dataset.tag = t.k; sp.textContent = t.text; box.append(sp); }
+    li.append(box);
+  }
+  if (status === "running") {
+    const pr = document.createElement("div");
+    pr.className = "progress";
+    pr.innerHTML = "<div></div><span></span>";
+    setProgress(pr, d.progress || 0, `${Math.round((d.progress || 0) * 100)}%`);
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.className = "coll-cancel"; cancel.textContent = "Cancel";
+    cancel.addEventListener("click", (e) => { e.stopPropagation(); cancelCollisionJob(d.id); });
+    li.append(pr, cancel);
+  } else {
+    const bar = document.createElement("div");
+    bar.className = "coll-btns";
+    if (status === "done") {
+      for (const w of ["A", "B"]) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = `coll-pick coll-${w}`; b.textContent = w; b.title = `Use ${d.id} as ${w} in Compare collision runs`;
+        b.addEventListener("click", (e) => { e.stopPropagation(); if (S.run?.id === runId) pickCompare(`#cmp${w}`, d.id); });
+        bar.append(b);
+      }
+    }
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "coll-del"; del.textContent = "Delete";
+    del.title = "Delete this collision run (not the only one, not one with reviews)";
+    del.disabled = collsOf(runId).length < 2 && status !== "error";
+    del.addEventListener("click", (e) => { e.stopPropagation(); deleteColl(runId, d); });
+    bar.append(del);
+    li.append(bar);
+  }
+  if (status === "done") { li.classList.add("clickable"); li.addEventListener("click", () => openCollRow(runId, d)); }
+  return li;
+}
+
+// ---- compare A / B
+let cmpToken = 0;      // only the latest compare request renders (re-run, select and label save can each ask for one)
+async function renderCompare() {
+  const box = $("#secCompare"), out = $("#cmpOut"), msg = $("#cmpMsg");
+  if (!box.open) return;
+  const token = ++cmpToken;
+  out.replaceChildren();
+  if (!S.run || S.colls.filter((c) => (c.status ?? "done") === "done").length < 2) { msg.textContent = S.run ? "This run has one collision run; re-run collision to compare." : "Open a run first."; return; }
+  const a = $("#cmpA").value, b = $("#cmpB").value, runId = S.run.id;
+  if (!a || !b || a === b) { msg.textContent = "Pick two different collision runs."; return; }
+  msg.textContent = "Comparing…";
+  let c;
+  try { c = await api(`/api/runs/${runId}/collisions/compare?a=${a}&b=${b}`, { quiet: true }); }
+  catch (e) { if (token === cmpToken) msg.textContent = `Compare failed: ${e.message}`; return; }
+  if (token !== cmpToken || S.run?.id !== runId || $("#cmpA").value !== a || $("#cmpB").value !== b) return;     // superseded
+  msg.textContent = "";
+  out.replaceChildren();
+  const mk = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; return x; };
+  const val = (v) => (v === undefined || v === null ? "–" : typeof v === "object" ? JSON.stringify(v) : String(v));
+  // settings table
+  out.append(mk("div", "cmp-sub", `Settings that differ (${c.settings.length})`));
+  const wrap = mk("div", "cmp-scroll"), tbl = mk("table", "cmp-table");
+  tbl.id = "cmpSettings";
+  const head = tbl.createTHead().insertRow();
+  for (const h of ["key", c.a, c.b]) head.append(mk("th", "", h));
+  const body = tbl.createTBody();
+  for (const r of c.settings) { const tr = body.insertRow(); tr.dataset.key = r.key; for (const x of [r.key, val(r.a), val(r.b)]) tr.insertCell().textContent = x; }
+  if (!c.settings.length) body.insertRow().insertCell().textContent = "no differing setting";
+  wrap.append(tbl); out.append(wrap);
+  // counts
+  const cnt = (x) => `${x.speech ?? 0} speech · ${x.beeps ?? 0} beeps`;
+  out.append(mk("div", "cmp-sub", `Counts: ${c.a} ${cnt(c.counts.a)} | ${c.b} ${cnt(c.counts.b)}`));
+  // event lists
+  const ev = c.events;
+  const evText = (e) => `${e.type === "beeps" ? "🔔 " : ""}${e.text}`;
+  const list = (title, rows, line) => {
+    const d = document.createElement("details");
+    d.className = "cmp-group"; d.open = rows.length > 0 && rows.length <= 40;
+    d.append(mk("summary", "", `${title} (${rows.length})`));
+    const ul = mk("ul", "cmp-list");
+    for (const r of rows) {
+      const li = document.createElement("li"), btn = mk("button", "", "");
+      btn.type = "button";
+      const t = r.t ?? r.a?.t;
+      btn.append(mk("span", "cmp-t mono", fmtTime(t, 1)), mk("span", "cmp-x", line(r)));
+      btn.addEventListener("click", () => seekTo(t));
+      li.append(btn); ul.append(li);
+    }
+    d.append(ul); return d;
+  };
+  const g = (id, node) => { node.id = id; out.append(node); };
+  g("cmpChanged", list("Changed", ev.changed, (r) => `${c.a}: ${evText(r.a)}  →  ${c.b}: ${evText(r.b)}`));
+  g("cmpOnlyA", list(`Only ${c.a}`, ev.onlyA, evText));
+  g("cmpOnlyB", list(`Only ${c.b}`, ev.onlyB, evText));
+  out.append(mk("p", "hint", `${ev.same} the same`));
+  out.lastChild.id = "cmpSame";
 }
 
 // ---------------------------------------------------------------- runs
@@ -322,7 +728,7 @@ function labelResolutions() {
   const sizes = ($("#orientSel").value === "portrait" ? S.rec?.inputSizesPortrait : S.rec?.inputSizes) ?? {};
   for (const o of $("#profileSel").options) {
     const sz = sizes[o.value];
-    o.textContent = sz ? `${o.value} · ${sz[0]}×${sz[1]}` : o.value;
+    o.textContent = (sz ? `${o.value} · ${sz[0]}×${sz[1]}` : o.value) + (o.value === "736p" ? " (default)" : "");
     o.disabled = !!S.rec && !sz;
   }
   const sel = $("#profileSel");
@@ -332,19 +738,38 @@ function renderRuns() {
   const ul = $("#runList");
   ul.replaceChildren();
   if (!S.runs.length) { ul.innerHTML = '<li class="sub">No runs for this recording</li>'; return; }
+  S.openRuns ??= new Set();
   for (const r of S.runs) {
+    // v26.2.10: each run is a collapsible group: the header is the run as it was shown, its collisions are rows inside
     const li = document.createElement("li");
-    li.className = "clickable" + (S.run?.id === r.id ? " sel" : "");
-    li.innerHTML = '<div class="t"></div><div class="sub"></div>';
-    li.firstChild.textContent = runLabel(r);
+    li.className = "run-group" + (S.run?.id === r.id ? " sel" : "");
+    li.dataset.run = r.id;
+    li.dataset.orientation = runOrientation(r);
+    const det = document.createElement("details");
+    det.open = S.openRuns.has(r.id);
+    const head = document.createElement("summary");
+    head.className = "run-head clickable";
+    head.innerHTML = '<div class="t"></div><div class="sub"></div>';
+    head.firstChild.textContent = runLabel(r);
     const tag = document.createElement("span");
     tag.className = `tag ${r.status}`;
     tag.textContent = S.eta?.id === r.id && isActive(r) ? S.eta.text : r.status;
-    li.dataset.run = r.id;
-    li.firstChild.append(tag);
-    li.dataset.orientation = runOrientation(r);
-    li.lastChild.textContent = [r.modelName + (r.device === "cpu" ? " · CPU" : ""), r.request.profile, runDepth(r) ? `depth ${runDepth(r)}` : null, r.createdAt?.replace("T", " ").replace("Z", "")].filter(Boolean).join(" · ");
-    li.addEventListener("click", () => openRun(r));
+    head.firstChild.append(tag);
+    head.lastChild.textContent = [r.modelName + (r.device === "cpu" ? " · CPU" : ""), r.request.profile, runDepth(r) ? `depth ${runDepth(r)}` : null, r.createdAt?.replace("T", " ").replace("Z", "")].filter(Boolean).join(" · ");
+    head.addEventListener("click", (e) => {         // the loaded run's header just folds; any other run is loaded (and shown open)
+      if (S.run?.id === r.id && r.status === "done") return;
+      e.preventDefault();
+      openRun(r);
+    });
+    det.addEventListener("toggle", () => {
+      if (det.open) S.openRuns.add(r.id); else S.openRuns.delete(r.id);
+      if (det.open && r.status === "done" && S.run?.id !== r.id && !S.runColls?.[r.id]) loadRunColls(r.id);
+    });
+    const rows = document.createElement("ul");
+    rows.className = "coll-rows";
+    for (const d of collsOf(r.id)) rows.append(collRow(r.id, d));
+    det.append(head, rows);
+    li.append(det);
     ul.append(li);
   }
 }
@@ -353,7 +778,7 @@ function renderRuns() {
 function progressLabel(r) {
   if (!S.eta || S.eta.id !== r.id) S.eta = { id: r.id, tracker: new EtaTracker(runStartMs(r)) };
   const text = S.eta.text = S.eta.tracker.label(r);
-  for (const tag of document.querySelectorAll(`#runList li[data-run="${r.id}"] .tag`)) tag.textContent = text; // runs list shows it too
+  for (const tag of document.querySelectorAll(`#runList li.run-group[data-run="${r.id}"] .run-head .tag`)) tag.textContent = text; // runs list shows it too
   return text;
 }
 
@@ -485,22 +910,28 @@ function setDepthAvailable(on) {
 }
 
 function unloadRun() {
-  S.run = null; S.events = []; S.speech = []; S.tones = []; S.notes = [];
+  S.run = null; S.colls = []; S.runColls = {}; S.cid = null; S.events = []; S.speech = []; S.tones = []; S.notes = [];
   sounds.runChanged();
   hazards.setRun(null);
   overlay.setRun(null);
   classesPanel.setRun(null);
+  worldmap.setRun(null);
   audio.setEvents([]);
   timeline.set(null, []);
   reviews.setRun(null, []);
   $("#runBadge").textContent = "";
   $("#rerunBtn").disabled = true;
   setDepthAvailable(false);
+  renderColl();
+  renderCompare();
 }
 
-async function loadRunData(run, links) {
-  const ev = links?.events ?? `/api/runs/${run.id}/events.json`;
-  const events = await api(ev);
+/** Show collision run `cid` of an analysis run (null: it has none). Returns the run object the panels got (with collisionId / collisionVersion). */
+async function loadRunData(run0, cid) {
+  const d = S.colls.find((c) => c.id === cid);
+  const run = { ...run0, collisionId: cid ?? null, collisionVersion: d?.collisionVersion ?? run0.collisionVersion };
+  const events = cid ? await api(`/api/runs/${run.id}/events.json?collision=${encodeURIComponent(cid)}`) : { events: [] };
+  selection.clear();
   S.events = events.events ?? [];
   S.speech = S.events.filter((e) => e.type === "speech");
   S.tones = S.events.filter((e) => e.type === "tone");
@@ -510,12 +941,14 @@ async function loadRunData(run, links) {
   hazards.setRun(run);
   overlay.setRun(run);
   classesPanel.setRun(run);
+  worldmap.setRun(run);
   setDepthAvailable(!!runDepth(run));
   hazards.update(playheadForRun(run));
   audio.setEvents(S.events);
   refreshAudioEvents();
   timeline.set(run, S.events);
-  reviews.setRun(run, S.notes);
+  reviews.setRun(run, S.notes, S.tones);
+  return run;
 }
 
 /** Where the playhead will be once this run is shown (a pending seek wins, then the current time, clamped into the run). */
@@ -549,7 +982,7 @@ function applyRunMeta() {
   sounds.runChanged();
   const r = S.run;
   if (!r) return;
-  $("#runBadge").textContent = `run ${r.id} · ${runLabel(r)} · ${r.frameCount} frames · ${r.modelName ?? ""}${r.device === "cpu" ? " · CPU" : ""}${r.msPerFrame ? ` · ${Math.round(r.msPerFrame)} ms/frame` : ""} · collision ${r.collisionVersion ?? "?"}${runDepth(r) ? ` · depth ${runDepth(r)}${r.depthMsPerFrame ? ` ${Math.round(r.depthMsPerFrame)} ms/frame` : ""}` : ""}${r.motionFrames ? "" : " · no motion track"}`;
+  $("#runBadge").textContent = `run ${r.id}${r.collisionId ? ` · ${r.collisionId}` : ""} · ${runLabel(r)} · ${r.frameCount} frames · ${r.modelName ?? ""}${r.device === "cpu" ? " · CPU" : ""}${r.msPerFrame ? ` · ${Math.round(r.msPerFrame)} ms/frame` : ""} · collision ${r.collisionVersion ?? "?"}${r.collisionId ? "" : " (none)"}${runDepth(r) ? ` · depth ${runDepth(r)}${r.depthMsPerFrame ? ` ${Math.round(r.depthMsPerFrame)} ms/frame` : ""}` : ""}${r.motionFrames ? "" : " · no motion track"}`;
 }
 
 async function loadRun(runId, { seek = true, t } = {}) {
@@ -561,10 +994,18 @@ async function loadRun(runId, { seek = true, t } = {}) {
     await selectRecording(run.request.recording, { keepRun: true });
   }
   const gen = S.seekGen; // the user may scrub while the run loads; don't yank them back afterwards
-  try { await loadRunData(run); } catch { return; }
-  S.run = run;
+  S.run = run;               // the collision list below needs S.run.id
+  S.runColls = {};
+  (S.openRuns ??= new Set()).add(run.id);
+  await refreshCollisions();
+  const cid = pickCollision(run.id);
+  S.cid = cid;
+  try { S.run = await loadRunData(run, cid); } catch { S.run = null; return; }
   applyRunMeta();
-  $("#rerunBtn").disabled = false;
+  renderColl();
+  resetCompareDefaults();
+  renderCompare();
+  resumeCollisionJob();
   S.rangeTouched = true; // keep the user's run range, don't auto-sync to playhead
   $("#rangeStart").value = fmtTime(run.request.start);
   $("#rangeEnd").value = fmtTime(run.request.end);
@@ -618,6 +1059,7 @@ function updateTime(t) {
   timeline.setPlayhead(t);
   reviews.highlight(t);
   hazards.update(t);
+  worldmap.update(t);
 }
 let draggingSeek = false;
 
@@ -686,7 +1128,8 @@ function wire() {
   $("#stepFwd").addEventListener("click", () => step(1));
   const speedSel = $("#speedSel");
   for (const s of SPEEDS) speedSel.add(new Option(`${s}×`, String(s)));
-  speedSel.value = "1";
+  speedSel.value = "1"; markDefault(speedSel, "1");
+  $("#horizonSel").addEventListener("change", syncObjDist);
   speedSel.addEventListener("change", () => setSpeed(Number(speedSel.value)));
   const bar = $("#seekBar");
   bar.addEventListener("input", () => { draggingSeek = true; seekTo(Number(bar.value)); });
@@ -762,6 +1205,9 @@ function wire() {
   $("#reanalyseBtn").addEventListener("click", () => $("#reusedNote").reanalyse?.());
   $("#cancelBtn").addEventListener("click", cancelAnalysis);
   $("#rerunBtn").addEventListener("click", rerunCollision);
+  $("#secCompare").addEventListener("toggle", renderCompare);
+  $("#cmpA").addEventListener("change", renderCompare);
+  $("#cmpB").addEventListener("change", renderCompare);
   $("#startFromHead").addEventListener("click", () => setFromHead("start"));
   $("#endFromHead").addEventListener("click", () => setFromHead("end"));
   for (const id of ["#rangeStart", "#rangeEnd"]) $(id).addEventListener("input", () => { S.rangeTouched = true; });
@@ -777,6 +1223,7 @@ function wire() {
       case "[": stepSpeed(-1); break;
       case "]": stepSpeed(1); break;
       case "m": case "M": toggleMute(); break;
+      case "Escape": selection.clear(); break;
     }
   });
   // Space on a focused button would otherwise also "click" it on keyup.
@@ -797,7 +1244,11 @@ async function init() {
   ]);
   S.config = config; S.models = models;
   sounds.load();
+  notesPanel.load();
+  issuesPanel.load();
   fillMountSelect();
+  ovDefaults();
+  for (const [id, v] of [["#orientSel", "landscape"], ["#deviceSel", "gpu"], ["#sideSel", "center"], ["#distSel", "depth"], ["#objDistSel", "depth"], ["#horizonSel", "true"], ["#shapeSel", "outlines"]]) markDefault($(id), v);
   if (models) {
     for (const m of models.models) $("#modelSel").add(new Option(m.name + (m.default ? " (default)" : ""), m.path));
     const d = models.models.find((m) => m.default);
@@ -809,6 +1260,7 @@ async function init() {
       for (const d of dm) $("#depthSel").add(new Option(d === "none" ? "Off" : DEPTH_LABELS[d] ?? d, d));
       if (!dm.includes("none")) $("#depthSel").add(new Option("Off", "none"), 0);
       $("#depthSel").value = dm.includes("da2-metric-outdoor-small") ? "da2-metric-outdoor-small" : "none";   // depth on by default (v26.1.10)
+      markDefault($("#depthSel"), $("#depthSel").value);
       $("#depthLbl").hidden = false;
     }
   } else $("#profileSel").add(new Option("default", "default"));

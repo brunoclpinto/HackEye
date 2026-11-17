@@ -8,7 +8,7 @@
 // reverts the local change. Rows are patched in place; only run/filter/add/
 // delete/time changes re-render the whole list, so a focused note never loses
 // its caret.
-import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole } from "./util.js";
+import { $, fmtTime, parseTime, toast, lastAtOrBefore, ROLE_COLOR, ROLES, eventRole, beepRepeats } from "./util.js";
 import { api } from "./api.js";
 import { orderCandidates, fillFor } from "./autofill.js";
 
@@ -86,15 +86,15 @@ export class Reviews {
   }
 
   /** run: run.json (needs id, collisionVersion) or null; notes: its speech + beeps events sorted by t. */
-  setRun(run, notes) {
-    this.run = run; this.notes = notes ?? [];
+  setRun(run, notes, tones) {
+    this.run = run; this.notes = notes ?? []; this.tones = tones ?? [];
     this._reindex(); this.render();
   }
   setRoles(roles) { this.roles = roles; this.render(); }
 
   // ------------------------------------------------------------ keys
-  _evKey(ev) { return `${this.run.id}|${this.run.collisionVersion ?? null}|${t3(ev.t)}|${ev.text}`; }
-  _annKey(a) { return `${a.runId}|${a.collisionVersion ?? null}|${t3(a.event.t)}|${a.event.text}`; }
+  _evKey(ev) { return `${this.run.id}|${this.run.collisionId ?? "c1"}|${this.run.collisionVersion ?? null}|${t3(ev.t)}|${ev.text}`; }
+  _annKey(a) { return `${a.runId}|${a.collisionId ?? "c1"}|${a.collisionVersion ?? null}|${t3(a.event.t)}|${a.event.text}`; }
   _reindex() {
     this.vmap = new Map();
     for (const a of this.anns) if (a.kind === "verdict" && a.runId) this.vmap.set(this._annKey(a), a);
@@ -188,7 +188,7 @@ export class Reviews {
       const del = el("button", "rv-icon", "🗑"); del.type = "button"; del.title = "Delete";
       del.addEventListener("click", () => this._delete(a, "Delete this verdict from another run/version?"));
       top.append(del);
-      li.append(top, el("div", "rv-sub", `run ${a.runId} · collision ${a.collisionVersion ?? "?"}${a.note ? " · " + a.note : ""}`));
+      li.append(top, el("div", "rv-sub", `run ${a.runId} · ${a.collisionId ?? "c1"} · collision ${a.collisionVersion ?? "?"}${a.note ? " · " + a.note : ""}`));
       return li;
     }));
   }
@@ -201,8 +201,9 @@ export class Reviews {
     const { ev, rk } = it;
     const a = this.vmap.get(this._evKey(ev));
     const role = eventRole(ev);
-    const li = el("li", "rv-row" + (isBeeps(ev) ? " beeps" : "") + (a ? " v-" + a.verdict : ""));
+    const li = el("li", "rv-row" + (isBeeps(ev) ? " beeps" : "") + (a ? " v-" + a.verdict : "") + (a?.auto ? " auto" : ""));
     li.dataset.rk = rk;
+    if (a?.auto) li.title = "counted correct (reviewed later items)";
     li.style.setProperty("--c", roleColor(role));
     const top = el("div", "rv-main");
     const tb = el("button", "rv-time mono", fmtTime(ev.t, 1)); tb.type = "button"; tb.title = "Seek here";
@@ -221,11 +222,28 @@ export class Reviews {
       li.dataset.kind = ev.kind ?? "collision";
       top.append(tb, bell, badge);
       if (ev.tEnd > ev.t) top.append(el("span", "rv-dur mono", fmtDur(ev.tEnd - ev.t)));
+      // v26.2.12: the number of repeats (tones inside the episode) and their interval
+      const rep = beepRepeats(ev, this.tones);
+      if (rep.n) {
+        const r = el("span", "rv-rep mono", `× ${rep.n}`);
+        r.title = `${rep.n} tone${rep.n === 1 ? "" : "s"}` + (rep.intervalS ? `, every ${rep.intervalS.toFixed(2)} s` : "");
+        if (rep.intervalS) r.textContent += ` · ${rep.intervalS.toFixed(2)} s`;
+        top.append(r);
+      }
+    } else if (ev.predicted && ev.predicted.dt > 0) {
+      // v26.2.12: a predictive phrase: "said 23.51 · for 25.50" (the second time is the lead item's, t + dt); the first also seeks
+      li.dataset.predicted = "1";
+      const mk = el("span", "rv-pred", "\u23e9"); mk.title = `Predictive: said for where the item will be when the phrase ends (+${(+ev.predicted.dt).toFixed(2)} s)`;
+      const fb = el("button", "rv-time rv-for mono", `for ${fmtTime(ev.t + ev.predicted.dt, 1)}`); fb.type = "button";
+      fb.title = "Seek to the moment the phrase is about"; fb.addEventListener("click", () => this._seek(ev.t + ev.predicted.dt));
+      tb.textContent = `said ${fmtTime(ev.t, 1)}`; tb.title = "Seek to when it was said";
+      top.append(tb, mk, fb, badge);
     } else top.append(tb, badge);
     top.append(this._toggles(a, (v) => this.toggleVerdict(ev, v)));
     const text = el("div", "rv-text" + (a?.verdict === "remove" ? " struck" : ""), ev.text);
+    if (ev.predicted?.textNow) text.title = `Without prediction: ${ev.predicted.textNow}`;
     li.append(top, text);
-    const showNote = a || this.expanded.has(rk);
+    const showNote = (a && !a.auto) || this.expanded.has(rk);   // v26.2.14: an auto-counted ✓ shows its note box only when opened
     if (showNote) li.append(this._noteBox(rk, a, a ? a.note : this.drafts.get(rk) ?? "", !a));
     return li;
   }
@@ -250,7 +268,7 @@ export class Reviews {
     ta.addEventListener("input", () => {
       const cur = this._annOfRow(rk);
       if (!cur) { this.drafts.set(rk, ta.value); return; }
-      cur.note = ta.value; saved.textContent = "…";
+      cur.note = ta.value; delete cur.auto; saved.textContent = "…";
       this._debounce(rk, () => this._saveFields(cur, { note: ta.value }, saved));
     });
     ta.addEventListener("blur", () => { if (this.timers.has(rk)) this._flush(rk); });
@@ -379,7 +397,7 @@ export class Reviews {
     const cur = this.vmap.get(key);
     if (cur && cur.verdict === verdict) { this._delete(cur); return; }
     if (cur) {
-      cur.verdict = verdict;
+      cur.verdict = verdict; delete cur.auto;       // v26.2.14: the user took over an auto-counted verdict
       this._refreshRow(rk);
       this.h.changed?.();
       this._send(async () => {
@@ -390,20 +408,22 @@ export class Reviews {
       return;
     }
     const snapshot = {};
-    for (const k of ["t", "text", "role", "trackId", "urgency", "clock", "clockText", "type", "tEnd", "label", "minSteps"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
+    for (const k of ["t", "text", "role", "trackId", "urgency", "clock", "clockText", "type", "tEnd", "label", "minSteps", "clockText", "predicted"]) if (ev[k] !== undefined) snapshot[k] = ev[k];
     const run = this.run, rec = this.rec;
     const draft = this.drafts.get(rk) ?? "";
     this.drafts.delete(rk);
     const a = { id: `tmp-${Math.random().toString(16).slice(2)}`, kind: "verdict", verdict, note: draft, t: ev.t, event: snapshot,
-      runId: run.id, collisionVersion: run.collisionVersion ?? null };
+      runId: run.id, collisionId: run.collisionId ?? undefined, collisionVersion: run.collisionVersion ?? null };
     this.anns.push(a); this._reindex();
     this._refreshRow(rk);
     this._send(async () => {
       if (a.dead) return;
       try {
-        const res = await api(this._base(), { method: "POST", body: { kind: "verdict", verdict, note: draft, t: ev.t, event: snapshot, runId: run.id, collisionVersion: run.collisionVersion ?? undefined } });
+        const res = await api(this._base(), { method: "POST", body: { kind: "verdict", verdict, note: draft, t: ev.t, event: snapshot, runId: run.id, collisionId: run.collisionId ?? undefined, collisionVersion: run.collisionVersion ?? undefined } });
         const localNote = a.note, localVerdict = a.verdict;
-        Object.assign(a, res);
+        const { autoCreated, ...stored } = res;
+        Object.assign(a, stored);
+        this._addAuto(autoCreated);
         a.verdict = localVerdict; a.note = localNote;
         if (localVerdict !== res.verdict) await api(`${this._base()}/${a.id}`, { method: "PUT", body: { verdict: localVerdict } });
         if (localNote !== res.note) await api(`${this._base()}/${a.id}`, { method: "PUT", body: { note: localNote } });
@@ -412,6 +432,14 @@ export class Reviews {
         if (this.rec === rec) await this.reload();
       }
     });
+  }
+
+  /** v26.2.14: the earlier notifications the server counted correct when this one was reviewed (`auto: true`). */
+  _addAuto(list) {
+    if (!list?.length) return;
+    const have = new Set(this.anns.filter((x) => x.kind === "verdict" && x.runId).map((x) => this._annKey(x)));
+    for (const x of list) if (!have.has(this._annKey(x))) this.anns.push(x);
+    this.anns.sort((x, y) => x.t - y.t); this._reindex(); this.render();
   }
 
   _delete(a, confirmMsg) {
@@ -493,32 +521,37 @@ export class Reviews {
   }
   _resetAuto() { this.cand = null; const i = $("#rvAddAutoInfo"); i.hidden = true; i.textContent = ""; }
 
-  /** Fill text + role from the analysed frame at the form time (fetched from /frame?t=); repeated clicks cycle candidates. */
+  _autoInfo(msg) { const i = $("#rvAddAutoInfo"); i.textContent = msg; i.hidden = false; }
+
+  /** Auto-fill (v26.2.4): (1) the form time becomes the playhead (the paused frame), always; (2) the highest-priority object of that analysed
+   *  frame is picked (role final > danger > feature > context > none, then safety level, then fewest steps); (3) the phrase, role and type
+   *  are filled in. It never saves: the user corrects by hand and presses Add. Repeated clicks at the same time cycle to the next candidate. */
   async autofill() {
-    const t = this._formTime();
-    if (!(t >= 0)) { toast("Enter a valid time first."); return; }
+    const t = this.h.getTime();
+    if (!(t >= 0)) { toast("No playhead time."); return; }
+    if (this.formT !== t || $("#rvAddT").value !== this._fmtT()) this._setFormTime(t);      // typed or stale time: the playhead wins
+    $("#rvAddType").value = this._addType() === "beeps" ? "beeps" : "speech"; this._typeUi();
     if (!this.cand || this.cand.t !== t) {
-      if (!this.run) { toast("Load a run to auto-fill."); return; }
       const btn = $("#rvAddAuto"), token = ++this.addToken;
       btn.disabled = true; btn.classList.add("busy"); const label = btn.textContent; btn.textContent = "…";
       let frame;
-      try { frame = await this.h.getFrame(t); }
-      finally { btn.disabled = false; btn.classList.remove("busy"); btn.textContent = label; }
-      if (token !== this.addToken || $("#rvAddForm").hidden) return; // form was reset or the time changed meanwhile
-      if (!frame) { toast("No analysed frame at this time (outside the run range)."); return; }
-      this.cand = { t, list: orderCandidates(frame), i: -1 };
+      try {
+        if (!this.run && !(await this.h.ensureRun?.(t))) { this._autoInfo("No analysed run covers this time: analyse the recording first."); toast("No analysed run covers this time.", "info"); return; }
+        frame = await this.h.getFrame(t);
+      } finally { btn.disabled = false; btn.classList.remove("busy"); btn.textContent = label; }
+      if (token !== this.addToken || $("#rvAddForm").hidden) return; // form was reset meanwhile
+      if (!frame) { this._autoInfo("No analysed frame at this time (outside the run range)."); toast("No analysed frame at this time (outside the run range).", "info"); return; }
+      this.cand = { t, list: orderCandidates(frame, this.h.levelOf), i: -1 };
     }
     const c = this.cand;
-    if (!c.list.length) { toast("nothing detected at this time", "info"); return; }
+    if (!c.list.length) { this._autoInfo("nothing detected at this time"); toast("nothing detected at this time", "info"); return; }
     c.i = (c.i + 1) % c.list.length;
     const it = c.list[c.i];
     let { text, role } = fillFor(it, this.h.getTemplates());
     if (this._addType() === "beeps") text = `beeps · ${it.label ?? it.className ?? "object"} at ${it.clockText ?? it.clock ?? "?"}`;
     $("#rvAddText").value = text.slice(0, 300);
     $("#rvAddRole").value = role;
-    const info = $("#rvAddAutoInfo");
-    info.textContent = `${c.i + 1}/${c.list.length} · ${it.className ?? it.label} · ${it.role ?? "none"}`;
-    info.hidden = false;
+    this._autoInfo(`${c.i + 1}/${c.list.length} · ${it.className ?? it.label} · ${it.role ?? "none"}`);
   }
 
   async submitAdd() {
@@ -533,10 +566,11 @@ export class Reviews {
       if (!(tEnd > t) || tEnd > this.rec.duration) { toast("End must be after the start and within the recording."); return; }
       body.tEnd = tEnd;
     }
-    if (this.run) { body.runId = this.run.id; body.collisionVersion = this.run.collisionVersion ?? undefined; }
+    if (this.run) { body.runId = this.run.id; body.collisionId = this.run.collisionId ?? undefined; body.collisionVersion = this.run.collisionVersion ?? undefined; }
     const btn = $("#rvAddSubmit"); btn.disabled = true;
     try {
-      const a = await api(this._base(), { method: "POST", body });
+      const { autoCreated, ...a } = await api(this._base(), { method: "POST", body });
+      this._addAuto(autoCreated);
       this.anns.push(a); this.anns.sort((x, y) => x.t - y.t); this._reindex();
       this.closeAdd(); this.render();
       this.lastT = a.t; this.curIdx = -2; this.highlight(a.t);

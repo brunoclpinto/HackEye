@@ -2,8 +2,8 @@
 
 Reviews belong to the *recording*, not to a run: what should be spoken at a
 given recording time stays true across re-analysis and new collision
-versions. Each verdict snapshots the notification (speech phrase or beeps episode) it judged plus the run and
-collision version it came from; `added` annotations are phrases the system
+versions. Each verdict snapshots the notification (speech phrase or beeps episode) it judged plus the run,
+collision run (`collisionId`, v26.2.8: verdicts are per collision run) and collision version it came from; `added` annotations are phrases the system
 missed. One JSON file per recording (`LAB_DIR/reviews/<recId>.json`), written
 atomically. A process-wide lock serialises read-modify-write (the endpoints
 run in a threadpool); files are small, so one lock is enough.
@@ -34,7 +34,7 @@ MAX_NOTE = 2000
 MAX_TEXT = 300
 NEARBY_SECONDS = 3.0
 TYPES = ("speech", "beeps")
-_EVENT_KEYS = ("t", "text", "role", "trackId", "urgency", "clock", "type", "tEnd", "label", "minSteps")
+_EVENT_KEYS = ("t", "text", "role", "trackId", "urgency", "clock", "type", "tEnd", "label", "minSteps", "clockText", "predicted")
 
 _lock = threading.Lock()
 
@@ -83,7 +83,7 @@ def _sorted(annotations: list[dict]) -> list[dict]:
 
 def match_key(ann: dict) -> tuple:
     ev = ann["event"]
-    return (ann.get("runId"), ann.get("collisionVersion"), round(float(ev["t"]), 3), ev["text"])
+    return (ann.get("runId"), ann.get("collisionId") or "c1", ann.get("collisionVersion"), round(float(ev["t"]), 3), ev["text"])
 
 
 # --------------------------------------------------------------------------
@@ -189,6 +189,8 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
         ann["t"] = ev_t
         ann["event"] = {k: ev[k] for k in _EVENT_KEYS if k in ev}
         ann["event"]["t"] = ev_t
+        if "predicted" in ann["event"] and not isinstance(ann["event"]["predicted"], dict):
+            del ann["event"]["predicted"]                    # v26.2.12: only the predictive-speech block (a dict) is kept
         if "type" in ev:
             _check_type(ev["type"])
         if "tEnd" in ev:
@@ -206,13 +208,23 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
 
     if run is not None:
         ann["runId"] = run["id"]
-        ann["collisionVersion"] = body.get("collisionVersion") or run.get("collisionVersion")
+        cid = body.get("collisionId")
+        if cid is None:
+            cid = (run.get("collisions") or [None])[-1]
+        if cid is not None and cid not in (run.get("collisions") or []):
+            raise ReviewError(404, f"Unknown collision run: {cid}")
+        if cid is not None:
+            ann["collisionId"] = cid
+        from lab import collisions
+        cdoc = collisions.read_doc(run["id"], cid) if cid else None
+        ann["collisionVersion"] = body.get("collisionVersion") or (cdoc or {}).get("collisionVersion") or run.get("collisionVersion")
         if kind == "verdict":
             ann["analysisVersion"] = run.get("analysisVersion")
             ann["modelName"] = run.get("modelName")
     now = _now()
     ann["createdAt"] = ann["updatedAt"] = now
 
+    auto_events = _run_notifications(run["id"], ann["collisionId"]) if run is not None and ann.get("collisionId") else []
     with _lock:
         doc = _load(rec_id)
         if kind == "verdict":
@@ -220,11 +232,48 @@ def create(rec_id: str, duration: float, body: dict) -> dict:
             for other in doc["annotations"]:
                 if other.get("kind") == "verdict" and match_key(other) == key:
                     raise ReviewError(409, f"This event already has a verdict ({other['id']}); update it instead")
+        autos = _auto_correct(doc, run, ann, auto_events) if auto_events else []
         doc["annotations"].append(ann)
+        doc["annotations"].extend(autos)
         doc["annotations"] = _sorted(doc["annotations"])
         _save(rec_id, doc)
-    _log(f"{rec_id}: + {kind} {ann['id']} at t={ann['t']}")
+    _log(f"{rec_id}: + {kind} {ann['id']} at t={ann['t']}" + (f" (+{len(autos)} auto correct)" if autos else ""))
+    if autos:
+        return {**ann, "autoCreated": autos}      # response only; the stored annotation does not carry it
     return ann
+
+
+def _run_notifications(run_id: str, cid: str) -> list[dict]:
+    """Every notification (speech phrase, beeps / soft / crosswalk episode) of one collision run, from its events.json."""
+    from lab import collisions
+    try:
+        events = json.loads((collisions.collision_dir(run_id, cid) / "events.json").read_text()).get("events", [])
+    except (OSError, ValueError):
+        return []
+    return [e for e in events if e.get("type") in TYPES and isinstance(e.get("t"), (int, float)) and isinstance(e.get("text"), str) and e["text"]]
+
+
+def _auto_correct(doc: dict, run: dict, new: dict, events: list[dict]) -> list[dict]:
+    """v26.2.14: reviewing something at time t counts every earlier notification of the same collision run that has no verdict as correct
+    (`auto: true`; the user can change or remove it like any verdict, which drops the flag). Deleting the later verdict keeps them."""
+    taken = {match_key(a) for a in doc["annotations"] if a.get("kind") == "verdict" and a.get("runId")}
+    out = []
+    now = _now()
+    for ev in sorted(events, key=lambda e: e["t"]):
+        if ev["t"] >= new["t"]:
+            break
+        a: dict = {"id": secrets.token_hex(4), "kind": "verdict", "verdict": "correct", "auto": True, "note": "", "t": float(ev["t"]),
+                   "event": {k: ev[k] for k in _EVENT_KEYS if k in ev},
+                   "runId": run["id"], "collisionId": new["collisionId"], "collisionVersion": new.get("collisionVersion"),
+                   "analysisVersion": run.get("analysisVersion"), "modelName": run.get("modelName"), "createdAt": now, "updatedAt": now}
+        if "predicted" in a["event"] and not isinstance(a["event"]["predicted"], dict):
+            del a["event"]["predicted"]
+        key = match_key(a)
+        if key in taken:
+            continue
+        taken.add(key)
+        out.append(a)
+    return out
 
 
 def update(rec_id: str, duration: float, ann_id: str, body: dict) -> dict:
@@ -235,6 +284,8 @@ def update(rec_id: str, duration: float, ann_id: str, body: dict) -> dict:
             raise ReviewError(404, f"Unknown annotation: {ann_id}")
         kind = ann["kind"]
         new = dict(ann)
+        if "auto" in new and ("verdict" in body or "note" in body):
+            del new["auto"]                               # v26.2.14: the user took over an auto-counted verdict
         if "note" in body:
             new["note"] = _check_note(body["note"])
         if "verdict" in body:
@@ -271,6 +322,13 @@ def delete(rec_id: str, ann_id: str) -> None:
     _log(f"{rec_id}: - {ann_id}")
 
 
+def count_for_collision(rec_id: str, run_id: str, cid: str) -> int:
+    """Reviews (verdicts and added notes) made against collision run `cid` of `run_id`; one without a collisionId counts for c1."""
+    with _lock:
+        anns = _load(rec_id)["annotations"]
+    return sum(1 for a in anns if a.get("runId") == run_id and (a.get("collisionId") or "c1") == cid)
+
+
 def recordings_with_reviews() -> list[str]:
     d = LAB_DIR / "reviews"
     return sorted(p.stem for p in d.glob("*.json")) if d.is_dir() else []
@@ -283,12 +341,18 @@ def recordings_with_reviews() -> list[str]:
 class _RunData:
     """hazards.json / events.json of one run, loaded once per export."""
 
-    def __init__(self, run_id: str):
+    def __init__(self, run_id: str, cid: str | None):
+        self.settings: dict | None = None
         self.frames: list[dict] = []
         self.frame_ts: list[float] = []
         self.speech: list[dict] = []
         self.beeps: list[dict] = []
-        base = analysis.run_dir(run_id)
+        from lab import collisions
+        base = collisions.collision_dir(run_id, cid) if cid else analysis.run_dir(run_id)
+        doc = collisions.read_doc(run_id, cid) if cid else None
+        if doc:
+            self.settings = {"collisionId": cid, "settings": doc.get("settings"), "resolved": doc.get("resolved"),
+                             "overrides": doc.get("overrides") or {}}
         try:
             self.frames = json.loads((base / "hazards.json").read_text()).get("frames", [])
             self.frame_ts = [f["t"] for f in self.frames]
@@ -318,7 +382,7 @@ class _RunData:
 
 
 def export(rec_ids: list[str]) -> dict:
-    cache: dict[str, _RunData] = {}
+    cache: dict[tuple, _RunData] = {}
     out = []
     for rec_id in rec_ids:
         with _lock:
@@ -330,8 +394,13 @@ def export(rec_ids: list[str]) -> dict:
             run_id = a.get("runId")
             ctx = None
             if run_id:
-                data = cache.get(run_id) or cache.setdefault(run_id, _RunData(run_id))
+                cid = a.get("collisionId") or "c1"
+                key = (run_id, cid)
+                data = cache.get(key) or cache.setdefault(key, _RunData(run_id, cid))
                 ctx = data.context(a["t"])
-            enriched.append({**a, "context": ctx})
+                extra = {"collisionId": cid, **(data.settings or {})}
+            else:
+                extra = {}
+            enriched.append({**a, **extra, "context": ctx})
         out.append({"recording": rec_id, "summary": summary, "annotations": enriched})
     return {"exportedAt": _now(), "recordings": out}

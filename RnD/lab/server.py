@@ -22,12 +22,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
-from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
+from fastapi import Body, FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
-from fastapi.responses import FileResponse, Response  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from lab import analysis, display, recordings, reviews, sounds, versioning  # noqa: E402
+import groundfuse  # noqa: E402
+from lab import analysis, collisions, display, issues, notes, recordings, reviews, sounds, versioning  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
@@ -189,6 +190,7 @@ def _opt_number(body: dict, key: str, lo: float, hi: float, hi_inclusive: bool =
 
 PROJECTIONS = ("auto", "rectilinear", "fisheye")
 DISTANCE_SOURCES = ("ground", "depth")
+OBJECT_DISTANCES = ("depth", "ground-contact", "ground+depth")
 CAMERA_SIDES = ("left", "center", "right")
 ORIENTATIONS = ("landscape", "portrait")
 
@@ -213,6 +215,15 @@ def _choice(body: dict, key: str, options: tuple, default: str) -> str:
     return v
 
 
+def _bool(body: dict, key: str, default: bool) -> bool:
+    v = body.get(key)
+    if v is None:
+        return default
+    if not isinstance(v, bool):
+        raise HTTPException(422, f"{key} must be true or false")
+    return v
+
+
 def _validated_settings(body: dict, config: dict) -> dict:
     """Validate a settings body (§4). A legacy `corridor` key is ignored."""
     mount = body.get("mount") or config["defaultMount"]
@@ -227,7 +238,9 @@ def _validated_settings(body: dict, config: dict) -> dict:
             "userHeightM": _opt_number(body, "userHeightM", 1.0, 2.3),
             "cameraLocation": _location(body, config),
             "cameraSide": _choice(body, "cameraSide", CAMERA_SIDES, "center"),
-            "orientation": _choice(body, "orientation", ORIENTATIONS, "landscape")}
+            "orientation": _choice(body, "orientation", ORIENTATIONS, "landscape"),
+            "objectDistance": _choice(body, "objectDistance", OBJECT_DISTANCES, config.get("distance", {}).get("objectDistance", "depth")),
+            "useHorizon": _bool(body, "useHorizon", bool(config.get("distance", {}).get("useHorizon", True)))}
 
 
 def _settings_response(rec_id: str) -> dict:
@@ -238,7 +251,7 @@ def _settings_response(rec_id: str) -> dict:
         config, stored["mount"], stored["hfovDeg"], stored["cameraHeightM"], stored["stepLengthM"],
         projection=stored["projection"], distance_source=stored["distanceSource"],
         user_height_m=stored["userHeightM"], camera_location=stored["cameraLocation"],
-        camera_side=stored["cameraSide"])
+        camera_side=stored["cameraSide"], object_distance=stored["objectDistance"], use_horizon=stored["useHorizon"])
     resolved = {
         "hfovDeg": rs.hfov_deg,
         "projection": rs.projection,
@@ -249,6 +262,9 @@ def _settings_response(rec_id: str) -> dict:
         "cameraLocation": rs.camera_location,
         "cameraSide": rs.camera_side,
         "lateralOffsetM": rs.lateral_offset_m,
+        "objectDistance": rs.object_distance,
+        "useHorizon": rs.use_horizon,
+        "objectDistanceEffective": groundfuse.resolved_mode(rs.object_distance, rs.use_horizon),     # v26.2.11
     }
     return {**stored, "resolved": resolved}
 
@@ -319,15 +335,211 @@ def get_run(run_id: str) -> dict:
     return _run(run_id)
 
 
+def _coll_call(fn, *args):
+    try:
+        return fn(*args)
+    except collisions.CollisionError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
+def _cid(run: dict, collision: str | None) -> str:
+    """The collision run an endpoint reads: the named one (404 when unknown) or the run's latest (404 when it has none)."""
+    return _coll_call(collisions.resolve, run, collision)
+
+
 @app.post("/api/runs/{run_id}/collision")
-def rerun_collision(run_id: str) -> dict:
+def rerun_collision(run_id: str, body: dict | None = Body(default=None)) -> dict:
+    """A NEW collision run (v26.2.8): next id, current recording settings, optional config ``overrides``; its world map is built too.
+    v26.2.10: a background job. Returns at once with the new collision doc in status ``running`` (``progress`` 0-1); poll
+    ``/collisions`` or cancel with ``POST /collisions/{cid}/cancel``. 409 while another collision job or an analysis runs."""
     run = _run(run_id)
     if run["status"] != "done":
         raise HTTPException(409, f"Run is {run['status']}, not done")
     _collision()
-    result = analysis.collision_pass(run_id)
-    return {"version": result["version"], "elapsedSeconds": result["elapsedSeconds"],
-            "hazards": f"/api/runs/{run_id}/hazards.json", "events": f"/api/runs/{run_id}/events.json"}
+    body = body or {}
+    label = body.get("label", "")
+    if not isinstance(label, str) or len(label) > collisions.MAX_LABEL:
+        raise HTTPException(422, f"label must be a string of at most {collisions.MAX_LABEL} characters")
+    doc = _coll_call(collisions.start_job, run_id, body.get("overrides"), label)
+    q = f"?collision={doc['id']}"
+    return {**doc, "version": doc["collisionVersion"],
+            "hazards": f"/api/runs/{run_id}/hazards.json{q}", "events": f"/api/runs/{run_id}/events.json{q}"}
+
+
+@app.post("/api/runs/{run_id}/collisions/{cid}/cancel")
+def cancel_collision(run_id: str, cid: str) -> dict:
+    """Stop a running collision re-run between frames; its directory is removed and its id is not reused (v26.2.10)."""
+    run = _run(run_id)
+    _cid(run, cid)
+    if not collisions.cancel_job(run_id, cid):
+        raise HTTPException(409, f"{cid} is not running; nothing to cancel")
+    for _ in range(100):           # give the job a moment so the reply shows the end state
+        if not collisions.job_active():
+            break
+        time.sleep(0.1)
+    return {"cancelled": cid, "collisions": collisions.ids(_run(run_id))}
+
+
+@app.get("/api/runs/{run_id}/collisions")
+def list_collisions(run_id: str) -> list[dict]:
+    _run(run_id)
+    return collisions.list_docs(run_id)
+
+
+@app.get("/api/runs/{run_id}/collisions/compare")
+def compare_collisions(run_id: str, a: str = Query(), b: str = Query()) -> dict:
+    _run(run_id)
+    return _coll_call(collisions.compare, run_id, a, b)
+
+
+@app.patch("/api/runs/{run_id}/collisions/{cid}")
+def patch_collision(run_id: str, cid: str, body: dict) -> dict:
+    run = _run(run_id)
+    _cid(run, cid)
+    return _coll_call(collisions.set_label, run_id, cid, body.get("label"))
+
+
+@app.delete("/api/runs/{run_id}/collisions/{cid}")
+def delete_collision(run_id: str, cid: str) -> dict:
+    run = _run(run_id)
+    _cid(run, cid)
+    count = reviews.count_for_collision(run["request"]["recording"], run_id, cid)
+    _coll_call(collisions.delete, run_id, cid, count)
+    with _hz_lock:
+        _hz_cache.pop((run_id, cid), None)
+    with _wm_lock:
+        _wm_cache.pop((run_id, cid), None)
+    return {"deleted": cid, "collisions": collisions.ids(_run(run_id))}
+
+
+# --- world map (v26.2 step 1 spike; CONTRACTS 8.1) ---------------------------------------------------------------
+# worldmap.npz: classes (N,200,200) uint8 (255 = unknown), conf (N,200,200) uint8, surface / object (N,200,200) uint8 (v26.2.4, the layers
+# on their own), t, pose (N,3), cellM, origin, ms; v26.2.10: alignDeg / alignM / agree / agreePrior (N,).
+# Built from stored files only (pure numpy, synchronous like the collision pass; never the GPU queue).
+
+_WM_CACHE_RUNS = 1
+_wm_cache: "OrderedDict[tuple, tuple]" = OrderedDict()      # (run_id, cid) -> (mtime_ns, arrays)
+_wm_lock = threading.Lock()
+
+
+def _run_worldmap(run_id: str, collision: str | None = None) -> dict:
+    run = _run(run_id)
+    if run["status"] != "done":
+        raise HTTPException(409, f"Run is {run['status']}, not done")
+    cid = _cid(run, collision)
+    key = (run_id, cid)
+    path = collisions.collision_dir(run_id, cid) / "worldmap.npz"
+    try:
+        mtime = path.stat().st_mtime_ns
+    except FileNotFoundError:
+        raise HTTPException(404, "worldmap.npz not available (POST /api/runs/{id}/worldmap builds it)") from None
+    with _wm_lock:
+        ent = _wm_cache.get(key)
+        if ent is None or ent[0] != mtime:
+            with np.load(path) as z:
+                ent = (mtime, {k: z[k] for k in z.files})
+            _wm_cache[key] = ent
+        _wm_cache.move_to_end(key)
+        while len(_wm_cache) > _WM_CACHE_RUNS:
+            _wm_cache.popitem(last=False)
+        return ent[1]
+
+
+@app.post("/api/runs/{run_id}/worldmap")
+def build_worldmap(run_id: str, collision: str | None = None) -> dict:
+    run = _run(run_id)
+    if run["status"] != "done":
+        raise HTTPException(409, f"Run is {run['status']}, not done")
+    _collision()
+    cid = _cid(run, collision)
+    try:
+        result = analysis.worldmap_pass(run_id, cid)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"{exc} not available (a worldmap needs grids.npz and hazards.json)") from None
+    return {**result, "worldmap": f"/api/runs/{run_id}/worldmap?collision={cid}"}
+
+
+@app.get("/api/runs/{run_id}/worldmap")
+def get_worldmap(run_id: str, collision: str | None = None) -> dict:
+    run = _run(run_id)
+    if not collisions.ids(run):
+        return {"exists": False}
+    cid = _cid(run, collision)
+    path = collisions.collision_dir(run_id, cid) / "worldmap.npz"
+    if not path.exists():
+        return {"exists": False}
+    wm = _run_worldmap(run_id, cid)
+    n, h, w = wm["classes"].shape
+    ms = wm["ms"]
+    # v26.2.7: the class ids of the wall faces and of the surfaces, for the Lab's wall line (the border between a face and a surface cell)
+    import worldmap
+    names = list(_run(run_id).get("classNames") or [])
+    wcfg = collisions.apply_overrides(worldmap.load_config(), (collisions.read_doc(run_id, cid) or {}).get("overrides") or {}, "worldmap")
+    kinds = worldmap.class_kinds(wcfg, names)
+    face_ids = [i for i, n_ in enumerate(names) if n_ in wcfg.get("faceClasses", ())]
+    surface_ids = [i for i in range(len(names)) if kinds[i] == worldmap.KIND_SURFACE]
+    return {"exists": True, "collision": cid, "frames": int(n), "cellM": float(wm["cellM"]), "origin": [int(v) for v in wm["origin"]],
+            "width": int(w), "height": int(h), "msMean": round(float(ms.mean()), 2),
+            "msP95": round(float(np.percentile(ms, 95)), 2), "faceClassIds": face_ids, "surfaceClassIds": surface_ids,
+            "builtAt": str(path.stat().st_mtime_ns)}      # v26.2.7: the Lab adds it as ?v= to the cached PNG / pose URLs
+
+
+@app.get("/api/runs/{run_id}/worldmap/pose.json")
+def get_worldmap_pose(run_id: str, collision: str | None = None) -> dict:
+    wm = _run_worldmap(run_id, collision)
+    out = {"t": [round(float(v), 4) for v in wm["t"]],
+           "pose": [[round(float(a), 3) for a in p] for p in wm["pose"]]}
+    # v26.2.10: the pose the map found for itself (poseAlign): the accumulated heading correction (deg) and position correction (m), and the
+    # share of the frame's seen cells whose snapshot class equals the frame's own observation (null: no seen cell / a map built before v26.2.10)
+    for key in ("alignDeg", "alignM", "agree"):
+        if key in wm:
+            out[key] = [None if not math.isfinite(float(v)) else round(float(v), 4) for v in wm[key]]
+    return out
+
+
+@app.get("/api/runs/{run_id}/worldmap/cell")
+def get_worldmap_cell(run_id: str, i: int = Query(), col: int = Query(), row: int = Query(), collision: str | None = None) -> dict:
+    """One map cell of snapshot ``i`` (v26.2.4, the Lab's click readout): the surface and the object layer on their own, the combined class
+    the collision rules read, their confidences, and the cell's place (metres ahead / right of the user). A layer is ``null`` where nothing was
+    observed (255 in the file). Maps built before v26.2.4 have no layers: ``layers`` is false and ``surface`` / ``object`` are null."""
+    wm = _run_worldmap(run_id, collision)
+    n, h, w = wm["classes"].shape
+    if i < 0 or i >= n:
+        raise HTTPException(404, "No such frame")
+    if not (0 <= row < h and 0 <= col < w):
+        raise HTTPException(422, "cell outside the map")
+    ox, oy = (int(v) for v in wm["origin"])
+    cell = float(wm["cellM"])
+
+    def cls(a):
+        v = int(a[i, row, col])
+        return None if v == 255 else v
+
+    layers = "surface" in wm and "object" in wm
+    return {"i": i, "t": round(float(wm["t"][i]), 4), "col": col, "row": row,
+            "aheadM": round((oy - row) * cell, 2), "rightM": round((col - ox) * cell, 2),
+            "layers": layers, "combined": cls(wm["classes"]), "conf": int(wm["conf"][i, row, col]),
+            "surface": cls(wm["surface"]) if layers else None, "object": cls(wm["object"]) if layers else None}
+
+
+@app.get("/api/runs/{run_id}/worldmap/{index}.png")
+def get_worldmap_png(run_id: str, index: int, alpha: str = "binary", collision: str | None = None) -> Response:
+    """Snapshot of frame ``index``. Default: RGBA, R = G = B = class id (as classes.png, read the red channel), alpha 255
+    where the cell is known and 0 where unknown. ``alpha=conf``: alpha = confidence (0..255; browsers premultiply, so
+    the class id is only exact where alpha is 255). ``alpha=gray``: single-channel classes (255 = unknown)."""
+    wm = _run_worldmap(run_id, collision)
+    if index < 0 or index >= len(wm["classes"]):
+        raise HTTPException(404, "No such frame")
+    cls = np.ascontiguousarray(wm["classes"][index], dtype=np.uint8)
+    if alpha == "gray":
+        img = cls
+    else:
+        a = np.ascontiguousarray(wm["conf"][index], dtype=np.uint8) if alpha == "conf" else np.where(cls != 255, 255, 0).astype(np.uint8)
+        img = cv2.merge([cls, cls, cls, a])                 # cv2 writes BGRA; B = G = R = class id
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise HTTPException(500, "PNG encode failed")
+    return Response(buf.tobytes(), media_type="image/png", headers={"Cache-Control": "max-age=86400"})
 
 
 # --- windowed hazards (CONTRACTS 12.1) ----------------------------------------
@@ -338,28 +550,33 @@ def rerun_collision(run_id: str) -> dict:
 MAX_WINDOW_S = 600.0
 FRAME_GAP_S = 1.0       # /frame: still "inside the run" up to this long after the last analysed frame
 _HZ_CACHE_RUNS = 2
-_hz_cache: "OrderedDict[str, dict]" = OrderedDict()
+_hz_cache: "OrderedDict[tuple, dict]" = OrderedDict()      # (run_id, cid) -> parsed hazards.json
 _hz_lock = threading.Lock()
 
 
-def _hazards_doc(run_id: str) -> dict:
+def _hazards_doc(run_id: str, collision: str | None = None) -> dict:
     run = _run(run_id)
     if run["status"] != "done":
         raise HTTPException(409, f"Run is {run['status']}, not done")
-    path = analysis.run_dir(run_id) / "hazards.json"
+    cid = _cid(run, collision)
+    key = (run_id, cid)
+    path = collisions.collision_dir(run_id, cid) / "hazards.json"
     try:
         st = path.stat()
     except FileNotFoundError:
         raise HTTPException(404, "hazards.json not available (collision pass has not run)") from None
     sig = (st.st_mtime_ns, st.st_size)
     with _hz_lock:  # one parse at a time: concurrent first requests share the work
-        ent = _hz_cache.get(run_id)
+        ent = _hz_cache.get(key)
         if ent is None or ent["sig"] != sig:
             doc = json.loads(path.read_text())
             frames = doc.pop("frames", [])
+            st = doc.get("settings")
+            if isinstance(st, dict) and st.get("objectDistance"):       # v26.2.11: what the run really used
+                st["objectDistanceEffective"] = groundfuse.resolved_mode(st["objectDistance"], st.get("useHorizon", True))
             ent = {"sig": sig, "head": doc, "frames": frames, "times": [f["t"] for f in frames]}
-            _hz_cache[run_id] = ent
-        _hz_cache.move_to_end(run_id)
+            _hz_cache[key] = ent
+        _hz_cache.move_to_end(key)
         while len(_hz_cache) > _HZ_CACHE_RUNS:
             _hz_cache.popitem(last=False)
         return ent
@@ -371,24 +588,26 @@ def _json(obj: dict) -> Response:
 
 
 @app.get("/api/runs/{run_id}/hazards")
-def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: float = Query(alias="to")) -> Response:
+def get_hazards_window(run_id: str, t_from: float = Query(alias="from"), t_to: float = Query(alias="to"),
+                       collision: str | None = None) -> Response:
     if not (math.isfinite(t_from) and math.isfinite(t_to)) or t_to < t_from:
         raise HTTPException(422, "from and to must be finite numbers with to >= from")
     if t_to - t_from > MAX_WINDOW_S:
         raise HTTPException(422, f"window is at most {MAX_WINDOW_S:g} s")
-    ent = _hazards_doc(run_id)
+    ent = _hazards_doc(run_id, collision)
     times = ent["times"]
     lo, hi = bisect.bisect_left(times, t_from), bisect.bisect_right(times, t_to)
     head = ent["head"]
-    return _json({"version": head.get("version"), "settings": head.get("settings"),
+    return _json({"version": head.get("version"), "settings": head.get("settings"), "projection": head.get("projection"),
                   "gridW": head.get("gridW"), "gridH": head.get("gridH"),
                   "egoAvailable": head.get("egoAvailable"),
+                  **({"worldTracksSettings": head["worldTracksSettings"]} if "worldTracksSettings" in head else {}),    # v26.2.9
                   "from": t_from, "to": t_to, "frames": ent["frames"][lo:hi]})
 
 
 @app.get("/api/runs/{run_id}/frame")
-def get_hazards_frame(run_id: str, t: float = Query()) -> Response:
-    ent = _hazards_doc(run_id)
+def get_hazards_frame(run_id: str, t: float = Query(), collision: str | None = None) -> Response:
+    ent = _hazards_doc(run_id, collision)
     times = ent["times"]
     i = bisect.bisect_right(times, t) - 1 if math.isfinite(t) else -1
     if i < 0 or (i == len(times) - 1 and t > times[i] + FRAME_GAP_S):
@@ -397,11 +616,11 @@ def get_hazards_frame(run_id: str, t: float = Query()) -> Response:
 
 
 @app.get("/api/runs/{run_id}/{name}.json")
-def get_run_file(run_id: str, name: str) -> FileResponse:
-    _run(run_id)
+def get_run_file(run_id: str, name: str, collision: str | None = None) -> FileResponse:
+    run = _run(run_id)
     if name not in ("hazards", "events"):
         raise HTTPException(404, "Not found")
-    path = analysis.run_dir(run_id) / f"{name}.json"
+    path = collisions.collision_dir(run_id, _cid(run, collision)) / f"{name}.json"
     if not path.exists():
         raise HTTPException(404, f"{name}.json not available (collision pass has not run)")
     return FileResponse(path, media_type="application/json", headers={"Cache-Control": "no-cache"})
@@ -600,6 +819,42 @@ def _review_call(fn, *args):
         raise HTTPException(exc.status, exc.message) from None
 
 
+@app.get("/api/notes")
+def get_notes() -> dict:
+    return notes.get()
+
+
+@app.put("/api/notes")
+def put_notes(body: dict):
+    try:
+        return notes.put(body)
+    except notes.NotesError as exc:
+        if exc.status == 409:
+            return JSONResponse({"detail": {"message": exc.message, "current": exc.current}}, status_code=409)
+        raise HTTPException(exc.status, exc.message) from None
+
+
+@app.get("/api/issues")
+def get_issues() -> dict:
+    return issues.list_issues()
+
+
+@app.put("/api/issues/{issue_id}")
+def put_issue(issue_id: str, body: dict) -> dict:
+    try:
+        return issues.update(issue_id, body)
+    except issues.IssuesError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
+@app.delete("/api/issues/{issue_id}/state")
+def reset_issue(issue_id: str) -> dict:
+    try:
+        return issues.reset(issue_id)
+    except issues.IssuesError as exc:
+        raise HTTPException(exc.status, exc.message) from None
+
+
 # (declared before the {name}.json run route; no path clash, kept with its peers)
 @app.get("/api/reviews/export")
 def export_reviews(recording: str | None = None) -> dict:
@@ -608,7 +863,7 @@ def export_reviews(recording: str | None = None) -> dict:
         ids = [recording]
     else:
         ids = reviews.recordings_with_reviews()
-    return reviews.export(ids)
+    return {**reviews.export(ids), "notes": notes.get(), "issues": issues.export_items()}
 
 
 @app.get("/api/recordings/{rec_id}/reviews")

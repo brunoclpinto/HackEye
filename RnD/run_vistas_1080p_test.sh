@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-off test run of the Vistas-trained segmentation checkpoint
-# (models/segmentation.pt == HackEye-Models/models/Yolo26m-sem-HackEye20261011-1280.pt)
+# (models/segmentation.pt == HackEye-Models/models/Yolo26m-sem-HackEye26.1-48-1280.pt)
 # against the newly added 1080p clips in media/, at native 1080p and 1fps.
 # Not committed as project infra -- mirrors run_all.sh's pattern for this run.
 set -euo pipefail

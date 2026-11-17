@@ -66,14 +66,21 @@ def test_models_endpoint_lists_depth_models(fake):
 def test_default_model_is_pinned_then_falls_back(tmp_path, monkeypatch):
     rel = tmp_path / "rel"
     rel.mkdir()
-    for n in ("Yolo26m-sem-HackEye20261011-1280.pt", "Yolo26m-sem-HackEye20261012.pt", "other.pt"):
+    for n in ("Yolo26m-sem-HackEye26.1-48-1280.pt", "Yolo26m-sem-HackEye20261012.pt",
+              "Yolo26x-sem-Vistas124-HackEye-1280.pt", "other.pt"):
         (rel / n).write_text("x")
     monkeypatch.setattr(analysis, "MODEL_DIRS", [(rel, "*.pt")])
     defaults = [m["name"] for m in analysis.list_models() if m["default"]]
-    assert defaults == ["Yolo26m-sem-HackEye20261011-1280.pt"]
-    (rel / "Yolo26m-sem-HackEye20261011-1280.pt").unlink()
+    assert defaults == ["Yolo26m-sem-HackEye26.1-48-1280.pt"]
+    (rel / "Yolo26m-sem-HackEye26.1-48-1280.pt").unlink()
+    (rel / "Yolo26m-sem-HackEye26.2-48-736.pt").write_text("x")
+    (rel / "Yolo26m-sem-HackEye26.1.3-48-736.pt").write_text("x")
     defaults = [m["name"] for m in analysis.list_models() if m["default"]]
-    assert defaults == ["Yolo26m-sem-HackEye20261012.pt"]
+    assert defaults == ["Yolo26m-sem-HackEye26.2-48-736.pt"]  # newest version, not the dataset model
+    for n in ("Yolo26m-sem-HackEye26.2-48-736.pt", "Yolo26m-sem-HackEye26.1.3-48-736.pt"):
+        (rel / n).unlink()
+    defaults = [m["name"] for m in analysis.list_models() if m["default"]]
+    assert defaults == ["Yolo26m-sem-HackEye20261012.pt"]  # legacy dated release beats the dataset model
 
 
 def test_default_model_env_override(tmp_path, monkeypatch):
@@ -231,7 +238,7 @@ def test_run_job_writes_aligned_depth_npz(fake, tmp_path, monkeypatch, use_depth
         n = len(g["t"])
         times = g["t"]
     assert n == 15 and passes == [RUN]
-    assert (d / "hazards.json").exists()      # the real collision pass accepted depth=... and the new settings
+    assert (d / "collisions" / "c1" / "hazards.json").exists()      # the real collision pass accepted depth=... and the new settings
     if use_depth:
         with np.load(d / "depth.npz") as z:
             assert z["depth"].shape == (n, 68, 120) and z["depth"].dtype == np.float16
@@ -274,7 +281,7 @@ def test_collision_pass_passes_the_anchor_mode(fake, monkeypatch, variant, units
              units=np.array(units), **extra)
     seen = {}
 
-    def fake_run(grids, times, names, config, settings, motion=None, depth=None, sounds=None):
+    def fake_run(grids, times, names, config, settings, motion=None, depth=None, sounds=None, worldmap_config=None):
         seen.update(depth=depth, source=settings.distance_source)
         return {"frames": []}, {"events": []}
     monkeypatch.setattr(collision, "run_collision", fake_run)

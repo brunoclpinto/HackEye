@@ -62,6 +62,19 @@ def api(path, method="GET", body=None):
         raise AssertionError(f"{method} {path} -> {e.code} {e.read()[:200]!r}") from None
 
 
+def collision_job(run, body=None, timeout=300):
+    """POST a collision re-run (a background job since v26.2.10) and wait until it leaves `running`; returns its final collision doc."""
+    import time
+    doc = api(f"/api/runs/{run}/collision", "POST", body if body is not None else {})
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        doc = next(c for c in api(f"/api/runs/{run}/collisions") if c["id"] == doc["id"])
+        if doc["status"] != "running":
+            return doc
+        time.sleep(0.5)
+    raise AssertionError(f"collision job {doc['id']} did not finish")
+
+
 def clock(sec, decimals=0):
     """The Lab's time format (floor): 87.671 -> 1:27, 3.4 -> 0:03.4."""
     f = 10 ** decimals
@@ -125,6 +138,32 @@ def page(browser):
     pg.on("pageerror", lambda e: pg.errors.append(str(e)))
     yield pg
     ctx.close()
+
+
+def _utc_stamp(back_s=2):
+    import datetime
+    return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=back_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@pytest.fixture(autouse=True)
+def _clean_auto_reviews():
+    """v26.2.14: a verdict also counts the earlier unreviewed items correct (auto ✓). After every test, remove the auto ✓ created on the
+    E2E recordings since it started (the user's own reviews live on other recordings), whichever test or UI click caused them."""
+    start = _utc_stamp()
+    yield
+    try:
+        recs = api("/api/reviews/export")["recordings"]
+    except AssertionError:
+        return
+    for r in recs:
+        if r["recording"] not in (LONG_REC, SHORT_REC):
+            continue
+        for a in r["annotations"]:
+            if a.get("auto") and a.get("createdAt", "") >= start:
+                try:
+                    api(f"/api/recordings/{r['recording']}/reviews/{a['id']}", "DELETE")
+                except AssertionError:
+                    pass
 
 
 @pytest.fixture

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import profiles  # noqa: E402
@@ -44,6 +45,32 @@ def _log(msg: str) -> None:
 
 def proxies_dir() -> Path:
     return LAB_DIR / "proxies"
+
+
+def sensors_path(rec_id: str) -> Path:
+    return LAB_DIR / "sensors" / f"{rec_id}.npz"
+
+
+def sensors_for(rec_id: str) -> dict | None:
+    """v26.2.11: the device telemetry of a recording (GoPro GPMF: gyro, accelerometer, GPS, exposure; ``src/sensors.py``) on the recording's time
+    line, cached in ``LAB_DIR/sensors/<recId>.npz`` (kept across version wipes like the proxies; the cache records the chapter files'
+    size / mtime and is rebuilt when they change). None for a recording without telemetry (an empty marker is cached too) or an unknown id."""
+    rec = get_recording(rec_id)
+    if rec is None:
+        return None
+    try:
+        import sensors
+    except ImportError:
+        return None
+    key = ";".join(f"{c['file']}|{Path(c['file']).stat().st_size}|{int(Path(c['file']).stat().st_mtime)}" for c in rec["chapters"])
+    path = sensors_path(rec_id)
+    cached = sensors.load(path)
+    if cached is not None and str(cached.get("_src", "")) == key:
+        return None if "gyro" not in cached else {k: v for k, v in cached.items() if k != "_src"}
+    parts = [(float(c["start"]), sensors.extract(c["file"])) for c in rec["chapters"]]
+    got = sensors.concat(parts)
+    sensors.save(path, {**(got or {}), "_src": np.array(key)})
+    return got
 
 
 def proxy_path(rec_id: str) -> Path:
@@ -311,6 +338,17 @@ def _body_locations() -> list[str]:
         return []
 
 
+def _distance_defaults() -> tuple[str, bool]:
+    """The object distance and horizon switch of collision.json (distance.objectDistance / useHorizon)."""
+    try:
+        import collision
+
+        d = collision.load_config().get("distance", {})
+        return d.get("objectDistance", "depth"), bool(d.get("useHorizon", True))
+    except Exception:  # noqa: BLE001 - no config: the v26.2.2 behaviour
+        return "depth", True
+
+
 def get_settings(rec_id: str, default_mount: str) -> dict:
     """Stored settings, or the defaults when nothing was saved. Camera location and side default from the recording
     name (``Chest-center-0004``: chest, center) where the body calibration has that location."""
@@ -318,11 +356,12 @@ def get_settings(rec_id: str, default_mount: str) -> dict:
     location = hints.get("cameraLocation")
     if location not in _body_locations():
         location = None
+    obj_dist, use_h = _distance_defaults()
     defaults = {"mount": default_mount, "hfovDeg": None,
                 "cameraHeightM": None, "stepLengthM": None,
                 "projection": "auto", "distanceSource": "depth",
                 "userHeightM": None, "cameraLocation": location, "cameraSide": hints.get("cameraSide", "center"),
-                "orientation": "landscape"}
+                "orientation": "landscape", "objectDistance": obj_dist, "useHorizon": use_h}
     try:
         stored = json.loads(_settings_path(rec_id).read_text())
     except (OSError, ValueError):

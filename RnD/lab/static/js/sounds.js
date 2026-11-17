@@ -84,12 +84,12 @@ export class SoundsPanel {
     const rate = $("#sndSpeech");
     rate.min = ranges.speechRate[0]; rate.max = ranges.speechRate[1];
     rate.value = this.speechRate;
-    $("#sndSpeechOut").textContent = `${this.speechRate.toFixed(2)}×`;
+    this._paintRate();
     if (!rate.dataset.wired) {
       rate.dataset.wired = "1";
       rate.addEventListener("input", () => {
         this.speechRate = clamp(Number(rate.value), ...this.data.ranges.speechRate);
-        $("#sndSpeechOut").textContent = `${this.speechRate.toFixed(2)}×`;
+        this._paintRate();
         this._applyAudio();
         this._queueSave();
       });
@@ -97,6 +97,13 @@ export class SoundsPanel {
       $("#sndReset").addEventListener("click", () => this.reset());
       $("#sndApply").addEventListener("click", () => this.apply());
     }
+  }
+
+  /** The speech speed read-out; " (default)" follows `defaultSpeechRate` of the server (collision.json tones.speechRate). */
+  _paintRate() {
+    $("#sndSpeechOut").textContent = `${this.speechRate.toFixed(2)}×`;
+    const same = Math.abs(this.speechRate - (this.data?.defaultSpeechRate ?? NaN)) < 1e-6;
+    $("#sndSpeechDef").textContent = same ? "(default)" : "";
   }
 
   _set(kind, field, value) {

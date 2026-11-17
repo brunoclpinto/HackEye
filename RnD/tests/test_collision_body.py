@@ -14,6 +14,7 @@ from tests.test_collision import CONFIG, FPS, H, HFOV, NAMES, SETTINGS, W, base_
 from tests.test_collision_depth import DH, DW
 
 HC_REAL = 1.28
+HEIGHT = CONFIG["body"]["defaultUserHeightM"]      # user height 1.78 m, user correction 2026-10-25 (was 1.70)
 
 
 # --- body settings -> geometry ------------------------------------------------------------------------
@@ -26,9 +27,10 @@ def test_body_settings_resolution():
     h = col.resolve_settings(CONFIG, user_height_m=1.78, camera_location="head", camera_side="right")
     assert h.camera_height_m == pytest.approx(1.78 + 0.05) and h.horizon_default == 0.48
     assert h.lateral_offset_m == pytest.approx(0.07)
-    w = col.resolve_settings(CONFIG, camera_location="waist", camera_side="left")        # default height 1.70
-    assert w.camera_height_m == pytest.approx(0.58 * 1.70) and w.lateral_offset_m == pytest.approx(-0.15)
-    assert w.step_length_m == pytest.approx(0.415 * 1.70)
+    assert HEIGHT == 1.78
+    w = col.resolve_settings(CONFIG, camera_location="waist", camera_side="left")        # the default height (config: 1.78 m, user correction 2026-10-25)
+    assert w.camera_height_m == pytest.approx(0.58 * HEIGHT) and w.lateral_offset_m == pytest.approx(-0.15)
+    assert w.step_length_m == pytest.approx(0.415 * HEIGHT)
     e = col.resolve_settings(CONFIG, user_height_m=1.60, camera_side="right")            # location defaults to chest
     assert e.camera_location == "chest" and e.camera_height_m == pytest.approx(0.72 * 1.60)
     assert e.lateral_offset_m == pytest.approx(0.15)
@@ -185,6 +187,18 @@ def test_plane_anchor_recovers_scale_pitch_and_freezes(projection):
     assert egs[5]["depthLevel"] == 1.0
     got = [h["depthM"] for f in doc["frames"][2:] for h in f["hazards"] if h["className"] == "pole"]
     assert got and all(d == pytest.approx(zs, rel=0.10) for d in got)
+
+
+@pytest.mark.parametrize("projection", ["rectilinear", "fisheye"])
+def test_first_frames_carry_the_depth_scale_of_their_own_plane_fit(projection):
+    """v26.2.5: the anchor itself is usable from the 3rd valid frame, but frames 0-1 report the scale of their own fit (the world map reads
+    it; without it the first facade was placed by the horizon alone)."""
+    doc, _ = plane_run(plane_doc(8, projection), static_frames(8), projection)
+    egs = [f["ego"] for f in doc["frames"]]
+    assert egs[0]["depthAnchor"] is None and egs[1]["depthAnchor"] is None          # the anchor and everything else is unchanged
+    for e in egs[:2]:
+        assert e["depthScale"] == pytest.approx(1 / 2.2, rel=0.08)
+    assert egs[2]["depthScale"] == pytest.approx(egs[0]["depthScale"], rel=0.08)
 
 
 @pytest.mark.parametrize("projection", ["rectilinear", "fisheye"])

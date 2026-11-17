@@ -1,0 +1,392 @@
+"""World map panel (v26.2 step 1 spike, CONTRACTS 8.1 / 9): the map exists on the session's own run (built with it, v26.2.6), snapshot request 200, the canvas draws."""
+import re
+
+import pytest
+from conftest import BASE, annotations, api, open_lab, seek
+from test_lab import _session_run  # noqa: F401  (the session-analysed run; autouse here too so -k worldmap works alone)
+import test_lab
+
+DRAWN = """() => {
+  const c = document.querySelector('#wmCanvas'), x = c.getContext('2d');
+  const d = x.getImageData(0, 0, c.width, c.height).data; let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - 11) + Math.abs(d[i+1] - 13) + Math.abs(d[i+2] - 16) > 30) n++;
+  return n / (d.length / 4);
+}"""
+
+
+def test_world_map_panel_builds_and_draws(page):
+    run = test_lab.FULL_RUN
+    rec = api(f"/api/runs/{run}")["request"]["recording"]
+    open_lab(page, rec, t=13, run=run)
+    page.wait_for_selector("#wmCanvas:visible")   # always visible since v26.2.0 (no collapsed panel)
+    meta = api(f"/api/runs/{run}/worldmap")
+    assert meta["exists"], "v26.2.6: the map is built with the run, no click needed"
+    assert page.query_selector("#wmBuild") is None and page.query_selector("#wmRules") is None      # the button and the toggle are gone
+    seek(page, 13)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(500)
+    snaps = [u for u, _ in page.requests if f"/api/runs/{run}/worldmap/" in u and u.split("?")[0].endswith(".png")]
+    assert snaps, "no snapshot requested"
+    assert f"v={meta['builtAt']}" in snaps[-1], "v26.2.7: the snapshot URL carries the map's builtAt (defeats the browser cache after a re-run)"
+    assert page.evaluate("async (u) => (await fetch(u)).status", snaps[-1].replace(BASE, "")) == 200
+    assert page.evaluate(DRAWN) > 0.05, "the canvas is (nearly) empty"
+    assert not page.is_visible("#wmReadout") if page.query_selector("#wmReadout") else True      # v26.2.4: the hover readout is gone
+    assert page.inner_text("#wmCell") == "Click the map to read a cell."
+    assert not page.errors, page.errors
+
+
+BOX = "(sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return {l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height}; }"
+
+
+def _open(page, w, h):
+    run = test_lab.FULL_RUN
+    rec = api(f"/api/runs/{run}")["request"]["recording"]
+    page.set_viewport_size({"width": w, "height": h})
+    open_lab(page, rec, t=13, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    page.wait_for_timeout(300)
+
+
+def test_layout_desktop_video_left_map_right_review_right_of_both(page):
+    _open(page, 1500, 950)
+    v, m, r = page.evaluate(BOX, "#stage"), page.evaluate(BOX, "#wmCanvas"), page.evaluate(BOX, "#reviewPanel")
+    assert abs(v["t"] - m["t"]) <= 2, (v, m)                     # same top edge
+    assert m["l"] >= v["r"] - 1, (v, m)                          # map to the right of the video
+    assert abs(m["w"] - m["h"]) <= 2, m                           # square
+    assert abs(m["h"] - v["h"]) <= 6, (v, m)                      # as tall as the video
+    assert r["l"] >= m["r"] - 1, (m, r)                          # review right of both
+    sb, mn = page.evaluate(BOX, "#sidebar"), page.evaluate(BOX, "#main")
+    assert sb["t"] >= max(v["b"], m["b"]) - 1 and mn["t"] >= v["b"] - 1, (sb, mn)   # options start below the video + map
+    assert sb["l"] < mn["l"] < r["l"]
+    assert not page.errors, page.errors
+
+
+def test_layout_tablet_viewer_full_width_review_below(page):
+    _open(page, 1100, 900)
+    v, m, r = page.evaluate(BOX, "#stage"), page.evaluate(BOX, "#wmCanvas"), page.evaluate(BOX, "#reviewPanel")
+    sb = page.evaluate(BOX, "#sidebar")
+    assert abs(v["t"] - m["t"]) <= 2 and m["l"] >= v["r"] - 1
+    assert sb["t"] >= max(v["b"], m["b"]) - 1
+    assert r["t"] >= sb["t"] and r["l"] < 20
+
+
+def test_layout_phone_no_horizontal_overflow(page):
+    _open(page, 390, 844)
+    v, m = page.evaluate(BOX, "#stage"), page.evaluate(BOX, "#wmCanvas")
+    assert m["t"] >= v["b"] - 1 and abs(m["w"] - m["h"]) <= 2 and m["w"] <= 482      # map under the video
+    sw, iw = page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
+    assert sw <= iw, f"horizontal overflow: scrollWidth {sw} > innerWidth {iw}"
+
+
+def _click_cell(page, col, row):
+    box = page.evaluate("() => { const r = document.querySelector('#wmCanvas').getBoundingClientRect(); return {l: r.left, t: r.top, w: r.width, h: r.height}; }")
+    page.mouse.click(box["l"] + box["w"] * (col + 0.5) / 200, box["t"] + box["h"] * (row + 0.5) / 200)
+
+
+def test_click_readout_mapped_and_unmapped_cell(page):
+    """v26.2.4: a click selects a cell; the box under the map (not overlaid) reads coordinates, region and object; unmapped = only 'unmapped'."""
+    run = test_lab.FULL_RUN
+    rec = api(f"/api/runs/{run}")["request"]["recording"]
+    open_lab(page, rec, t=13, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    assert api(f"/api/runs/{run}/worldmap")["exists"]
+    seek(page, 13)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    cv, bx = page.evaluate(BOX, "#wmCanvas"), page.evaluate(BOX, "#wmCell")
+    assert bx["t"] >= cv["b"] - 1, (cv, bx)                       # below the map, not over it
+    # the nearest cells ahead of the user are ground: pick a mapped cell from the server, and an unmapped one
+    t_idx = api(f"/api/runs/{run}/worldmap/pose.json")["t"]
+    k = max(j for j, tt in enumerate(t_idx) if tt <= 13.05)
+    mapped = unmapped = None
+    for row in range(198, 120, -1):
+        d = api(f"/api/runs/{run}/worldmap/cell?i={k}&col=100&row={row}")
+        if mapped is None and d["surface"] is not None:
+            mapped = (100, row, d)
+    for col in (1, 198):
+        for row in (1, 2, 3):
+            d = api(f"/api/runs/{run}/worldmap/cell?i={k}&col={col}&row={row}")
+            if unmapped is None and d["surface"] is None and d["object"] is None:
+                unmapped = (col, row)
+    assert mapped, "no mapped cell ahead of the user"
+    _click_cell(page, mapped[0], mapped[1])
+    page.wait_for_function("() => /Region: /.test(document.querySelector('#wmCell').textContent)")
+    txt = page.inner_text("#wmCell")
+    assert f"col {mapped[0]} row {mapped[1]}" in txt and "m ahead" in txt and "steps" in txt and "Object:" in txt and "Item:" in txt, txt
+    assert "Region: none observed" not in txt
+    assert "Beyond 20 m" not in txt, txt                           # v26.2.6: only the cell's own lines
+    seek(page, 13.5)                                              # the selection stays across frames
+    page.wait_for_timeout(600)
+    assert f"col {mapped[0]} row {mapped[1]}" in page.inner_text("#wmCell")
+    if unmapped:
+        _click_cell(page, *unmapped)
+        # v26.2.7: an unmapped cell has its coordinate line too, then the word "unmapped"
+        page.wait_for_function("() => /\\nunmapped$/.test(document.querySelector('#wmCell').textContent)")
+        txt = page.inner_text("#wmCell")
+        first = txt.split("\n")[0]
+        assert f"col {unmapped[0]} row {unmapped[1]}" in first and "m ahead" in first and "steps" in first and txt.split("\n")[-1] == "unmapped", txt
+        assert "Region:" not in txt
+    assert not page.errors, page.errors
+
+
+def test_click_on_an_item_marker_reads_that_item(page):
+    """v26.2.6: a click on a drawn (non-building) item marker snaps to its cell and names the item on the Object line."""
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    massive = re.compile(r"\b(building|bridge|tunnel)\b", re.I)
+    pick = None
+    for a in range(int(rq["start"]), int(rq["end"]), 30):
+        doc = api(f"/api/runs/{run}/hazards?from={a}&to={a + 30}")
+        for f in doc["frames"]:
+            hs = [h for h in f.get("hazards", []) if h.get("distanceM") is not None and h.get("lateralM") is not None]
+            for h in hs:
+                if massive.search(h.get("className") or "") or not (3 < h["distanceM"] < 15 and abs(h["lateralM"]) < 6):
+                    continue
+                if any(o is not h and not massive.search(o.get("className") or "") and abs(o["distanceM"] - h["distanceM"]) < 1.5
+                       and abs(o["lateralM"] - h["lateralM"]) < 1.5 for o in hs):
+                    continue                                       # keep the nearest-marker rule out of the test
+                pick = (f, h)
+                break
+            if pick:
+                break
+        if pick:
+            break
+    if not pick:
+        pytest.skip("no isolated non-building item inside the map in the run")
+    f, h = pick
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(600)
+    col, row = 100 + h["lateralM"] / 0.1, 200 - h["distanceM"] / 0.1
+    _click_cell(page, int(col), int(row))
+    page.wait_for_function("() => /Object: /.test(document.querySelector('#wmCell').textContent)")
+    obj = next(l for l in page.inner_text("#wmCell").splitlines() if l.startswith("Object:"))
+    assert (h.get("className") or "item") in obj and f"track {h.get('trackId', '?')}" in obj, obj
+    assert "Beyond 20 m" not in page.inner_text("#wmCell")
+    assert not page.errors, page.errors
+
+
+def test_autofill_populates_time_phrase_role_and_type_without_saving(page):
+    """v26.2.4: Auto-fill on a paused frame sets the time to the playhead and fills phrase, role and type; it saves nothing."""
+    run = "116731b3e5c2"
+    if not any(r["id"] == run for r in api("/api/runs")):
+        run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    t0 = rq["start"] + 14.2
+    before = len(annotations(rq["recording"]))
+    open_lab(page, rq["recording"], t=t0, run=run)
+    page.wait_for_function("() => document.querySelector('#video').paused")
+    page.click("#rvAddBtn")
+    page.fill("#rvAddT", "0:01.0")                                # a stale / typed time: the playhead must win
+    page.click("#rvAddAuto")
+    page.wait_for_function("() => document.querySelector('#rvAddText').value.length > 0", timeout=20_000)
+    t_play = page.evaluate("document.querySelector('#video').currentTime")
+    assert abs(_parse(page.input_value("#rvAddT")) - t_play) < 0.11
+    text = page.input_value("#rvAddText")
+    assert re.search(r" at \S+ in \d+| at \S+ in \?", text), text
+    assert page.input_value("#rvAddRole") in ("final", "danger", "feature", "context")
+    assert page.input_value("#rvAddType") == "speech"
+    got = page.evaluate("""async ([run, t]) => { const m = await import('/static/js/autofill.js');
+        const f = (await (await fetch(`/api/runs/${run}/frame?t=` + t)).json()).frame;
+        const o = m.orderCandidates(f, () => 0)[0]; return {role: o.role, cls: o.className, n: f.hazards.length}; }""", [run, t_play])
+    assert page.input_value("#rvAddRole") == ("danger" if got["role"] == "none" else got["role"])
+    assert len(annotations(rq["recording"])) == before        # nothing saved
+    assert not page.errors, page.errors
+
+
+def _parse(txt):
+    m, s = txt.split(":")
+    return int(m) * 60 + float(s)
+
+
+def test_map_meta_names_the_face_and_surface_classes_and_the_wall_line_sits_on_the_building_edge(page):
+    """v26.2.7: GET /worldmap carries faceClassIds / surfaceClassIds; the wall line is drawn on the face / surface cell borders of the snapshot
+    (the segment count is on the canvas as data-wall-edges), and the fitted faceEdgeLines are no longer drawn."""
+    run = test_lab.FULL_RUN
+    meta = api(f"/api/runs/{run}/worldmap")
+    names = api(f"/api/runs/{run}")["classNames"]
+    assert meta["exists"] and meta["faceClassIds"] and meta["surfaceClassIds"]
+    assert set(meta["faceClassIds"]) <= set(range(len(names))) and not set(meta["faceClassIds"]) & set(meta["surfaceClassIds"])
+    assert "building" in [names[i] for i in meta["faceClassIds"]] and "flat sidewalk" in [names[i] for i in meta["surfaceClassIds"]]
+    rec = api(f"/api/runs/{run}")["request"]["recording"]
+    open_lab(page, rec, t=13, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    counts = []
+    for t in (13, 16, 20, 30, 60):
+        seek(page, t)
+        page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+        page.wait_for_timeout(500)
+        counts.append(int(page.evaluate("() => document.querySelector('#wmCanvas').dataset.wallEdges || '-1'")))
+    assert all(c >= 0 for c in counts), counts                       # the attribute is set on every paint
+    assert max(counts) > 0, f"no building edge drawn at any of the probe times: {counts}"
+    assert not page.errors, page.errors
+
+
+def _first_world_track_frame(run, rq):
+    for a in range(int(rq["start"]), int(rq["end"]), 30):
+        doc = api(f"/api/runs/{run}/hazards?from={a}&to={a + 30}")
+        for f in doc["frames"]:
+            for w in f.get("worldTracks", []):
+                if w["state"] == "seen" and 2 < w["fwd"] < 15 and abs(w["right"]) < 6:
+                    return f, w
+    return None, None
+
+
+def test_world_tracks_are_in_the_hazards_drawn_and_read_on_click(page):
+    """v26.2.9 (shadow mode): the hazards frames carry worldTracks (and the doc worldTracksSettings); the canvas draws them
+    (data-world-tracks = the count of the frame); a click on a track's ring adds the 'World track' line."""
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    doc = api(f"/api/runs/{run}/hazards?from={int(rq['start'])}&to={int(rq['start']) + 30}")
+    assert all("worldTracks" in f for f in doc["frames"]), "every frame carries worldTracks"
+    assert doc["worldTracksSettings"]["gateChi2"] == 9.21
+    f, w = _first_world_track_frame(run, rq)
+    if f is None:
+        pytest.skip("no seen world track inside the map in the run")
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(600)
+    assert int(page.evaluate("() => document.querySelector('#wmCanvas').dataset.worldTracks || '-1'")) >= 1
+    _click_cell(page, int(100 + w["right"] / 0.1), int(200 - w["fwd"] / 0.1))
+    page.wait_for_function("() => /World track W\\d+/.test(document.querySelector('#wmCell').textContent)")
+    line = next(l for l in page.inner_text("#wmCell").splitlines() if l.startswith("World track"))
+    assert "σ" in line and "images" in line and "m/s" in line, line
+    assert not page.errors, page.errors
+
+
+# ---- v26.2.10: items selectable as a whole, hover info, linked video <-> map, wall regions
+
+def _item_on_video(run, rq):
+    """A drawn, non-massive item with a decent outline, isolated from the others, inside the map: (frame, hazard, centre inside the outline)."""
+    massive = re.compile(r"\b(building|bridge|tunnel)\b", re.I)
+
+    def inside(x, y, poly):
+        c = False
+        for i in range(len(poly)):
+            (xi, yi), (xj, yj) = poly[i], poly[i - 1]
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                c = not c
+        return c
+
+    for a in range(int(rq["start"]), int(rq["end"]), 30):
+        doc = api(f"/api/runs/{run}/hazards?from={a}&to={a + 30}")
+        for f in doc["frames"]:
+            hs = f.get("hazards", [])
+            for h in hs:
+                poly = h.get("outline")
+                if not poly or len(poly) < 3 or h.get("role") == "none" or massive.search(h.get("className") or "") or h.get("trackId") is None:
+                    continue
+                if not (2 < h.get("distanceM", 0) < 15 and abs(h.get("lateralM", 99)) < 6):
+                    continue
+                x = sum(p[0] for p in poly) / len(poly)
+                y = sum(p[1] for p in poly) / len(poly)
+                if not inside(x, y, poly):
+                    continue
+                if any(o is not h and o["bbox"][0] <= x <= o["bbox"][2] and o["bbox"][1] <= y <= o["bbox"][3] for o in hs):
+                    continue                                   # nothing else under the pointer
+                return f, h, (x, y)
+    return None, None, None
+
+
+def _pointer_on_video(page, x, y):
+    box = page.evaluate(BOX, "#overlay")
+    return box["l"] + x * box["w"], box["t"] + y * box["h"]
+
+
+def test_hover_on_a_video_item_shows_its_tooltip_and_click_selects_it_on_video_and_map(page):
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    f, h, (x, y) = _item_on_video(run, rq)
+    if not f:
+        pytest.skip("no isolated drawn item with an outline in the run")
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(800)
+    px, py = _pointer_on_video(page, x, y)
+    page.mouse.move(px - 3, py - 3)
+    page.mouse.move(px, py)
+    page.wait_for_selector("#itemTip:not([hidden])")
+    tip = page.inner_text("#itemTip")
+    assert (h["className"]) in tip and f"track {h['trackId']}" in tip and f"role {h['role']}" in tip, tip
+    assert f"{h['distanceM']:.1f} m" in tip and "steps" in tip and "distance source" in tip, tip
+    page.mouse.move(2, 2)
+    page.wait_for_selector("#itemTip", state="hidden")
+    # click: selected on the video (whole outline, followed by track id) and marked on the map, led in the readout
+    page.mouse.click(px, py)
+    page.wait_for_function("(t) => document.querySelector('#overlay').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.wait_for_function("(t) => document.querySelector('#wmCanvas').dataset.selTrack === String(t)", arg=h["trackId"])
+    assert page.inner_text("#wmCell").startswith(f"Selected: {h['className']}"), page.inner_text("#wmCell")
+    # followed by track id to the next frame, Esc clears both
+    seek(page, f["t"] + 0.01)
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => document.querySelector('#overlay').dataset.selTrack === '' && document.querySelector('#wmCanvas').dataset.selTrack === ''")
+    page.mouse.click(px, py)
+    page.wait_for_function("(t) => document.querySelector('#overlay').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.mouse.click(box_empty(page)[0], box_empty(page)[1])            # a click on empty image clears
+    page.wait_for_function("() => document.querySelector('#overlay').dataset.selTrack === ''")
+    assert not page.errors, page.errors
+
+
+def box_empty(page):
+    """A point of the video that no item covers: the top-left corner of the image."""
+    b = page.evaluate(BOX, "#overlay")
+    return b["l"] + 3, b["t"] + 3
+
+
+def test_click_on_a_map_item_selects_it_on_the_video_too_and_a_wall_region_is_outlined(page):
+    run = test_lab.FULL_RUN
+    rq = api(f"/api/runs/{run}")["request"]
+    f, h, _ = _item_on_video(run, rq)
+    if not f:
+        pytest.skip("no isolated drawn item with an outline in the run")
+    open_lab(page, rq["recording"], t=f["t"] + 0.01, run=run)
+    page.wait_for_selector("#wmCanvas:visible")
+    seek(page, f["t"] + 0.01)
+    page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+    page.wait_for_timeout(800)
+    _click_cell(page, int(100 + h["lateralM"] / 0.1), int(200 - h["distanceM"] / 0.1))
+    page.wait_for_function("(t) => document.querySelector('#wmCanvas').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.wait_for_function("(t) => document.querySelector('#overlay').dataset.selTrack === String(t)", arg=h["trackId"])
+    page.keyboard.press("Escape")
+    # a wall (face class) cell with no item: the whole region
+    meta = api(f"/api/runs/{run}/worldmap")
+    found = False
+    for t in (13, 16, 20, 30, 60, 90):
+        seek(page, t)
+        page.wait_for_function("() => document.querySelector('#wmStatus').textContent.startsWith('t ')")
+        page.wait_for_timeout(500)
+        cand = page.evaluate("""(faceIds) => {
+          const wm = window.__labWorldmap, grid = wm.cache.get(wm.k), S = 200, out = [];
+          if (!grid) return out;
+          for (let r = 0; r < S; r += 3) for (let c = 0; c < S; c += 3) {
+            if (faceIds.includes(grid[r * S + c]) && !wm.itemAt((c + 0.5) * wm.canvas.width / S, (r + 0.5) * wm.canvas.width / S, 1)) out.push([c, r]);
+          }
+          return out.slice(0, 40);
+        }""", meta["faceClassIds"])
+        for col, row in cand:
+            _click_cell(page, col, row)
+            page.wait_for_timeout(400)
+            if page.evaluate("() => !!document.querySelector('#wmCanvas').dataset.selRegion"):
+                found = True
+                break
+        if found:
+            break
+    assert found, "no wall region could be selected at the probe times"
+    n = int(page.evaluate("() => document.querySelector('#wmCanvas').dataset.selRegion"))
+    assert n > 1
+    txt = page.inner_text("#wmCell")
+    assert txt.startswith("Selected: ") and f"{n} cells" in txt and "nearest" in txt and "clock" in txt, txt
+    # hover over the region: the tooltip names class, cells, nearest distance, clock
+    box = page.evaluate(BOX, "#wmCanvas")
+    page.mouse.move(box["l"] + box["w"] * (col + 0.5) / 200 - 2, box["t"] + box["h"] * (row + 0.5) / 200)
+    page.mouse.move(box["l"] + box["w"] * (col + 0.5) / 200, box["t"] + box["h"] * (row + 0.5) / 200)
+    page.wait_for_selector("#itemTip:not([hidden])")
+    assert f"{n} cells" in page.inner_text("#itemTip")
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => !document.querySelector('#wmCanvas').dataset.selRegion")
+    assert not page.errors, page.errors
