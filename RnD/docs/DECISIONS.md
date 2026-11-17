@@ -1392,3 +1392,56 @@ The Chest-0004 run was wiped by the version bump before a collision re-run with 
 2. (O36) "person cutting in front" at 34.67 (a man drifting into the path ahead: debatable) and 111.66 (a standing woman: false).
 3. (O37) 11 implicitly correct review-11 events change, incl. the review-10 remove 44.66 "building at 12:15 in 4" returning.
 4. The strict same-words tick match falls 17 on the older fixtures, partly from the added motion words.
+
+## v26.3.0 — modular: the whole Lab as independent models (plan [`plans/v26.3.0.md`](plans/v26.3.0.md), specs in [`plans/v26.3.0/`](plans/v26.3.0/); user 2026-11-12 "go for it"; no behaviour change; no reviews or notes in the Lab to save before the bump; `collision.json` stays v26.2.14 and `worldmap.json` v26.2.11, because their rules did not change)
+
+**Goal.** Break up the monolith so that each model can be understood, tested and changed on its own:
+- `src/collision.py` was about 6,000 lines;
+- `lab/*.py` was a flat set of modules sharing globals;
+- `lab/static/app.js` was 1,284 lines.
+
+The output had to stay identical.
+
+**Architecture.**
+- **Engine:** `src/engine/<model>`, 19 packages: `core`, `infer`, perception, map, decision and output models, plus `pipeline`.
+  - Models import only `engine.core`; only `engine.pipeline` imports every model. The rules are in `src/engine/BOUNDARIES.toml`, enforced by `tests/test_module_boundaries.py` (no model-to-model imports, no cycles).
+  - `run_collision` is now `engine.pipeline.run`: `setup` → 24 registered stages per frame (each declares what it reads and writes) → `finish`. A static scan (`FIELD_WRITERS`, `tests/test_field_ownership.py`) guards field ownership.
+  - `collision.py` (455 lines) and the other flat `src/*.py` are pure re-export facades.
+- **Lab backend:** `lab/{store,jobs,stages,features,api}`, with `server.py` (121 lines) as the composition root. The old flat modules forward their globals (`lab/_forward.py`), so patched names keep working.
+- **Front end:**
+  - `js/util/`, `js/features/<name>/`, `js/app/bootstrap.js`, `state.js` and `bus.js`;
+  - `app.js` is a 2-line entry;
+  - features talk over the bus.
+  - A pinned eslint + `node --test` gate runs in `tools/check.sh`, at 0 errors / 0 warnings.
+- **Docs:** `lab/CONTRACTS.md` is the Lab-level contract plus an index of the model READMEs. The per-model rules moved verbatim into those READMEs, and the section numbers are kept.
+
+**Method.**
+- Tests came first. A tests worker wrote locked tests whose literals were printed by the legacy code; a separate implementation worker moved the code verbatim.
+- Opus wrote the specs and reviewed every move by AST comparison against the legacy code. The stage cuts were checked by inlining them back, and the `app.js` split function by function.
+- Equivalence oracle (`tools/equivalence.py`, corpus `tests/fixtures/equivalence` recorded at v26.2.14):
+  - the quick tier ran on every task;
+  - the full tier ran at every checkpoint: 0 drift at all 6.
+
+**Workers.**
+- Sonnet built all 57 implementation tasks (p1 … p6) and most of the test suites. Haiku wrote the tests for the small leaf modules and ran the checkpoints. Opus wrote the specs, the reviews, small fixes and the commits.
+- A LocalWorker / Qwen attempt was dropped on 2026-11-12 as "not worth it".
+- **Test bugs found by the implementation workers and fixed by Opus:** a nested `approx`, a config-patch identity check, a `RunState` vs `setup()` conflict between locked tests, a missing `MEDIA_DIR` patch, and a stale `audio.js` path in `test_collision_v26112`.
+
+**Done criterion** (user, 2026-11-13: every result as expected, zero skips):
+- Unit tests: 1806 passed. The 5 GPU tests are opt-in (`HACKEYE_GPU_TESTS`) and pass 6/6 through `tools/check.gpu.compose.yaml`.
+- xfails: 2, both still the documented O32 / O35.
+- Node tests 67/67; staging E2E 96/96; full equivalence 0 drift.
+- **Skips removed:**
+  - the field-ownership guard is now active;
+  - the `depth_*` tools got `main()` guards;
+  - the v26.1.7 history test is pinned to stored v26.1.8 / v26.1.7 sources;
+  - the v26.2.10 test uses a stored fixture;
+  - the GPU tests read `Chest-center-0004` (recording 4929 has been gone since the footage rename).
+
+**Repo.**
+- `v26.2` was squashed into `main` (dcdc527, the same tree as `v26.2`, user 2026-11-17).
+- `modular` becomes `v26.3`.
+
+### Known / possible issues (unchanged by v26.3.0)
+1. O32, O35, O36 and O37 are as in v26.2.14 (the behaviour is identical).
+2. Lab globals that moved keep their legacy names through forwarding facades. Removing the facades is future work, once nothing patches the old names.
